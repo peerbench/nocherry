@@ -39,10 +39,12 @@ test.describe('Demo webapp browser tests', () => {
     await page.locator('a', { hasText: 'Continue to Step 4' }).click();
     await page.waitForURL('**/steps/4');
 
-    // Step 4: Submit to Server (may take up to 15s for drand beacon)
-    await page.locator('button', { hasText: 'Submit to Server' }).click();
-    await page.waitForURL('**/steps/4', { timeout: 30_000 });
-    await expect(page.locator('.content-panel', { hasText: '201 Created' })).toBeVisible();
+    // Step 4: Submit to Server (JS-driven, no page reload)
+    // Wait for the beacon ticker to appear (confirms JS is running)
+    await expect(page.locator('.beacon-ticker')).toBeVisible({ timeout: 10_000 });
+    await page.locator('#submit-btn').click();
+    // Wait for the receipt to render in #receipt-result (may take up to 15s for drand beacon)
+    await expect(page.locator('#receipt-result', { hasText: '201 Created' })).toBeVisible({ timeout: 30_000 });
     await page.locator('a', { hasText: 'Continue to Step 5' }).click();
     await page.waitForURL('**/steps/5');
 
