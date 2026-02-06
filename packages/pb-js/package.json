@@ -1,0 +1,15 @@
+{
+  "name": "@peerbench/sdk",
+  "version": "0.1.0",
+  "type": "module",
+  "main": "src/index.js",
+  "bin": {
+    "pb-js": "src/cli.js"
+  },
+  "scripts": {
+    "test": "node --test test/vectors.test.js test/cli.test.js"
+  },
+  "dependencies": {
+    "pb-wasm": "file:../../pkg"
+  }
+}

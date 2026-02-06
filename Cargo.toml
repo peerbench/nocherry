@@ -1,0 +1,7 @@
+[workspace]
+members = [
+    "crates/pb-core",
+    "crates/pb-cli",
+    "packages/pb-wasm",
+]
+resolver = "2"

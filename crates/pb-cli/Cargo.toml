@@ -1,0 +1,18 @@
+[package]
+name = "pb-cli"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "pb"
+path = "src/main.rs"
+
+[dependencies]
+pb-core = { path = "../pb-core" }
+clap = { version = "4", features = ["derive"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+hex = "0.4"
+dirs = "5"
+chrono = "0.4"
+ed25519-dalek = { version = "2", features = ["rand_core"] }
