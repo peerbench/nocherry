@@ -52,7 +52,6 @@ peerbench/
 │   │   │   │   ├── commitments.ts
 │   │   │   │   ├── selections.ts
 │   │   │   │   ├── reveals.ts
-│   │   │   │   ├── streams.ts
 │   │   │   │   └── server-info.ts
 │   │   │   ├── storage/
 │   │   │   │   ├── interface.ts  # Storage adapter interface
@@ -308,12 +307,6 @@ pb commit my-benchmark/ \
 # → submits to all known servers
 # → saves receipts to .commit-reveal/receipts/
 
-# ── Stream mode ──
-pb stream start --probability 0.10 --beacon drand
-pb stream add case_047.json         # commits single item
-pb stream add case_048.json
-pb stream status
-
 # ── Reveal ──
 pb reveal my-benchmark/ \
   --commitment .commit-reveal/commitment.json
@@ -354,7 +347,6 @@ The server response to `POST /v1/commitments` echoes back the **entire commitmen
     "signature": "user-signature..."
   },
   "commitment_hash": "a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4",
-  "stream_id": null,
   "registered_at": "2026-02-06T14:30:00.500Z",
   "signer_activity": {
     "commitments_past_hour": 3,
@@ -386,11 +378,6 @@ interface Storage {
   putReveal(commitmentId: string, reveal: Reveal): Promise<void>;
   getReveals(commitmentId: string): Promise<Reveal[]>;
 
-  // Streams
-  createStream(streamId: string, params: StreamParams): Promise<void>;
-  getStream(streamId: string): Promise<StreamInfo | null>;
-  getUnprocessedCommitments(streamId: string, since: Date): Promise<Commitment[]>;
-
   // Anti-spam
   countCommitmentsByKey(signingKey: string, since: Date): Promise<number>;
 
@@ -404,7 +391,6 @@ interface Storage {
 ```sql
 CREATE TABLE commitments (
   id TEXT PRIMARY KEY,
-  stream_id TEXT,
   signing_key TEXT NOT NULL,
   body JSON NOT NULL,
   registered_at TEXT NOT NULL,
@@ -412,7 +398,6 @@ CREATE TABLE commitments (
 );
 
 CREATE INDEX idx_commitments_signing_key ON commitments(signing_key);
-CREATE INDEX idx_commitments_stream_id ON commitments(stream_id);
 CREATE INDEX idx_commitments_registered_at ON commitments(registered_at);
 
 CREATE TABLE selections (
@@ -430,13 +415,6 @@ CREATE TABLE reveals (
 );
 
 CREATE INDEX idx_reveals_commitment_hash ON reveals(commitment_hash);
-
-CREATE TABLE streams (
-  id TEXT PRIMARY KEY,
-  params JSON NOT NULL,
-  created_at TEXT NOT NULL,
-  last_commit_at TEXT
-);
 ```
 
 ### 7.4 PostgreSQL Adapter

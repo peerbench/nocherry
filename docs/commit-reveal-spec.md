@@ -21,7 +21,6 @@ The service is domain-agnostic. It deals in opaque SHA-256 hashes. Higher-level 
 2. **Verifiable offline** — given the commitment, randomness beacon output, and revealed data, anyone can verify without contacting the service
 3. **Simple** — one hash algorithm (SHA-256), one signature scheme (Ed25519), pluggable randomness sources
 4. **Composable** — can be embedded in PeerBench nodes or run as a separate microservice
-5. **Streaming-friendly** — supports both batch commits (many items at once) and single-item commits (one at a time, as work is produced)
 
 ### 1.2 Terminology
 
@@ -32,23 +31,11 @@ The service is domain-agnostic. It deals in opaque SHA-256 hashes. Higher-level 
 - **Reveal probability** — the probability (0, 1] that any given item is selected for reveal.
 - **Voluntary reveal** — revealing items beyond the random selection, at the committer's discretion.
 
-## 2. Modes of Operation
-
-The service supports two commit modes. Both use the same selection and verification logic.
-
-### 2.1 Batch Mode
+## 2. Mode of Operation
 
 The user commits a list of item hashes in a single request, with a reveal probability. The next beacon output after the commitment determines which items are selected.
 
 Use case: a benchmark author has 500 test cases ready and commits them all at once.
-
-### 2.2 Stream Mode
-
-The user commits items one at a time (or in small batches), each under a shared **stream ID**. Each commit is individually timestamped. A beacon output covers all items committed before it.
-
-Use case: a researcher creates test cases over weeks, committing each one as it's written. They don't need to wait until the full dataset is ready.
-
-Stream mode is sugar over batch mode — it's equivalent to many single-item commits grouped under a stream ID, with selection applied per-beacon-period.
 
 ## 3. Commitment
 
@@ -58,7 +45,6 @@ Stream mode is sugar over batch mode — it's equivalent to many single-item com
 {
   "spec_version": "0.2.0",
   "commitment_hash": "e4d7f1b2...",
-  "stream_id": null,
   "items": [
     "a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2"
   ],
@@ -79,7 +65,6 @@ Fields:
 
 - **`spec_version`** (string): version of this specification.
 - **`commitment_hash`** (string): `SHA-256(signing_payload)`, lowercase hex (64 chars). Computed by the client before submission. Deterministic: the same commitment always produces the same hash, on every server, on every machine. This is the canonical identifier for the commitment across all servers. Not part of the signed payload (it is derived from it).
-- **`stream_id`** (string | null): groups related commits in stream mode. `null` for standalone batch commits. Assigned by the service on first commit in a stream; provided by the user on subsequent commits. Not part of the signed payload.
 - **`items`** (array of strings): SHA-256 hashes (lowercase hex, 64 chars). At least 1 item. No duplicates. For single-item commits, this is a one-element array.
 - **`item_count`** (integer): length of `items`.
 - **`reveal_probability`** (number): the probability that any given item is selected for reveal. Range: (0.0, 1.0]. For example, 0.10 means ~10% of items will be selected. See Section 4 for how this is applied.
@@ -91,7 +76,7 @@ Fields:
 
 ### 3.2 Signing and Commitment Hash
 
-The signature covers the **signing payload** — canonical JSON of the commitment with these fields removed: `commitment_hash`, `stream_id`, `metadata`, `signature`.
+The signature covers the **signing payload** — canonical JSON of the commitment with these fields removed: `commitment_hash`, `metadata`, `signature`.
 
 ```
 signing_payload = canonical_json({
@@ -208,23 +193,12 @@ prng_next(seed, index):
 | Scenario | Selection mode | Rationale |
 |----------|---------------|-----------|
 | Single item commit | Per-item (4.3) | Bernoulli trial: selected or not |
-| Stream of single items | Per-item (4.3) on each | Each item independently tested |
 | Batch of 2-20 items | Per-item (4.3) | Probabilistic count is fine for small sets |
 | Batch of 20+ items | Batch (4.4) | Exact count via shuffle is more predictable |
 
-The `selection_mode` is recorded in the selection record (Section 4.7) so verifiers know which algorithm was used. The service chooses the mode based on `item_count`; the threshold of 20 is a default that can be configured per-deployment.
+The `selection_mode` is recorded in the selection record (Section 4.6) so verifiers know which algorithm was used. The service chooses the mode based on `item_count`; the threshold of 20 is a default that can be configured per-deployment.
 
-### 4.6 Stream Mode Selection
-
-In stream mode, the service accumulates commits under a `stream_id`. Selection happens at regular intervals driven by the beacon:
-
-1. At each beacon output, the service collects all **unprocessed** commits in the stream (those registered since the last beacon output)
-2. Per-item selection (4.2) is applied to each new item, using the beacon output and each item's own `commitment_hash || item_hash`
-3. Results are recorded in a selection record tied to that beacon round
-
-This means a stream gets one selection record per beacon period that contained new commits.
-
-### 4.7 Selection Record
+### 4.6 Selection Record
 
 After the beacon fires and selection runs, the service produces:
 
@@ -613,39 +587,7 @@ Response: Full receipt (same format as POST response)
 
 This is a convenience lookup — returns the stored receipt. Not required for the protocol since the client already has the receipt from the POST response.
 
-### 8.3 Submit Stream Commit
-
-```
-POST /v1/streams/{stream_id}/commitments
-
-Request body: Commitment object with stream_id matching the path
-
-Response: same as 7.1 but with stream_id populated
-```
-
-To start a new stream:
-
-```
-POST /v1/streams
-
-Request body:
-{
-  "reveal_probability": 0.10,
-  "beacon": { "type": "drand", "chain_hash": "..." },
-  "signing_key": "did:key:...",
-  "metadata": {}
-}
-
-Response (201):
-{
-  "stream_id": "s_a1b2c3d4e5f6...",
-  "created_at": "..."
-}
-```
-
-Stream parameters (`reveal_probability`, `beacon`) are set once on stream creation and inherited by all commits in the stream.
-
-### 8.4 Submit Reveal
+### 8.3 Submit Reveal
 
 ```
 POST /v1/commitments/{commitment_hash}/reveals
@@ -661,31 +603,10 @@ Response (201):
 
 The server stores the reveal metadata (which items are claimed as revealed, where the data lives) but does **not** download or verify the actual data. It is a record that the committer has declared a reveal. Verification of data integrity is the responsibility of whoever consumes the reveal (see Section 6.4).
 
-### 8.5 Get Reveals
+### 8.4 Get Reveals
 
 ```
 GET /v1/commitments/{commitment_hash}/reveals
-GET /v1/streams/{stream_id}/reveals
-```
-
-### 8.6 Stream Status
-
-```
-GET /v1/streams/{stream_id}
-
-Response:
-{
-  "stream_id": "...",
-  "reveal_probability": 0.10,
-  "beacon": { "type": "drand", ... },
-  "total_items": 47,
-  "total_selected": 5,
-  "total_revealed": 3,
-  "commitments": 47,
-  "selection_rounds": 12,
-  "created_at": "...",
-  "last_commit_at": "..."
-}
 ```
 
 ## 9. Verification Service (Optional, Separate)

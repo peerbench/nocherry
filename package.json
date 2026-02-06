@@ -1,0 +1,7 @@
+{
+  "name": "peerbench-commit-reveal",
+  "private": true,
+  "workspaces": [
+    "packages/*"
+  ]
+}
