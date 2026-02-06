@@ -378,4 +378,101 @@ details summary:hover { color: #b4befe; }
   color: var(--accent2);
 }
 .feature p { font-size: 0.85rem; color: #666; }
+
+/* Beacon ticker */
+.beacon-ticker {
+  margin-top: 20px;
+  background: var(--code-bg);
+  border-radius: 8px;
+  padding: 16px;
+  color: var(--code-fg);
+}
+.beacon-ticker h2 {
+  font-size: 0.9rem;
+  color: #89b4fa;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  margin-bottom: 12px;
+}
+.beacon-status {
+  font-size: 0.85rem;
+  color: #a6adc8;
+  margin-bottom: 10px;
+  min-height: 1.4em;
+}
+.beacon-list {
+  max-height: 340px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.beacon-round {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 6px 10px;
+  border-radius: 4px;
+  background: #181825;
+  font-family: 'SF Mono', 'Fira Code', 'Consolas', monospace;
+  font-size: 0.8rem;
+  transition: background 0.3s, box-shadow 0.3s;
+}
+.beacon-round .round-num {
+  color: #89b4fa;
+  min-width: 72px;
+  font-weight: 600;
+}
+.beacon-round .round-rand {
+  color: #a6e3a1;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.beacon-round .round-time {
+  color: #585b70;
+  font-size: 0.75rem;
+  min-width: 48px;
+  text-align: right;
+}
+.beacon-round.latest {
+  animation: beacon-pulse 1s ease-out;
+}
+.beacon-round.highlighted {
+  background: #1e3a2f;
+  box-shadow: 0 0 8px rgba(46, 196, 182, 0.4), inset 0 0 0 1px var(--success);
+}
+.beacon-round.highlighted .round-num {
+  color: var(--success);
+}
+@keyframes beacon-pulse {
+  0% { background: #2a2a4a; }
+  100% { background: #181825; }
+}
+
+/* Spinner */
+.spinner {
+  display: inline-block;
+  width: 16px;
+  height: 16px;
+  border: 2px solid #fff;
+  border-top-color: transparent;
+  border-radius: 50%;
+  animation: spin 0.6s linear infinite;
+  vertical-align: middle;
+  margin-right: 6px;
+}
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+.btn:disabled {
+  opacity: 0.7;
+  cursor: not-allowed;
+}
+
+/* Receipt result (JS-rendered) */
+#receipt-result {
+  margin-top: 20px;
+}
 `;
