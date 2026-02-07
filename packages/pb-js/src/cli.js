@@ -1135,9 +1135,8 @@ async function cmdGo(dirPath, probability = 0.50) {
   console.log();
 
   // ── Step 1: Hash ──
-  console.log('  Step 1 of 5 — Hash');
-  console.log('  Compute SHA-256 hash of every file to create a tamper-proof manifest.');
-  console.log('  → manifest.json');
+  console.log('  Step 1 — Hash');
+  console.log('  SHA-256 hash each file to create a tamper-proof manifest.');
   console.log();
   await waitForEnter();
 
@@ -1152,14 +1151,15 @@ async function cmdGo(dirPath, probability = 0.50) {
   };
   writeFileSync(join(dir, 'manifest.json'), JSON.stringify(manifestData, null, 2) + '\n');
 
-  console.log(`  ✓ Root hash: ${result.hash.slice(0, 16)}...${result.hash.slice(-6)}`);
-  console.log(`  ✓ Saved manifest.json (${manifestData.items.length} item${manifestData.items.length !== 1 ? 's' : ''})`);
+  for (const item of manifestData.items) {
+    console.log(`    ${item.hash.slice(0, 16)}…  ${item.path}`);
+  }
+  console.log(`  ✓ ${manifestData.items.length} files → manifest.json`);
   console.log();
 
   // ── Step 2: Commit ──
-  console.log('  Step 2 of 5 — Commit');
-  console.log(`  Sign a cryptographic commitment locking in your data and a ${(probability * 100).toFixed(0)}% reveal rate.`);
-  console.log('  → commitment.json');
+  console.log('  Step 2 — Commit');
+  console.log(`  Sign a commitment locking in ${manifestData.items.length} file hashes at ${(probability * 100).toFixed(0)}% reveal probability.`);
   console.log();
   await waitForEnter();
 
@@ -1186,10 +1186,9 @@ async function cmdGo(dirPath, probability = 0.50) {
   console.log();
 
   // ── Step 3: Submit ──
-  console.log('  Step 3 of 5 — Submit');
-  console.log('  Send commitment to independent timestamp servers. Each waits for the next');
-  console.log('  drand random beacon (~3s) before returning a receipt.');
-  console.log('  → server-receipts.json');
+  console.log('  Step 3 — Submit');
+  console.log('  Send to independent servers. Each waits for the next drand beacon (~3s)');
+  console.log('  to randomly select which files must be revealed.');
   console.log();
   await waitForEnter();
 
@@ -1266,11 +1265,24 @@ async function cmdGo(dirPath, probability = 0.50) {
   writeFileSync(join(dir, 'receipt.json'), JSON.stringify(receipts[0].receipt, null, 2) + '\n');
 
   console.log(`  ✓ Saved server-receipts.json (${receipts.length} receipt${receipts.length !== 1 ? 's' : ''})`);
+
+  // Show beacon randomness and selection result
+  const firstSelection = receipts.find(r => r.receipt?.selection?.selected_items)?.receipt?.selection;
+  if (firstSelection) {
+    console.log();
+    console.log(`  Beacon: ${firstSelection.beacon_output.randomness.slice(0, 24)}…`);
+    const selectedSet = new Set(firstSelection.selected_items);
+    console.log(`  Selected ${firstSelection.selected_count} of ${firstSelection.total_count} for reveal:`);
+    for (const item of manifestData.items) {
+      const sel = selectedSet.has(item.hash);
+      console.log(`    ${sel ? '→' : ' '} ${item.path}`);
+    }
+  }
   console.log();
 
   // ── Step 4: Publish ──
-  console.log('  Step 4 of 5 — Publish');
-  console.log('  Publish your data and protocol evidence to GitHub and a PeerBench publish server.');
+  console.log('  Step 4 — Publish');
+  console.log('  Publish the original data of selected files to GitHub or other public hosting.');
   console.log();
   await waitForEnter();
 
@@ -1352,9 +1364,8 @@ async function cmdGo(dirPath, probability = 0.50) {
   console.log();
 
   // ── Step 5: Reveal ──
-  console.log('  Step 5 of 5 — Reveal');
-  console.log('  Sign and submit reveal for the randomly selected items.');
-  console.log('  → reveal.json, reveal-receipts.json');
+  console.log('  Step 5 — Reveal');
+  console.log('  Submit signed reveal to servers and get signed confirmation.');
   console.log();
   await waitForEnter();
 
