@@ -1,14 +1,47 @@
 import { Hono } from 'hono';
 import { page, field, jsonBlock, nextButton, note } from '../template.js';
-import { codeRef } from '../code-refs.js';
 
 const route = new Hono();
 
-const refs = [
-  codeRef('packages/pb-node/src/routes/commitments.js', 18, 100, 'Server: POST /v1/commitments handler'),
-  codeRef('packages/pb-node/src/signing.js', 39, 53, 'Server: signResponse — countersigning'),
-  codeRef('packages/pb-node/src/beacon.js', 47, 76, 'Server: getBeaconOutput — fetch drand'),
-];
+function esc(s) {
+  return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
+async function submitToAllServers(commitment, pbServers) {
+  const results = await Promise.allSettled(
+    pbServers.map(async (server) => {
+      const res = await server.client.request('http://localhost/v1/commitments', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(commitment),
+      });
+
+      if (res.ok) {
+        const receipt = await res.json();
+        return { name: server.name, status: 'ok', receipt, error: null };
+      } else {
+        let errMsg;
+        try {
+          const errBody = await res.json();
+          errMsg = errBody.error || `HTTP ${res.status}`;
+        } catch {
+          errMsg = `HTTP ${res.status}`;
+        }
+        return { name: server.name, status: 'error', receipt: null, error: errMsg };
+      }
+    })
+  );
+
+  return results.map((r, i) => {
+    if (r.status === 'fulfilled') return r.value;
+    return {
+      name: pbServers[i].name,
+      status: 'error',
+      receipt: null,
+      error: r.reason?.message || 'Unknown error',
+    };
+  });
+}
 
 function receiptHTML(receipt) {
   const arrival = receipt.arrival_beacon;
@@ -20,7 +53,7 @@ function receiptHTML(receipt) {
     ${field('Server Key', receipt.server_key)}
     ${field('Server Signature', receipt.server_signature)}
 
-    <h2>Beacon Rounds</h2>
+    <h3>Beacon Rounds</h3>
     ${arrival ? `
       <p style="font-size:0.9rem;color:#666;margin-bottom:4px"><strong>Arrival beacon</strong> — the latest drand round when the commitment was received (already public):</p>
       ${field('Arrival Round', arrival.round, false)}
@@ -31,34 +64,83 @@ function receiptHTML(receipt) {
       ${field('Selection Round', selBeacon.round, false)}
       ${field('Selection Randomness', selBeacon.randomness)}
     ` : ''}
-    ${arrival && selBeacon ? note('The arrival round (<strong>' + arrival.round + '</strong>) was already known when you submitted. The selection round (<strong>' + selBeacon.round + '</strong>) hadn\'t been published yet — proving you couldn\'t have known the randomness that determines which items get selected.') : ''}
 
-    <h2>Signer Activity</h2>
+    <h3>Signer Activity</h3>
     ${field('Past Hour', receipt.signer_activity?.commitments_past_hour ?? 'N/A', false)}
     ${field('Past Month', receipt.signer_activity?.commitments_past_month ?? 'N/A', false)}
-    ${note('The server tracks how many commitments this signing key has made. This is transparent context, not rate limiting — the server never rejects based on activity.')}
-    <h2>Full Receipt</h2>
-    ${jsonBlock(receipt)}
-    ${nextButton(5)}
+
+    <details style="margin-top:12px">
+      <summary style="cursor:pointer;font-size:0.85rem;color:#666">Full Receipt JSON</summary>
+      ${jsonBlock(receipt)}
+    </details>
+  `;
+}
+
+function renderServerResults(serverResults) {
+  const successCount = serverResults.filter(r => r.status === 'ok').length;
+  const blocks = serverResults.map(r => {
+    if (r.status === 'ok') {
+      return `
+        <div class="server-result">
+          <h2>${esc(r.name)} <span class="check">OK</span></h2>
+          ${receiptHTML(r.receipt)}
+        </div>`;
+    } else {
+      return `
+        <div class="server-result">
+          <h2>${esc(r.name)} <span class="cross">ERROR</span></h2>
+          <p style="color:#e63946">${esc(r.error)}</p>
+        </div>`;
+    }
+  }).join('');
+
+  return `
+    ${note(`Submitted to <strong>${serverResults.length} server(s)</strong>: ${successCount} succeeded, ${serverResults.length - successCount} failed.`)}
+    ${blocks}
   `;
 }
 
 route.get('/', (c) => {
   const session = c.get('session');
   if (!session.commitment) return c.redirect('/steps/3');
+  const pbServers = c.get('pbServers');
 
-  const receipt = session.receipt;
+  const serverResults = session.serverResults;
 
-  // Post-submit state: show static receipt (page reload / JS disabled fallback)
-  if (receipt) {
-    const content = `<div id="receipt-result">${receiptHTML(receipt)}</div>`;
-    return c.html(page({ title: 'Step 4: Submit to Server', stepNumber: 4, content, codeRefs: refs, session }));
+  // Post-submit state: show aggregated results
+  if (serverResults && serverResults.length > 0) {
+    const content = `
+      <div id="receipt-result">
+        ${renderServerResults(serverResults)}
+      </div>
+      ${nextButton(5)}
+    `;
+    return c.html(page({ title: 'Step 4: Submit to Servers', stepNumber: 4, content, session }));
   }
 
-  // Pre-submit state: show beacon ticker + submit button
+  // Pre-submit: left panel = submit form, right panel = live server health + beacon
+  const serverListJSON = JSON.stringify(pbServers.map(s => ({
+    name: s.name,
+    environment: s.environment || 'embedded',
+    url: s.url || 'embedded',
+  })));
+
+  const rightPanel = `
+    <div class="code-panel">
+      <h3>Servers</h3>
+      <div id="server-list" style="margin-bottom:20px">
+        <div style="color:#a6adc8;font-size:0.85rem">Checking servers...</div>
+      </div>
+
+      <h3 style="margin-top:20px">Live drand Beacon</h3>
+      <div class="beacon-status" id="beacon-status">Connecting to drand network...</div>
+      <div class="beacon-list" id="beacon-list"></div>
+    </div>
+  `;
+
   const content = `
     <div id="submit-section">
-      <p>Now we submit the commitment to the server. The server will:</p>
+      <p>Now we submit the commitment to the server(s). Each server will:</p>
       <ol>
         <li>Validate the Ed25519 signature</li>
         <li>Verify <code>commitment_hash == SHA-256(signing_payload)</code></li>
@@ -68,33 +150,27 @@ route.get('/', (c) => {
         <li>Sign the entire response with the server's key</li>
         <li>Return a self-contained receipt</li>
       </ol>
-      ${note('The server holds the connection until the beacon fires. For drand quicknet this is at most 3 seconds. The receipt you get back contains <em>everything</em> needed for offline verification.')}
-      <!-- JS submit button (visible when JS enabled) -->
-      <button type="button" id="submit-btn" class="btn">Submit to Server</button>
-      <!-- Non-JS fallback form (hidden when JS enabled) -->
+      ${note('The commitment is submitted to <strong>all known servers</strong> in parallel. Each server independently records the commitment and waits for the same drand beacon round. You get back one receipt per server.')}
+      <button type="button" id="submit-btn" class="btn">Submit to All Servers</button>
       <noscript>
         <form method="POST">
-          <button type="submit" class="btn">Submit to Server</button>
+          <button type="submit" class="btn">Submit to All Servers</button>
         </form>
       </noscript>
       <p style="margin-top:8px;font-size:0.85rem;color:#666">This may take a few seconds while waiting for the drand beacon...</p>
-    </div>
-
-    <div class="beacon-ticker">
-      <h2>Live drand Beacon</h2>
-      <div class="beacon-status" id="beacon-status">Connecting to drand network...</div>
-      <div class="beacon-list" id="beacon-list"></div>
     </div>
 
     <div id="receipt-result"></div>
 
     <script>
     (function() {
+      var SERVER_LIST = ${serverListJSON};
       var CHAIN_HASH = '52db9ba70e0cc0f6eaf7803dd07447a1f5477735fd3f661792ba94600c84e971';
       var GENESIS = 1692803367;
       var PERIOD = 3;
       var API_BASE = 'https://api.drand.sh/' + CHAIN_HASH + '/public';
 
+      var serverListEl = document.getElementById('server-list');
       var beaconList = document.getElementById('beacon-list');
       var beaconStatus = document.getElementById('beacon-status');
       var submitBtn = document.getElementById('submit-btn');
@@ -102,12 +178,68 @@ route.get('/', (c) => {
       var rounds = {};
       var selectionRound = null;
       var submitted = false;
-      var tickerInterval = null;
 
-      function currentRoundNumber() {
-        return Math.floor((Date.now() / 1000 - GENESIS) / PERIOD) + 1;
+      // ── Server Health Checks ──
+      function renderServerList(results) {
+        var html = '';
+        for (var i = 0; i < results.length; i++) {
+          var r = results[i];
+          var dot = r.status === 'checking' ? '\\u25CB'
+                  : r.status === 'ok' ? '\\u25CF'
+                  : '\\u25CF';
+          var color = r.status === 'checking' ? '#a6adc8'
+                    : r.status === 'ok' ? '#a6e3a1'
+                    : '#f38ba8';
+          var latency = r.latencyMs != null ? ' (' + r.latencyMs + 'ms)' : '';
+          var details = '<div style="font-size:0.7rem;color:#585b70;margin-top:4px;word-break:break-all">'
+            + '<div>url: ' + escapeHTML(r.url) + '</div>'
+            + '<div>server_key: ' + escapeHTML(r.serverKey || '(pending)') + '</div>'
+            + '<div>environment: ' + escapeHTML(r.environment) + '</div>'
+            + '</div>';
+          html += '<div style="padding:8px 10px;margin:4px 0;background:#181825;border-radius:4px;font-size:0.85rem">'
+            + '<div style="display:flex;align-items:center;gap:8px">'
+            + '<span style="color:' + color + '">' + dot + '</span>'
+            + '<span style="color:#cdd6f4;flex:1">' + escapeHTML(r.name) + '</span>'
+            + '<span style="color:' + color + ';font-size:0.8rem">' + escapeHTML(r.statusText) + latency + '</span>'
+            + '</div>'
+            + details
+            + '</div>';
+        }
+        serverListEl.innerHTML = html;
       }
 
+      function checkServers() {
+        var results = SERVER_LIST.map(function(s) {
+          return { name: s.name, url: s.url, environment: s.environment, status: 'checking', statusText: 'checking...', serverKey: null, latencyMs: null };
+        });
+        renderServerList(results);
+
+        fetch('/steps/4/health')
+          .then(function(res) { return res.json(); })
+          .then(function(data) {
+            results = data.map(function(r) {
+              return {
+                name: r.name,
+                url: r.url || 'embedded',
+                environment: r.environment || 'embedded',
+                status: r.status,
+                statusText: r.status === 'ok' ? 'healthy' : r.error || 'unreachable',
+                serverKey: r.server_key || null,
+                latencyMs: r.latencyMs,
+              };
+            });
+            renderServerList(results);
+          })
+          .catch(function() {
+            results = results.map(function(r) {
+              r.status = 'error'; r.statusText = 'check failed';
+              return r;
+            });
+            renderServerList(results);
+          });
+      }
+
+      // ── Beacon Ticker ──
       function timeAgo(round) {
         var roundTime = GENESIS + (round - 1) * PERIOD;
         var diff = Math.floor(Date.now() / 1000 - roundTime);
@@ -129,20 +261,12 @@ route.get('/', (c) => {
           '<span class="round-rand">' + randHex + '...</span>' +
           '<span class="round-time">' + timeAgo(data.round) + '</span>';
 
-        // Remove 'latest' class from previous entries
         var prev = beaconList.querySelectorAll('.latest');
         for (var i = 0; i < prev.length; i++) prev[i].classList.remove('latest');
-
         beaconList.insertBefore(el, beaconList.firstChild);
+        while (beaconList.children.length > 20) beaconList.removeChild(beaconList.lastChild);
 
-        // Trim to 20 entries
-        while (beaconList.children.length > 20) {
-          beaconList.removeChild(beaconList.lastChild);
-        }
-
-        if (selectionRound && data.round === selectionRound) {
-          highlightRound(selectionRound);
-        }
+        if (selectionRound && data.round === selectionRound) highlightRound(selectionRound);
       }
 
       function highlightRound(round) {
@@ -175,12 +299,10 @@ route.get('/', (c) => {
 
       function startTicker() {
         fetchLatest();
-        tickerInterval = setInterval(function() {
-          fetchLatest();
-          updateTimes();
-        }, 2000);
+        setInterval(function() { fetchLatest(); updateTimes(); }, 2000);
       }
 
+      // ── Helpers ──
       function escapeHTML(s) {
         var div = document.createElement('div');
         div.appendChild(document.createTextNode(s));
@@ -200,120 +322,185 @@ route.get('/', (c) => {
         html += fieldHTML('Registered At', receipt.registered_at);
         html += fieldHTML('Server Key', receipt.server_key);
         html += fieldHTML('Server Signature', receipt.server_signature);
-        html += '<h2>Beacon Rounds</h2>';
+        html += '<h3>Beacon Rounds</h3>';
         if (arrival) {
-          html += '<p style="font-size:0.9rem;color:#666;margin-bottom:4px"><strong>Arrival beacon</strong> — the latest drand round when the commitment was received (already public):</p>';
+          html += '<p style="font-size:0.9rem;color:#666;margin-bottom:4px"><strong>Arrival beacon</strong>:</p>';
           html += fieldHTML('Arrival Round', arrival.round, false);
           html += fieldHTML('Arrival Randomness', arrival.randomness);
         }
         if (selBeacon) {
-          html += '<p style="font-size:0.9rem;color:#666;margin-bottom:4px;margin-top:12px"><strong>Selection beacon</strong> — the next drand round after arrival (not yet public at commit time, used for selection):</p>';
+          html += '<p style="font-size:0.9rem;color:#666;margin-bottom:4px;margin-top:12px"><strong>Selection beacon</strong>:</p>';
           html += fieldHTML('Selection Round', selBeacon.round, false);
           html += fieldHTML('Selection Randomness', selBeacon.randomness);
         }
-        if (arrival && selBeacon) {
-          html += '<div class="note">The arrival round (<strong>' + arrival.round + '</strong>) was already known when you submitted. The selection round (<strong>' + selBeacon.round + '</strong>) hadn\\\'t been published yet — proving you couldn\\\'t have known the randomness that determines which items get selected.</div>';
-        }
-        html += '<h2>Signer Activity</h2>';
+        html += '<h3>Signer Activity</h3>';
         var pastHour = (receipt.signer_activity && receipt.signer_activity.commitments_past_hour) != null ? receipt.signer_activity.commitments_past_hour : 'N/A';
         var pastMonth = (receipt.signer_activity && receipt.signer_activity.commitments_past_month) != null ? receipt.signer_activity.commitments_past_month : 'N/A';
         html += fieldHTML('Past Hour', pastHour, false);
         html += fieldHTML('Past Month', pastMonth, false);
-        html += '<div class="note">The server tracks how many commitments this signing key has made. This is transparent context, not rate limiting — the server never rejects based on activity.</div>';
-        html += '<h2>Full Receipt</h2>';
-        html += '<pre class="json-block"><code>' + escapeHTML(JSON.stringify(receipt, null, 2)) + '</code></pre>';
+        return html;
+      }
+
+      function renderAllResults(serverResults) {
+        var successCount = 0;
+        for (var i = 0; i < serverResults.length; i++) {
+          if (serverResults[i].status === 'ok') successCount++;
+        }
+
+        var html = '<div class="note">Submitted to <strong>' + serverResults.length + ' server(s)</strong>: ' + successCount + ' succeeded, ' + (serverResults.length - successCount) + ' failed.</div>';
+
+        for (var i = 0; i < serverResults.length; i++) {
+          var r = serverResults[i];
+          html += '<div class="server-result">';
+          if (r.status === 'ok') {
+            html += '<h2>' + escapeHTML(r.name) + ' <span class="check">OK</span></h2>';
+            html += renderReceipt(r.receipt);
+          } else {
+            html += '<h2>' + escapeHTML(r.name) + ' <span class="cross">ERROR</span></h2>';
+            html += '<p style="color:#e63946">' + escapeHTML(r.error) + '</p>';
+          }
+          html += '</div>';
+        }
+
         html += '<a href="/steps/5" class="btn btn-next">Continue to Step 5 &rarr;</a>';
         return html;
       }
 
+      // ── Submit Handler ──
       async function handleSubmit() {
         if (submitted) return;
         submitted = true;
         submitBtn.disabled = true;
-        submitBtn.innerHTML = '<span class="spinner"></span> Submitting...';
-        beaconStatus.textContent = 'Submitting commitment to server...';
+        submitBtn.innerHTML = '<span class="spinner"></span> Submitting to all servers...';
+        beaconStatus.textContent = 'Submitting commitment to all servers...';
 
         try {
           var resp = await fetch('/steps/4/api', { method: 'POST' });
           var json = await resp.json();
           if (json.error) {
             submitBtn.disabled = false;
-            submitBtn.textContent = 'Submit to Server';
+            submitBtn.textContent = 'Submit to All Servers';
             submitted = false;
             beaconStatus.textContent = 'Error: ' + json.error + ' — try again';
             return;
           }
+
+          var serverResults = json.serverResults;
           var receipt = json.receipt;
-          selectionRound = receipt.selection && receipt.selection.beacon_output && receipt.selection.beacon_output.round;
-          if (selectionRound) {
-            beaconStatus.textContent = 'Selection round #' + selectionRound + ' — highlighted below';
-            highlightRound(selectionRound);
+
+          if (receipt) {
+            selectionRound = receipt.selection && receipt.selection.beacon_output && receipt.selection.beacon_output.round;
+            if (selectionRound) {
+              beaconStatus.textContent = 'Selection round #' + selectionRound + ' — highlighted below';
+              highlightRound(selectionRound);
+            }
           }
+
           submitBtn.style.display = 'none';
-          receiptResult.innerHTML = renderReceipt(receipt);
+          receiptResult.innerHTML = renderAllResults(serverResults);
         } catch (err) {
           submitBtn.disabled = false;
-          submitBtn.textContent = 'Submit to Server';
+          submitBtn.textContent = 'Submit to All Servers';
           submitted = false;
           beaconStatus.textContent = 'Network error — try again';
         }
       }
 
-      if (submitBtn) {
-        submitBtn.addEventListener('click', handleSubmit);
-      }
+      if (submitBtn) submitBtn.addEventListener('click', handleSubmit);
+      checkServers();
       startTicker();
     })();
     </script>
   `;
 
-  return c.html(page({ title: 'Step 4: Submit to Server', stepNumber: 4, content, codeRefs: refs, session }));
+  return c.html(page({
+    title: 'Step 4: Submit to Servers',
+    stepNumber: 4,
+    content,
+    rightPanel,
+    session,
+  }));
+});
+
+// Health check API — pings all servers in parallel
+route.get('/health', async (c) => {
+  const pbServers = c.get('pbServers');
+
+  const results = await Promise.allSettled(
+    pbServers.map(async (server) => {
+      const start = Date.now();
+      const res = await server.client.request('http://localhost/health');
+      const latencyMs = Date.now() - start;
+
+      if (res.ok) {
+        let serverKey = null;
+        try {
+          const infoRes = await server.client.request('http://localhost/v1/server-info');
+          if (infoRes.ok) {
+            const info = await infoRes.json();
+            serverKey = info.server_key;
+          }
+        } catch {}
+        return { name: server.name, url: server.url || 'embedded', environment: server.environment || 'embedded', status: 'ok', latencyMs, server_key: serverKey };
+      } else {
+        return { name: server.name, url: server.url || 'embedded', environment: server.environment || 'embedded', status: 'error', latencyMs, error: `HTTP ${res.status}` };
+      }
+    })
+  );
+
+  const data = results.map((r, i) => {
+    if (r.status === 'fulfilled') return r.value;
+    return {
+      name: pbServers[i].name,
+      url: pbServers[i].url || 'embedded',
+      environment: pbServers[i].environment || 'embedded',
+      status: 'error',
+      latencyMs: null,
+      error: r.reason?.message || 'Unreachable',
+    };
+  });
+
+  return c.json(data);
 });
 
 // JSON API for JS-driven submit
 route.post('/api', async (c) => {
   const session = c.get('session');
-  const pbNode = c.get('pbNode');
+  const pbServers = c.get('pbServers');
 
   if (!session.commitment) {
     return c.json({ error: 'No commitment in session' }, 400);
   }
 
-  const res = await pbNode.request('http://localhost/v1/commitments', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(session.commitment),
-  });
+  const serverResults = await submitToAllServers(session.commitment, pbServers);
+  session.serverResults = serverResults;
 
-  if (res.ok) {
-    const receipt = await res.json();
-    session.receipt = receipt;
+  const firstOk = serverResults.find(r => r.status === 'ok');
+  if (firstOk) {
+    session.receipt = firstOk.receipt;
     session._completedStep = Math.max(session._completedStep || 0, 4);
-    return c.json({ receipt });
+    return c.json({ serverResults, receipt: firstOk.receipt });
   } else {
-    const err = await res.json();
-    session.submitError = err.error || 'Unknown error';
-    return c.json({ error: session.submitError }, res.status);
+    const errors = serverResults.map(r => `${r.name}: ${r.error}`).join('; ');
+    session.submitError = errors;
+    return c.json({ error: errors }, 502);
   }
 });
 
 // Non-JS fallback: form POST with redirect
 route.post('/', async (c) => {
   const session = c.get('session');
-  const pbNode = c.get('pbNode');
+  const pbServers = c.get('pbServers');
 
-  const res = await pbNode.request('http://localhost/v1/commitments', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(session.commitment),
-  });
+  const serverResults = await submitToAllServers(session.commitment, pbServers);
+  session.serverResults = serverResults;
 
-  if (res.ok) {
-    session.receipt = await res.json();
+  const firstOk = serverResults.find(r => r.status === 'ok');
+  if (firstOk) {
+    session.receipt = firstOk.receipt;
     session._completedStep = Math.max(session._completedStep || 0, 4);
   } else {
-    const err = await res.json();
-    session.submitError = err.error || 'Unknown error';
+    session.submitError = serverResults.map(r => `${r.name}: ${r.error}`).join('; ');
   }
   return c.redirect('/steps/4');
 });

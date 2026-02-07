@@ -5,12 +5,14 @@
   "main": "src/app.js",
   "scripts": {
     "start": "node src/server.js",
-    "test": "node --test test/"
+    "test": "node --test 'test/*.test.js'",
+    "test:remote": "SERVER_URL=https://commit-reveal.orgtopus.workers.dev node --test 'test/*.test.js'"
   },
   "dependencies": {
     "@hono/node-server": "^1.13.0",
     "hono": "^4.0.0",
     "better-sqlite3": "^11.0.0",
+    "pb-storage": "file:../pb-storage",
     "pb-wasm": "file:../../pkg"
   },
   "devDependencies": {

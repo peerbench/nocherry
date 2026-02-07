@@ -98,6 +98,17 @@ describe('JS CLI', () => {
     assert.ok(output.includes('VALID'));
   });
 
+  it('usage includes mirrors commands', () => {
+    try {
+      run([]);
+      assert.fail('Should have exited');
+    } catch (e) {
+      const output = e.stdout || e.stderr || '';
+      assert.ok(output.includes('mirrors add'));
+      assert.ok(output.includes('mirrors list'));
+    }
+  });
+
   it('verify rejects tampered commitment', () => {
     const raw = readFileSync(join(tempDir, 'commitment.json'), 'utf-8');
     const commitment = JSON.parse(raw);

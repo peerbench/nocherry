@@ -1,0 +1,13 @@
+{
+  "indexes": [
+    {
+      "collectionGroup": "commitments",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "signing_key", "order": "ASCENDING" },
+        { "fieldPath": "registered_at", "order": "ASCENDING" }
+      ]
+    }
+  ],
+  "fieldOverrides": []
+}

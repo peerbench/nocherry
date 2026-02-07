@@ -69,7 +69,7 @@ route.post('/', async (c) => {
   }
 
   // Check for duplicate
-  const existing = storage.getCommitment(body.commitment_hash);
+  const existing = await storage.getCommitment(body.commitment_hash);
   if (existing) {
     return c.json({ error: 'Commitment already exists' }, 409);
   }
@@ -78,7 +78,7 @@ route.post('/', async (c) => {
   const registeredAt = new Date().toISOString();
 
   // Store commitment
-  storage.putCommitment(body.commitment_hash, body, registeredAt);
+  await storage.putCommitment(body.commitment_hash, body, registeredAt);
 
   // Fetch arrival beacon (latest round at registration time — already public)
   let arrivalBeacon = null;
@@ -93,14 +93,14 @@ route.post('/', async (c) => {
   try {
     const beaconOutput = await getBeaconOutput(storage, body.beacon, registeredAt);
     selection = computeSelection(body, beaconOutput);
-    storage.putSelection(body.commitment_hash, selection, beaconOutput.round);
+    await storage.putSelection(body.commitment_hash, selection, beaconOutput.round);
   } catch (e) {
     // Beacon fetch failed — still record the commitment, return without selection
     selection = null;
   }
 
   // Get signer activity
-  const signerActivity = storage.getSignerActivity(body.signing_key);
+  const signerActivity = await storage.getSignerActivity(body.signing_key);
 
   // Build and sign the response
   const receipt = signResponse({
@@ -122,13 +122,13 @@ route.get('/:hash', async (c) => {
   const storage = c.get('storage');
   const hash = c.req.param('hash');
 
-  const record = storage.getCommitment(hash);
+  const record = await storage.getCommitment(hash);
   if (!record) {
     return c.json({ error: 'Commitment not found' }, 404);
   }
 
-  const selection = storage.getSelection(hash);
-  const signerActivity = storage.getSignerActivity(record.commitment.signing_key);
+  const selection = await storage.getSelection(hash);
+  const signerActivity = await storage.getSignerActivity(record.commitment.signing_key);
 
   // Fetch arrival beacon (latest round at registration time)
   let arrivalBeacon = null;
@@ -157,13 +157,13 @@ route.get('/:hash/selection', async (c) => {
   const storage = c.get('storage');
   const hash = c.req.param('hash');
 
-  const record = storage.getCommitment(hash);
+  const record = await storage.getCommitment(hash);
   if (!record) {
     return c.json({ error: 'Commitment not found' }, 404);
   }
 
   // Check cache first
-  let selection = storage.getSelection(hash);
+  let selection = await storage.getSelection(hash);
   if (selection) {
     return c.json(signResponse(selection));
   }
@@ -172,7 +172,7 @@ route.get('/:hash/selection', async (c) => {
   try {
     const beaconOutput = await getBeaconOutput(storage, record.commitment.beacon, record.registered_at);
     selection = computeSelection(record.commitment, beaconOutput);
-    storage.putSelection(hash, selection, beaconOutput.round);
+    await storage.putSelection(hash, selection, beaconOutput.round);
     return c.json(signResponse(selection));
   } catch (e) {
     return c.json({ error: `Selection not available: ${e.message}` }, 503);

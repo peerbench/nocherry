@@ -54,7 +54,7 @@ export async function getBeaconOutput(storage, beacon, registeredAt, maxWaitMs =
   const neededRound = Number(wasm.drandNextRoundAfter(BigInt(regUnix)));
 
   // Check cache
-  const cached = storage.getCachedBeacon('drand', neededRound);
+  const cached = await storage.getCachedBeacon('drand', neededRound);
   if (cached) return cached;
 
   // Fetch with retry
@@ -63,7 +63,7 @@ export async function getBeaconOutput(storage, beacon, registeredAt, maxWaitMs =
   while (true) {
     try {
       const output = await fetchDrandRound(neededRound);
-      storage.cacheBeacon('drand', neededRound, output);
+      await storage.cacheBeacon('drand', neededRound, output);
       return output;
     } catch (e) {
       if (Date.now() + delay > deadline) {
@@ -91,13 +91,13 @@ export async function getArrivalBeacon(storage, beacon, timestamp) {
   if (currentRound < 1) return null;
 
   // Check cache
-  const cached = storage.getCachedBeacon('drand', currentRound);
+  const cached = await storage.getCachedBeacon('drand', currentRound);
   if (cached) return cached;
 
   // This round is in the past, so it should be immediately available
   try {
     const output = await fetchDrandRound(currentRound);
-    storage.cacheBeacon('drand', currentRound, output);
+    await storage.cacheBeacon('drand', currentRound, output);
     return output;
   } catch {
     return null; // Non-critical — don't fail the request

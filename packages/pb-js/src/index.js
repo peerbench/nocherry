@@ -30,3 +30,6 @@ export const drandNextRoundAfter = wasm.drandNextRoundAfter;
 export function hashString(s) {
   return wasm.hashBytes(new TextEncoder().encode(s));
 }
+
+// Server registry
+export { loadRegistry, getServers, resolveServer } from './registry.js';

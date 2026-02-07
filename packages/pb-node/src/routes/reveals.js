@@ -8,7 +8,6 @@ import { Hono } from 'hono';
 import * as wasm from 'pb-wasm';
 import { signResponse } from '../signing.js';
 import { getArrivalBeacon } from '../beacon.js';
-import { randomBytes } from 'node:crypto';
 
 const route = new Hono();
 
@@ -29,7 +28,7 @@ route.post('/:hash/reveals', async (c) => {
   }
 
   // Check commitment exists
-  const record = storage.getCommitment(hash);
+  const record = await storage.getCommitment(hash);
   if (!record) {
     return c.json({ error: 'Commitment not found' }, 404);
   }
@@ -78,9 +77,9 @@ route.post('/:hash/reveals', async (c) => {
   }
 
   const registeredAt = new Date().toISOString();
-  const revealId = randomBytes(16).toString('hex');
+  const revealId = crypto.randomUUID().replace(/-/g, '');
 
-  storage.putReveal(revealId, hash, body, registeredAt);
+  await storage.putReveal(revealId, hash, body, registeredAt);
 
   // Fetch the current beacon at reveal time
   let beaconAtReveal = null;
@@ -100,16 +99,16 @@ route.post('/:hash/reveals', async (c) => {
 /**
  * GET /v1/commitments/:hash/reveals — list reveals for a commitment.
  */
-route.get('/:hash/reveals', (c) => {
+route.get('/:hash/reveals', async (c) => {
   const storage = c.get('storage');
   const hash = c.req.param('hash');
 
-  const record = storage.getCommitment(hash);
+  const record = await storage.getCommitment(hash);
   if (!record) {
     return c.json({ error: 'Commitment not found' }, 404);
   }
 
-  const reveals = storage.getReveals(hash);
+  const reveals = await storage.getReveals(hash);
   return c.json({ commitment_hash: hash, reveals });
 });
 

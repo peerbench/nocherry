@@ -1,0 +1,23 @@
+{
+  "name": "pb-storage",
+  "version": "0.1.0",
+  "type": "module",
+  "main": "src/index.js",
+  "exports": {
+    ".": "./src/index.js",
+    "./sqlite": "./src/sqlite.js",
+    "./postgres": "./src/postgres.js",
+    "./types": "./src/types.js"
+  },
+  "dependencies": {
+    "kysely": "^0.27.0"
+  },
+  "peerDependencies": {
+    "better-sqlite3": ">=11.0.0",
+    "pg": ">=8.0.0"
+  },
+  "peerDependenciesMeta": {
+    "better-sqlite3": { "optional": true },
+    "pg": { "optional": true }
+  }
+}

@@ -31,14 +31,14 @@ async function req(method, path, followRedirect = false) {
 }
 
 describe('Demo walkthrough', () => {
-  before(() => {
-    const result = createDemoApp();
+  before(async () => {
+    const result = await createDemoApp({ skipRemote: true });
     app = result.app;
     pbStorage = result.pbStorage;
   });
 
   after(() => {
-    pbStorage.close();
+    if (pbStorage) pbStorage.close();
   });
 
   it('GET / renders home page', async () => {
@@ -100,8 +100,15 @@ describe('Demo walkthrough', () => {
     assert.ok(html.includes('Continue to Step 7'));
   });
 
-  it('Step 7: verify', async () => {
+  it('Step 7: publish & register mirrors', async () => {
     let res = await req('POST', '/steps/7', true);
+    const html = await res.text();
+    assert.ok(html.includes('mirror'));
+    assert.ok(html.includes('Continue to Step 8'));
+  });
+
+  it('Step 8: verify', async () => {
+    let res = await req('POST', '/steps/8', true);
     const html = await res.text();
     assert.ok(html.includes('Commitment Signature'));
     assert.ok(html.includes('Data Integrity'));

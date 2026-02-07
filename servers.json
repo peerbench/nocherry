@@ -1,0 +1,46 @@
+{
+  "servers": [
+    {
+      "name": "local",
+      "url": "http://localhost:7420",
+      "server_key": null,
+      "operator": "peerbench",
+      "environment": "dev"
+    },
+    {
+      "name": "cloudflare-1",
+      "url": "https://commit-reveal.orgtopus.workers.dev",
+      "server_key": "did:key:z6MkqwzoE3a8Q1WQ1egLu2w5pjDLKDqpmQ9FV67wYXtWnUeK",
+      "operator": "peerbench",
+      "environment": "dev"
+    },
+    {
+      "name": "supabase-1",
+      "url": "https://zgyneuohwbzufajusohz.supabase.co/functions/v1/commit-reveal",
+      "server_key": "did:key:z6MkmSjTtLHTfdmTTuN6v5KNDCNxheEfnyxzSz4Zk1stQRYT",
+      "operator": "peerbench",
+      "environment": "dev"
+    },
+    {
+      "name": "google-cloud-1",
+      "url": "https://commit-reveal-323104702830.us-central1.run.app",
+      "server_key": "did:key:z6MkjzBJL9zxTKqhoogzgrh6VoWMf1z5Jjyv7bVJwSfbASqM",
+      "operator": "peerbench",
+      "environment": "dev"
+    }
+  ],
+  "reveal_publishers": [
+    {
+      "name": "dev-r2",
+      "url": "https://reveal-r2.orgtopus.workers.dev",
+      "operator": "peerbench",
+      "environment": "dev"
+    },
+    {
+      "name": "dev-gcs",
+      "url": "https://reveal-gcs-323104702830.us-central1.run.app",
+      "operator": "peerbench",
+      "environment": "dev"
+    }
+  ]
+}

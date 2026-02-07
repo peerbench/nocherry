@@ -58,7 +58,13 @@ route.get('/', (c) => {
 
     ${field('Selected Count', `${selection?.selected_count ?? 0} / ${selection?.total_count ?? commitment.item_count}`, false)}
 
-    ${note('This selection is <strong>deterministic</strong> — anyone with the commitment and beacon output can independently recompute it. The server signature is a convenience attestation, not required for verification.')}
+    ${(() => {
+      const serverResults = session.serverResults || [];
+      const okCount = serverResults.filter(r => r.status === 'ok').length;
+      return okCount > 1
+        ? note(`<strong>${okCount} server(s)</strong> all computed the same selection using drand round <strong>${selection?.beacon_output?.round}</strong>. Because every server observes the same beacon, the selection is identical everywhere.`)
+        : note('This selection is <strong>deterministic</strong> — anyone with the commitment and beacon output can independently recompute it. The server signature is a convenience attestation, not required for verification.');
+    })()}
 
     ${nextButton(6)}
   `;

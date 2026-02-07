@@ -9,9 +9,10 @@ let serverKeypair = null;
 
 /**
  * Initialize or load the server's signing keypair.
+ * Async because storage is now async (Kysely).
  */
-export function initServerKey(storage) {
-  const existing = storage.getServerIdentity();
+export async function initServerKey(storage) {
+  const existing = await storage.getServerIdentity();
   if (existing) {
     serverKeypair = existing;
     return serverKeypair;
@@ -23,7 +24,7 @@ export function initServerKey(storage) {
     private_key_hex: kp.private_key_hex,
     public_key_hex: kp.public_key_hex,
   };
-  storage.setServerIdentity(serverKeypair);
+  await storage.setServerIdentity(serverKeypair);
   return serverKeypair;
 }
 

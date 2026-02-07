@@ -6,7 +6,7 @@ import { serve } from '@hono/node-server';
 import { createDefaultApp } from './app.js';
 import { config } from './config.js';
 
-const { app, storage } = createDefaultApp();
+const { app, storage } = await createDefaultApp();
 
 const server = serve({
   fetch: app.fetch,

@@ -1,13 +1,13 @@
 /**
- * Demo app — Hono application with embedded pb-node server.
+ * Demo app — Hono application with embedded pb-node + remote servers.
  */
 
 import { Hono } from 'hono';
+import { readFileSync } from 'node:fs';
+import { dirname, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { sessionMiddleware } from './session.js';
-
-// Import pb-node's createApp to embed it in-process
-import { createApp as createPbNodeApp } from '../../pb-node/src/app.js';
-import { SQLiteStorage } from '../../pb-node/src/storage/sqlite.js';
+import { createRemoteClient } from './remote-client.js';
 
 // Route handlers
 import homeRoute from './routes/home.js';
@@ -17,21 +17,58 @@ import step3Route from './routes/step3-commit.js';
 import step4Route from './routes/step4-submit.js';
 import step5Route from './routes/step5-selection.js';
 import step6Route from './routes/step6-reveal.js';
-import step7Route from './routes/step7-verify.js';
+import step7Route from './routes/step7-publish.js';
+import step8Route from './routes/step8-verify.js';
 
-export function createDemoApp() {
+const __dirname = dirname(fileURLToPath(import.meta.url));
+
+function loadServersJson() {
+  try {
+    const raw = readFileSync(resolve(__dirname, '..', '..', '..', 'servers.json'), 'utf-8');
+    return JSON.parse(raw).servers || [];
+  } catch {
+    return [];
+  }
+}
+
+export async function createDemoApp(options) {
   const app = new Hono();
 
-  // Create an in-process pb-node server for the demo to call
-  const pbStorage = new SQLiteStorage(':memory:');
-  const pbNodeApp = createPbNodeApp(pbStorage);
+  // Always create embedded pb-node
+  const pbNodeMod = await import('../../pb-node/src/app.js');
+  const signingMod = await import('../../pb-node/src/signing.js');
+  const storageMod = await import('pb-storage/sqlite');
+
+  const pbStorage = storageMod.createSqliteStorage(':memory:');
+  await signingMod.initServerKey(pbStorage);
+  const embeddedApp = pbNodeMod.createApp(pbStorage);
+
+  // Build server list: embedded first, then prod remotes from servers.json
+  const pbServers = [
+    { name: 'embedded', client: embeddedApp, environment: 'embedded' },
+  ];
+
+  if (!options?.skipRemote) {
+    const serversConfig = loadServersJson();
+    for (const srv of serversConfig) {
+      // Skip localhost entries — the embedded server handles local
+      if (srv.url && !srv.url.includes('localhost')) {
+        pbServers.push({
+          name: srv.name,
+          client: createRemoteClient(srv.url),
+          url: srv.url,
+          environment: srv.environment,
+        });
+      }
+    }
+  }
 
   // Session middleware
   app.use('*', sessionMiddleware());
 
-  // Inject the pb-node app into every request context
+  // Inject server array into every request context
   app.use('*', async (c, next) => {
-    c.set('pbNode', pbNodeApp);
+    c.set('pbServers', pbServers);
     await next();
   });
 
@@ -44,6 +81,7 @@ export function createDemoApp() {
   app.route('/steps/5', step5Route);
   app.route('/steps/6', step6Route);
   app.route('/steps/7', step7Route);
+  app.route('/steps/8', step8Route);
 
   app.notFound((c) => c.html('<h1>404</h1><p>Not found</p>', 404));
 
@@ -52,5 +90,5 @@ export function createDemoApp() {
     return c.html(`<h1>Error</h1><pre>${err.message}</pre>`, 500);
   });
 
-  return { app, pbStorage };
+  return { app, pbStorage, pbServers };
 }

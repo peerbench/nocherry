@@ -3,16 +3,18 @@
  *
  * Tests various ways a malicious client could try to break the server:
  * injection attacks, protocol violations, boundary conditions, forgeries.
+ *
+ * Dual-mode:
+ *   npm test                → local (in-memory SQLite)
+ *   SERVER_URL=… npm test   → remote (live server via fetch)
  */
 
 import { describe, it, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import * as wasm from 'pb-wasm';
-import { createApp } from '../src/app.js';
-import { SQLiteStorage } from '../src/storage/sqlite.js';
+import { getApp, cleanup, isRemote } from './_setup.js';
 
 let app;
-let storage;
 
 const DRAND_CHAIN_HASH = '52db9ba70e0cc0f6eaf7803dd07447a1f5477735fd3f661792ba94600c84e971';
 
@@ -38,13 +40,12 @@ async function req(method, path, body, headers = {}) {
 }
 
 describe('Attack Tests — Server API', () => {
-  before(() => {
-    storage = new SQLiteStorage(':memory:');
-    app = createApp(storage);
+  before(async () => {
+    app = await getApp();
   });
 
-  after(() => {
-    storage.close();
+  after(async () => {
+    await cleanup();
   });
 
   // ══════════════════════════════════════════════════════════════════

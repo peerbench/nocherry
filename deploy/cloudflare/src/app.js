@@ -1,0 +1,46 @@
+/**
+ * Worker Hono app factory.
+ * Creates D1Storage per-request and lazy-inits the server key.
+ */
+
+import { Hono } from 'hono';
+import { D1Storage } from './storage/d1.js';
+import { getConfig } from './config.js';
+import { initServerKey } from './signing.js';
+
+import serverInfoRoute from './routes/server-info.js';
+import commitmentsRoute from './routes/commitments.js';
+import revealsRoute from './routes/reveals.js';
+
+export function createApp() {
+  const app = new Hono();
+
+  // Middleware: inject storage, config, and ensure server key is initialized
+  app.use('*', async (c, next) => {
+    const storage = new D1Storage(c.env.DB);
+    const config = getConfig(c.env);
+    c.set('storage', storage);
+    c.set('config', config);
+    await initServerKey(storage);
+    await next();
+  });
+
+  // Health check
+  app.get('/health', (c) => c.json({ status: 'ok' }));
+
+  // Routes
+  app.route('/v1/server-info', serverInfoRoute);
+  app.route('/v1/commitments', commitmentsRoute);
+  app.route('/v1/commitments', revealsRoute);
+
+  // 404 fallback
+  app.notFound((c) => c.json({ error: 'Not found' }, 404));
+
+  // Error handler
+  app.onError((err, c) => {
+    console.error('Unhandled error:', err);
+    return c.json({ error: 'Internal server error' }, 500);
+  });
+
+  return app;
+}

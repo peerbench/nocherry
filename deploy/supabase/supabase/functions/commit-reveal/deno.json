@@ -1,0 +1,6 @@
+{
+  "nodeModulesDir": "auto",
+  "imports": {
+    "@types/pg": "npm:@types/pg@^8.16.0"
+  }
+}
