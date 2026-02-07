@@ -8,7 +8,7 @@ test.describe('Demo webapp browser tests', () => {
     await expect(page.locator('button', { hasText: 'Start Demo' })).toBeVisible();
   });
 
-  test('Full 7-step walkthrough', async ({ page }) => {
+  test('Full 8-step walkthrough', async ({ page }) => {
     // Navigate to home and click "Start Demo"
     // The "Start Demo" form POSTs to /steps/1, which generates a keypair
     // and redirects back to GET /steps/1 (with keypair in session).
@@ -63,9 +63,16 @@ test.describe('Demo webapp browser tests', () => {
     await page.locator('a', { hasText: 'Continue to Step 7' }).click();
     await page.waitForURL('**/steps/7');
 
-    // Step 7: Run Verification
-    await page.locator('button', { hasText: 'Run Verification' }).click();
+    // Step 7: Publish & Register Mirrors
+    await page.locator('button', { hasText: 'Register Data Mirrors' }).click();
     await page.waitForURL('**/steps/7');
+    await expect(page.locator('.content-panel', { hasText: 'mirror' })).toBeVisible();
+    await page.locator('a', { hasText: 'Continue to Step 8' }).click();
+    await page.waitForURL('**/steps/8');
+
+    // Step 8: Run Verification
+    await page.locator('button', { hasText: 'Run Verification' }).click();
+    await page.waitForURL('**/steps/8');
     await expect(page.locator('.content-panel', { hasText: 'All checks passed' })).toBeVisible();
   });
 

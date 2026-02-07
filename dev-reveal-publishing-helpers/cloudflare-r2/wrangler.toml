@@ -1,0 +1,21 @@
+name = "reveal-r2"
+main = "src/index.js"
+compatibility_date = "2025-01-01"
+compatibility_flags = ["nodejs_compat"]
+
+[[rules]]
+type = "CompiledWasm"
+globs = ["**/*.wasm"]
+
+[[r2_buckets]]
+binding = "DATA_BUCKET"
+bucket_name = "reveal-data"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "reveal-store-db"
+database_id = "TODO-create-with-wrangler-d1-create"
+
+[vars]
+MAX_UPLOAD_MB = "50"
+RATE_LIMIT_PER_HOUR = "20"

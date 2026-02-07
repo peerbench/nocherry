@@ -6,4 +6,10 @@ pkg/
 *.db-shm
 .DS_Store
 prompt_history.txt
+AgentsMemory.md
 test-results/
+deploy/cloudflare/.wrangler/
+deploy/cloudflare/node_modules/
+deploy/cloudflare/src/wasm/pb_wasm_bg.wasm
+deployments.log
+deploy/supabase/supabase/.temp/

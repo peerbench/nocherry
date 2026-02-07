@@ -3,22 +3,21 @@
  */
 
 import { Hono } from 'hono';
-import { SQLiteStorage } from './storage/sqlite.js';
+import { createSqliteStorage } from 'pb-storage/sqlite';
 import { initServerKey } from './signing.js';
 import { config } from './config.js';
 
 import serverInfoRoute from './routes/server-info.js';
 import commitmentsRoute from './routes/commitments.js';
 import revealsRoute from './routes/reveals.js';
+import mirrorsRoute from './routes/mirrors.js';
 
 /**
  * Create a Hono app with the given storage backend.
+ * Storage must already have server key initialized.
  */
 export function createApp(storage) {
   const app = new Hono();
-
-  // Initialize server signing key
-  initServerKey(storage);
 
   // Inject storage into every request context
   app.use('*', async (c, next) => {
@@ -33,6 +32,7 @@ export function createApp(storage) {
   app.route('/v1/server-info', serverInfoRoute);
   app.route('/v1/commitments', commitmentsRoute);
   app.route('/v1/commitments', revealsRoute);
+  app.route('/v1/commitments', mirrorsRoute);
 
   // 404 fallback
   app.notFound((c) => c.json({ error: 'Not found' }, 404));
@@ -48,8 +48,10 @@ export function createApp(storage) {
 
 /**
  * Create a default app with SQLite storage.
+ * Returns a promise since server key init is async.
  */
-export function createDefaultApp() {
-  const storage = new SQLiteStorage(config.dbPath);
+export async function createDefaultApp() {
+  const storage = createSqliteStorage(config.dbPath);
+  await initServerKey(storage);
   return { app: createApp(storage), storage };
 }

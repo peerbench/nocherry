@@ -10,77 +10,12 @@ const refs = [
   codeRef('crates/pb-core/src/commitment.rs', 1, 20, 'Rust: Commitment verification'),
 ];
 
-route.get('/', (c) => {
-  const session = c.get('session');
-  if (!session.reveal) return c.redirect('/steps/6');
+function esc(s) {
+  return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
 
-  const checks = session.verificationChecks;
-
-  let content;
-  if (!checks) {
-    content = `
-      <p>The final step: <strong>offline verification</strong>. Given the commitment, beacon output,
-      selection, reveal, and actual data — anyone can verify the entire chain without contacting a server.</p>
-
-      <h2>Verification Steps</h2>
-      <ol>
-        <li><strong>Verify commitment signature</strong> — Ed25519 verify against the signing payload</li>
-        <li><strong>Verify beacon</strong> — confirm the beacon output is authentic and postdates the commitment</li>
-        <li><strong>Verify selection</strong> — re-run the selection algorithm, confirm it matches</li>
-        <li><strong>Verify reveal signature</strong> — Ed25519 verify the reveal object</li>
-        <li><strong>Verify data integrity</strong> — hash revealed data, confirm it matches committed hashes</li>
-        <li><strong>Check completeness</strong> — are all selected items actually revealed?</li>
-      </ol>
-
-      ${note('This is the most important part of the protocol. Everything up to now was setup — this is where the proofs are checked. All verification happens locally, no network needed.')}
-      ${button('Run Verification')}
-    `;
-  } else {
-    const allPassed = checks.every(ch => ch.pass);
-    content = `
-      <h2>Verification Results</h2>
-      <div style="margin:16px 0">
-        ${checks.map(ch => `
-          <div style="display:flex;align-items:center;gap:10px;padding:10px 0;border-bottom:1px solid #eee">
-            <span class="${ch.pass ? 'check' : 'cross'}" style="font-size:1.2rem">${ch.pass ? '\u2713' : '\u2717'}</span>
-            <div>
-              <div style="font-weight:600;font-size:0.95rem">${ch.name}</div>
-              <div style="font-size:0.8rem;color:#666">${ch.detail}</div>
-            </div>
-          </div>
-        `).join('')}
-      </div>
-
-      <div style="margin:20px 0;padding:16px;border-radius:8px;background:${allPassed ? '#d4edda' : '#f8d7da'};border:1px solid ${allPassed ? '#c3e6cb' : '#f5c6cb'}">
-        <strong style="font-size:1.1rem">${allPassed ? 'All checks passed!' : 'Some checks failed'}</strong>
-        <p style="margin-top:4px;font-size:0.9rem">${allPassed
-          ? 'The commitment, selection, and reveal form a valid proof chain. This verification required zero network access — all public keys are embedded in did:key identifiers.'
-          : 'Review the failed checks above.'}</p>
-      </div>
-
-      ${note(`<strong>What this proves:</strong><br>
-      1. The committer declared these hashes <em>before</em> the randomness existed<br>
-      2. The beacon randomly selected items — the committer couldn't influence this<br>
-      3. The revealed data matches the committed hashes<br>
-      4. All selected items were actually revealed (no cherry-picking)`)}
-
-      <div style="margin-top:24px">
-        <a href="/" class="btn">Start Over</a>
-      </div>
-    `;
-  }
-
-  return c.html(page({ title: 'Step 7: Verify', stepNumber: 7, content, codeRefs: refs, session }));
-});
-
-route.post('/', (c) => {
-  const session = c.get('session');
-  const commitment = session.commitment;
-  const receipt = session.receipt;
-  const reveal = session.reveal;
-  const sampleData = session.sampleData;
+function runVerificationChecks(commitment, receipt, reveal, sampleData) {
   const selection = receipt.selection;
-
   const checks = [];
 
   // 1. Verify commitment signature
@@ -195,9 +130,102 @@ route.post('/', (c) => {
       : `${missing.length} selected item(s) missing from reveal`,
   });
 
-  session.verificationChecks = checks;
-  session._completedStep = Math.max(session._completedStep || 0, 7);
-  return c.redirect('/steps/7');
+  return checks;
+}
+
+route.get('/', (c) => {
+  const session = c.get('session');
+  if (!session.reveal) return c.redirect('/steps/7');
+
+  const verificationResults = session.verificationResults;
+
+  let content;
+  if (!verificationResults) {
+    content = `
+      <p>The final step: <strong>offline verification</strong>. Given the commitment, beacon output,
+      selection, reveal, and actual data — anyone can verify the entire chain without contacting a server.</p>
+
+      <h2>Verification Steps</h2>
+      <ol>
+        <li><strong>Verify commitment signature</strong> — Ed25519 verify against the signing payload</li>
+        <li><strong>Verify beacon</strong> — confirm the beacon output is authentic and postdates the commitment</li>
+        <li><strong>Verify selection</strong> — re-run the selection algorithm, confirm it matches</li>
+        <li><strong>Verify reveal signature</strong> — Ed25519 verify the reveal object</li>
+        <li><strong>Verify data integrity</strong> — hash revealed data, confirm it matches committed hashes</li>
+        <li><strong>Check completeness</strong> — are all selected items actually revealed?</li>
+      </ol>
+
+      ${note('This is the most important part of the protocol. Everything up to now was setup — this is where the proofs are checked. All verification happens locally, no network needed.')}
+      ${button('Run Verification')}
+    `;
+  } else {
+    const allServersPass = verificationResults.every(vr => vr.allPassed);
+
+    const serverBlocks = verificationResults.map(vr => `
+      <div class="server-result" style="margin-bottom:24px">
+        <h3>${esc(vr.name)}
+          <span class="${vr.allPassed ? 'check' : 'cross'}">
+            ${vr.allPassed ? 'ALL PASSED' : 'SOME FAILED'}
+          </span>
+        </h3>
+        ${vr.checks.map(ch => `
+          <div style="display:flex;align-items:center;gap:10px;padding:10px 0;border-bottom:1px solid #eee">
+            <span class="${ch.pass ? 'check' : 'cross'}" style="font-size:1.2rem">${ch.pass ? '\u2713' : '\u2717'}</span>
+            <div>
+              <div style="font-weight:600;font-size:0.95rem">${ch.name}</div>
+              <div style="font-size:0.8rem;color:#666">${ch.detail}</div>
+            </div>
+          </div>
+        `).join('')}
+      </div>
+    `).join('');
+
+    content = `
+      <h2>Verification Results</h2>
+      ${serverBlocks}
+
+      <div style="margin:20px 0;padding:16px;border-radius:8px;background:${allServersPass ? '#d4edda' : '#f8d7da'};border:1px solid ${allServersPass ? '#c3e6cb' : '#f5c6cb'}">
+        <strong style="font-size:1.1rem">${allServersPass
+          ? `All checks passed on ${verificationResults.length} server(s)!`
+          : 'Some checks failed'}</strong>
+        <p style="margin-top:4px;font-size:0.9rem">${allServersPass
+          ? 'The commitment, selection, and reveal form a valid proof chain — verified independently against each server\'s receipt. This verification required zero network access.'
+          : 'Review the failed checks above.'}</p>
+      </div>
+
+      ${note(`<strong>What this proves:</strong><br>
+      1. The committer declared these hashes <em>before</em> the randomness existed<br>
+      2. The beacon randomly selected items — the committer couldn't influence this<br>
+      3. The revealed data matches the committed hashes<br>
+      4. All selected items were actually revealed (no cherry-picking)`)}
+
+      <div style="margin-top:24px">
+        <a href="/" class="btn">Start Over</a>
+      </div>
+    `;
+  }
+
+  return c.html(page({ title: 'Step 8: Verify', stepNumber: 8, content, codeRefs: refs, session }));
+});
+
+route.post('/', (c) => {
+  const session = c.get('session');
+  const commitment = session.commitment;
+  const reveal = session.reveal;
+  const sampleData = session.sampleData;
+  const serverResults = session.serverResults || [];
+
+  const verificationResults = serverResults
+    .filter(r => r.status === 'ok')
+    .map(serverResult => {
+      const checks = runVerificationChecks(commitment, serverResult.receipt, reveal, sampleData);
+      const allPassed = checks.every(ch => ch.pass);
+      return { name: serverResult.name, checks, allPassed };
+    });
+
+  session.verificationResults = verificationResults;
+  session._completedStep = Math.max(session._completedStep || 0, 8);
+  return c.redirect('/steps/8');
 });
 
 export default route;

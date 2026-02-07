@@ -10,6 +10,55 @@ const refs = [
   codeRef('packages/pb-node/src/routes/reveals.js', 17, 80, 'Server: POST reveals handler'),
 ];
 
+function esc(s) {
+  return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
+async function submitRevealToAllServers(reveal, commitmentHash, pbServers) {
+  const results = await Promise.allSettled(
+    pbServers.map(async (server) => {
+      const res = await server.client.request(
+        `http://localhost/v1/commitments/${commitmentHash}/reveals`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(reveal),
+        }
+      );
+
+      if (res.ok) {
+        const body = await res.json();
+        return {
+          name: server.name,
+          status: 'ok',
+          revealId: body.reveal_id,
+          registeredAt: body.registered_at,
+          beaconAtReveal: body.beacon_at_reveal,
+          error: null,
+        };
+      } else {
+        let errMsg;
+        try {
+          const errBody = await res.json();
+          errMsg = errBody.error || `HTTP ${res.status}`;
+        } catch {
+          errMsg = `HTTP ${res.status}`;
+        }
+        return { name: server.name, status: 'error', error: errMsg };
+      }
+    })
+  );
+
+  return results.map((r, i) => {
+    if (r.status === 'fulfilled') return r.value;
+    return {
+      name: pbServers[i].name,
+      status: 'error',
+      error: r.reason?.message || 'Unknown error',
+    };
+  });
+}
+
 route.get('/', (c) => {
   const session = c.get('session');
   if (!session.selectedItems) return c.redirect('/steps/5');
@@ -39,22 +88,39 @@ route.get('/', (c) => {
       ${button('Create & Submit Reveal')}
     `;
   } else {
-    const revealBeacon = session.beaconAtReveal;
+    const revealResults = session.revealResults || [];
+    const okResults = revealResults.filter(r => r.status === 'ok');
+
+    const serverBlocks = revealResults.map(r => {
+      if (r.status === 'ok') {
+        return `
+          <div class="server-result">
+            <h3>${esc(r.name)} <span class="check">OK</span></h3>
+            ${field('Reveal ID', r.revealId)}
+            ${field('Registered At', r.registeredAt)}
+            ${r.beaconAtReveal ? field('Beacon Round', r.beaconAtReveal.round, false) : ''}
+          </div>`;
+      } else {
+        return `
+          <div class="server-result">
+            <h3>${esc(r.name)} <span class="cross">ERROR</span></h3>
+            <p style="color:#e63946">${esc(r.error)}</p>
+          </div>`;
+      }
+    }).join('');
+
     content = `
-      <p>Reveal created and submitted to the server.</p>
-      ${field('Reveal ID', session.revealId)}
-      ${field('Registered At', session.revealRegisteredAt)}
+      <p>Reveal created and submitted to ${revealResults.length} server(s).</p>
+      ${note(`<strong>${okResults.length}</strong> of ${revealResults.length} server(s) accepted the reveal.`)}
+      ${serverBlocks}
+
       ${field('Selected Items', `${reveal.selected_items.length} item(s)`, false)}
       ${field('Voluntary Items', `${reveal.voluntary_items.length} item(s)`, false)}
-      ${revealBeacon ? `
-        <h2>Beacon at Reveal Time</h2>
-        ${field('Round', revealBeacon.round, false)}
-        ${field('Randomness', revealBeacon.randomness)}
-        ${note('At reveal time, the drand beacon is at round <strong>' + revealBeacon.round + '</strong>. Compare this to the selection round from step 5 — the gap shows how much time elapsed between commitment and reveal.')}
-      ` : ''}
+
+      ${note('The server stores the reveal <em>metadata</em> but NOT the actual data. Data lives wherever you publish it — GitHub, IPFS, a personal website. The server is just a receipt printer.')}
+
       <h2>Full Reveal Object</h2>
       ${jsonBlock(reveal)}
-      ${note('The server stores the reveal <em>metadata</em> but NOT the actual data. Data lives wherever you publish it — GitHub, IPFS, a personal website. The server is just a receipt printer.')}
       ${nextButton(7)}
     `;
   }
@@ -64,7 +130,7 @@ route.get('/', (c) => {
 
 route.post('/', async (c) => {
   const session = c.get('session');
-  const pbNode = c.get('pbNode');
+  const pbServers = c.get('pbServers');
   const kp = session.keypair;
   const commitment = session.commitment;
   const selectedItems = session.selectedItems || [];
@@ -86,20 +152,20 @@ route.post('/', async (c) => {
   const reveal = { ...revealPayload, signature };
   session.reveal = reveal;
 
-  // Submit to server
-  const hash = commitment.commitment_hash;
-  const res = await pbNode.request(`http://localhost/v1/commitments/${hash}/reveals`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(reveal),
-  });
+  // Submit to ALL servers in parallel
+  const revealResults = await submitRevealToAllServers(
+    reveal, commitment.commitment_hash, pbServers
+  );
+  session.revealResults = revealResults;
 
-  if (res.ok) {
-    const body = await res.json();
-    session.revealId = body.reveal_id;
-    session.revealRegisteredAt = body.registered_at;
-    session.beaconAtReveal = body.beacon_at_reveal;
+  // Backward compat: set convenience fields from first successful
+  const firstOk = revealResults.find(r => r.status === 'ok');
+  if (firstOk) {
+    session.revealId = firstOk.revealId;
+    session.revealRegisteredAt = firstOk.registeredAt;
+    session.beaconAtReveal = firstOk.beaconAtReveal;
   }
+
   session._completedStep = Math.max(session._completedStep || 0, 6);
   return c.redirect('/steps/6');
 });

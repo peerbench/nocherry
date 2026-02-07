@@ -9,11 +9,13 @@ const STEPS = [
   { num: 4, name: 'Submit', path: '/steps/4' },
   { num: 5, name: 'Selection', path: '/steps/5' },
   { num: 6, name: 'Reveal', path: '/steps/6' },
-  { num: 7, name: 'Verify', path: '/steps/7' },
+  { num: 7, name: 'Publish', path: '/steps/7' },
+  { num: 8, name: 'Verify', path: '/steps/8' },
 ];
 
-export function page({ title, stepNumber, content, codeRefs = [], session = {} }) {
+export function page({ title, stepNumber, content, codeRefs = [], rightPanel, session = {} }) {
   const completedStep = session._completedStep || 0;
+  const hasRightPanel = rightPanel || false; // codeRefs disabled for now
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -30,16 +32,12 @@ export function page({ title, stepNumber, content, codeRefs = [], session = {} }
 
   ${stepNumber ? renderNav(stepNumber, completedStep) : ''}
 
-  <main class="${stepNumber ? 'two-panel' : ''}">
+  <main class="${stepNumber && hasRightPanel ? 'two-panel' : ''}">
     <div class="content-panel">
       <h1>${esc(title)}</h1>
       ${content}
     </div>
-    ${codeRefs.length > 0 ? `
-    <div class="code-panel">
-      <h3>Source Code</h3>
-      ${codeRefs.map(renderCodeRef).join('\n')}
-    </div>` : ''}
+    ${hasRightPanel ? rightPanel : ''}
   </main>
 
   <footer>
@@ -474,5 +472,25 @@ details summary:hover { color: #b4befe; }
 /* Receipt result (JS-rendered) */
 #receipt-result {
   margin-top: 20px;
+}
+
+/* Multi-server result blocks */
+.server-result {
+  margin: 16px 0;
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel-bg);
+}
+.server-result h2, .server-result h3 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+.server-result hr {
+  border: none;
+  border-top: 1px solid var(--border);
+  margin: 16px 0;
 }
 `;
