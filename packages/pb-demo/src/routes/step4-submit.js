@@ -163,7 +163,7 @@ route.get('/', (c) => {
     <div id="receipt-result"></div>
 
     <script>
-    (function() {
+    document.addEventListener('DOMContentLoaded', function() {
       var SERVER_LIST = ${serverListJSON};
       var CHAIN_HASH = '52db9ba70e0cc0f6eaf7803dd07447a1f5477735fd3f661792ba94600c84e971';
       var GENESIS = 1692803367;
@@ -341,29 +341,15 @@ route.get('/', (c) => {
         return html;
       }
 
-      function renderAllResults(serverResults) {
-        var successCount = 0;
-        for (var i = 0; i < serverResults.length; i++) {
-          if (serverResults[i].status === 'ok') successCount++;
+      function appendServerResult(result) {
+        var div = document.createElement('div');
+        div.className = 'server-result fade-in';
+        if (result.status === 'ok') {
+          div.innerHTML = '<h2>' + escapeHTML(result.name) + ' <span class="check">OK</span></h2>' + renderReceipt(result.receipt);
+        } else {
+          div.innerHTML = '<h2>' + escapeHTML(result.name) + ' <span class="cross">ERROR</span></h2><p style="color:#e63946">' + escapeHTML(result.error) + '</p>';
         }
-
-        var html = '<div class="note">Submitted to <strong>' + serverResults.length + ' server(s)</strong>: ' + successCount + ' succeeded, ' + (serverResults.length - successCount) + ' failed.</div>';
-
-        for (var i = 0; i < serverResults.length; i++) {
-          var r = serverResults[i];
-          html += '<div class="server-result">';
-          if (r.status === 'ok') {
-            html += '<h2>' + escapeHTML(r.name) + ' <span class="check">OK</span></h2>';
-            html += renderReceipt(r.receipt);
-          } else {
-            html += '<h2>' + escapeHTML(r.name) + ' <span class="cross">ERROR</span></h2>';
-            html += '<p style="color:#e63946">' + escapeHTML(r.error) + '</p>';
-          }
-          html += '</div>';
-        }
-
-        html += '<a href="/steps/5" class="btn btn-next">Continue to Step 5 &rarr;</a>';
-        return html;
+        receiptResult.appendChild(div);
       }
 
       // ── Submit Handler ──
@@ -374,42 +360,95 @@ route.get('/', (c) => {
         submitBtn.innerHTML = '<span class="spinner"></span> Submitting to all servers...';
         beaconStatus.textContent = 'Submitting commitment to all servers...';
 
+        var progressEl = document.createElement('div');
+        progressEl.className = 'note';
+        progressEl.id = 'stream-progress';
+        progressEl.innerHTML = '<span class="spinner"></span> Waiting for server responses...';
+
         try {
           var resp = await fetch('/steps/4/api', { method: 'POST' });
-          var json = await resp.json();
-          if (json.error) {
+
+          if (!resp.ok) {
+            var json = await resp.json();
+            if (resp.status === 400) {
+              window.location.href = '/steps/1';
+              return;
+            }
             submitBtn.disabled = false;
             submitBtn.textContent = 'Submit to All Servers';
             submitted = false;
-            beaconStatus.textContent = 'Error: ' + json.error + ' — try again';
+            beaconStatus.textContent = 'Error: ' + (json.error || 'Unknown error') + ' — try again';
             return;
           }
 
-          var serverResults = json.serverResults;
-          var receipt = json.receipt;
+          // Stream started — hide submit button, show progress
+          submitBtn.style.display = 'none';
+          receiptResult.appendChild(progressEl);
 
-          if (receipt) {
-            selectionRound = receipt.selection && receipt.selection.beacon_output && receipt.selection.beacon_output.round;
-            if (selectionRound) {
-              beaconStatus.textContent = 'Selection round #' + selectionRound + ' — highlighted below';
-              highlightRound(selectionRound);
+          var reader = resp.body.getReader();
+          var decoder = new TextDecoder();
+          var buffer = '';
+          var successCount = 0;
+          var failCount = 0;
+          var totalServers = 0;
+
+          while (true) {
+            var chunk = await reader.read();
+            if (chunk.done) break;
+            buffer += decoder.decode(chunk.value, { stream: true });
+
+            var lines = buffer.split('\\n');
+            buffer = lines.pop(); // keep incomplete line in buffer
+
+            for (var i = 0; i < lines.length; i++) {
+              if (!lines[i].trim()) continue;
+              var result = JSON.parse(lines[i]);
+              totalServers = result.total;
+
+              if (result.status === 'ok') {
+                successCount++;
+                // Highlight selection round on first OK
+                if (successCount === 1 && result.receipt) {
+                  selectionRound = result.receipt.selection && result.receipt.selection.beacon_output && result.receipt.selection.beacon_output.round;
+                  if (selectionRound) {
+                    beaconStatus.textContent = 'Selection round #' + selectionRound + ' — highlighted below';
+                    highlightRound(selectionRound);
+                  }
+                }
+              } else {
+                failCount++;
+              }
+
+              appendServerResult(result);
+              progressEl.innerHTML = 'Received <strong>' + result.received + '</strong> of <strong>' + totalServers + '</strong> — ' + successCount + ' succeeded, ' + failCount + ' failed.';
             }
           }
 
-          submitBtn.style.display = 'none';
-          receiptResult.innerHTML = renderAllResults(serverResults);
+          // Stream finished — update progress to final summary and show continue link
+          var totalReceived = successCount + failCount;
+          progressEl.innerHTML = 'Submitted to <strong>' + totalReceived + ' server(s)</strong>: ' + successCount + ' succeeded, ' + failCount + ' failed.';
+
+          if (successCount > 0) {
+            var continueLink = document.createElement('a');
+            continueLink.href = '/steps/5';
+            continueLink.className = 'btn btn-next';
+            continueLink.innerHTML = 'Continue to Step 5 &rarr;';
+            receiptResult.appendChild(continueLink);
+          }
         } catch (err) {
           submitBtn.disabled = false;
           submitBtn.textContent = 'Submit to All Servers';
+          submitBtn.style.display = '';
           submitted = false;
           beaconStatus.textContent = 'Network error — try again';
+          if (progressEl.parentNode) progressEl.parentNode.removeChild(progressEl);
         }
       }
 
       if (submitBtn) submitBtn.addEventListener('click', handleSubmit);
       checkServers();
       startTicker();
-    })();
+    });
     </script>
   `;
 
@@ -463,7 +502,7 @@ route.get('/health', async (c) => {
   return c.json(data);
 });
 
-// JSON API for JS-driven submit
+// NDJSON streaming API for JS-driven submit
 route.post('/api', async (c) => {
   const session = c.get('session');
   const pbServers = c.get('pbServers');
@@ -472,19 +511,69 @@ route.post('/api', async (c) => {
     return c.json({ error: 'No commitment in session' }, 400);
   }
 
-  const serverResults = await submitToAllServers(session.commitment, pbServers);
-  session.serverResults = serverResults;
+  const commitment = session.commitment;
+  const total = pbServers.length;
+  const encoder = new TextEncoder();
 
-  const firstOk = serverResults.find(r => r.status === 'ok');
-  if (firstOk) {
-    session.receipt = firstOk.receipt;
-    session._completedStep = Math.max(session._completedStep || 0, 4);
-    return c.json({ serverResults, receipt: firstOk.receipt });
-  } else {
-    const errors = serverResults.map(r => `${r.name}: ${r.error}`).join('; ');
-    session.submitError = errors;
-    return c.json({ error: errors }, 502);
-  }
+  const stream = new ReadableStream({
+    async start(controller) {
+      const serverResults = [];
+
+      const tasks = pbServers.map(async (server) => {
+        let result;
+        try {
+          const res = await server.client.request('http://localhost/v1/commitments', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(commitment),
+          });
+
+          if (res.ok) {
+            const receipt = await res.json();
+            result = { name: server.name, status: 'ok', receipt, error: null };
+          } else {
+            let errMsg;
+            try {
+              const errBody = await res.json();
+              errMsg = errBody.error || `HTTP ${res.status}`;
+            } catch {
+              errMsg = `HTTP ${res.status}`;
+            }
+            result = { name: server.name, status: 'error', receipt: null, error: errMsg };
+          }
+        } catch (err) {
+          result = { name: server.name, status: 'error', receipt: null, error: err.message || 'Unknown error' };
+        }
+
+        serverResults.push(result);
+        const line = JSON.stringify({ ...result, total, received: serverResults.length }) + '\n';
+        controller.enqueue(encoder.encode(line));
+      });
+
+      await Promise.allSettled(tasks);
+
+      // Update session after all servers responded
+      session.serverResults = serverResults;
+      const firstOk = serverResults.find(r => r.status === 'ok');
+      if (firstOk) {
+        session.receipt = firstOk.receipt;
+        session._completedStep = Math.max(session._completedStep || 0, 4);
+      } else {
+        session.submitError = serverResults.map(r => `${r.name}: ${r.error}`).join('; ');
+      }
+
+      controller.close();
+    },
+  });
+
+  return new Response(stream, {
+    status: 200,
+    headers: {
+      'Content-Type': 'application/x-ndjson',
+      'Cache-Control': 'no-cache',
+      'Transfer-Encoding': 'chunked',
+    },
+  });
 });
 
 // Non-JS fallback: form POST with redirect

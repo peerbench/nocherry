@@ -493,4 +493,11 @@ details summary:hover { color: #b4befe; }
   border-top: 1px solid var(--border);
   margin: 16px 0;
 }
+.server-result.fade-in {
+  animation: fadeIn 0.4s ease-out;
+}
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
 `;
