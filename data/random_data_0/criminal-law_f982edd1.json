@@ -1,0 +1,44 @@
+[
+  {
+    "id": 1,
+    "topic": "criminal-law",
+    "question": "Sample question acaeb4c5?",
+    "choices": [
+      "Answer_3e50b8",
+      "Answer_3af2f5",
+      "Answer_257ba0",
+      "Answer_288aa9"
+    ],
+    "answer": 2,
+    "difficulty": "easy",
+    "nonce": "9b4bb88316c11725"
+  },
+  {
+    "id": 2,
+    "topic": "criminal-law",
+    "question": "Sample question 7e98f5e6?",
+    "choices": [
+      "Answer_5ddb7a",
+      "Answer_7cb692",
+      "Answer_117e5b",
+      "Answer_954bfb"
+    ],
+    "answer": 2,
+    "difficulty": "hard",
+    "nonce": "8e3861a72eebab30"
+  },
+  {
+    "id": 3,
+    "topic": "criminal-law",
+    "question": "Sample question 902c1af8?",
+    "choices": [
+      "Answer_0df727",
+      "Answer_705afc",
+      "Answer_3b4d4c",
+      "Answer_d2d945"
+    ],
+    "answer": 3,
+    "difficulty": "medium",
+    "nonce": "a88ac3db699ffd3e"
+  }
+]

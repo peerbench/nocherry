@@ -1,0 +1,26 @@
+[
+  {
+    "id": 1,
+    "topic": "Contract Formation",
+    "question": "Which element is NOT required for a valid contract?",
+    "choices": ["Offer", "Acceptance", "Consideration", "Notarization"],
+    "answer": "Notarization",
+    "difficulty": "easy"
+  },
+  {
+    "id": 2,
+    "topic": "Contract Formation",
+    "question": "Under the mailbox rule, when does acceptance become effective?",
+    "choices": ["When received", "When dispatched", "When read", "When acknowledged"],
+    "answer": "When dispatched",
+    "difficulty": "medium"
+  },
+  {
+    "id": 3,
+    "topic": "Contract Defenses",
+    "question": "A contract signed under physical threat is considered:",
+    "choices": ["Void", "Voidable", "Unenforceable", "Valid"],
+    "answer": "Voidable",
+    "difficulty": "medium"
+  }
+]

@@ -1,0 +1,26 @@
+[
+  {
+    "id": 1,
+    "topic": "First Amendment",
+    "question": "Which test is used for government restrictions on commercial speech?",
+    "choices": ["Strict scrutiny", "Central Hudson test", "Rational basis", "Lemon test"],
+    "answer": "Central Hudson test",
+    "difficulty": "hard"
+  },
+  {
+    "id": 2,
+    "topic": "Due Process",
+    "question": "Substantive due process protects against:",
+    "choices": ["Unfair procedures", "Arbitrary government action", "Double jeopardy", "Excessive bail"],
+    "answer": "Arbitrary government action",
+    "difficulty": "medium"
+  },
+  {
+    "id": 3,
+    "topic": "Equal Protection",
+    "question": "Strict scrutiny applies to classifications based on:",
+    "choices": ["Age", "Gender", "Race", "Disability"],
+    "answer": "Race",
+    "difficulty": "easy"
+  }
+]

@@ -1,0 +1,57 @@
+{
+  "commitment": {
+    "spec_version": "0.2.0",
+    "commitment_hash": "5f16a6a7fcd7a4c7aae940675ba6616cf1745f267e314f14564755bcf805cda6",
+    "items": [
+      "9aaad7e5bb69b90a7cfdb2f2d2090d1e9b79b920ee946bcc55a9b985c46a89c4",
+      "4dab45757eacc10a6c11c1cffc3be3a805e790e4d9fd9d650dcb438e0a95c2f5",
+      "e4b52ed6687dd3836c30dcacff19f78dcdfd7414c3b3d2176092a54f52b68722",
+      "56e2f39719eba0fe1b0d2514570e98669de9953f6e952d21d36761f0de812626",
+      "165168b5e1456e2e4b054d5a9ebb08d89cfbad0fb3414097153fec3f0f63cc60"
+    ],
+    "item_count": 5,
+    "reveal_probability": 0.5,
+    "beacon": {
+      "type": "drand",
+      "chain_hash": "52db9ba70e0cc0f6eaf7803dd07447a1f5477735fd3f661792ba94600c84e971"
+    },
+    "metadata": {},
+    "committed_at": "2026-02-07T17:10:47.632Z",
+    "signing_key": "did:key:z6MkhEYPvVgUdYg6rFSQ1aWeXRLHt283RMGodUzsxi5VDwz8",
+    "signature": "373c2a27dcdd57dc7544071a8235a196f3653cc2706e6209667684326f1131ebf1c8eb331f0456b239ec12d58894b48d4e105a41dd03626ac3dae5a65870a708"
+  },
+  "commitment_hash": "5f16a6a7fcd7a4c7aae940675ba6616cf1745f267e314f14564755bcf805cda6",
+  "registered_at": "2026-02-07T17:10:48.349Z",
+  "arrival_beacon": {
+    "type": "drand",
+    "chain_hash": "52db9ba70e0cc0f6eaf7803dd07447a1f5477735fd3f661792ba94600c84e971",
+    "round": 25893628,
+    "randomness": "1d60a7376eaf7855c672a53edbc104142c6b723539af9f33c761f731a4d4aac1",
+    "signature": "8d2d8bf81c03a3cb8586d9c78bd3e28874e6313a02463fb171e46fe9a2ab599e4ec0602f0c7d95061ec9924aa993cc95"
+  },
+  "selection": {
+    "commitment_hash": "5f16a6a7fcd7a4c7aae940675ba6616cf1745f267e314f14564755bcf805cda6",
+    "beacon_output": {
+      "type": "drand",
+      "chain_hash": "52db9ba70e0cc0f6eaf7803dd07447a1f5477735fd3f661792ba94600c84e971",
+      "round": 25893629,
+      "randomness": "33dbd6c2cfa5a1767ae7bf51ff3c0797f6a21737f761166a156049e3439e970f",
+      "signature": "94e8bf76480fe40a5355ee07f0e36b7a15eb8b6dbe888de5b92a99578dd1de037202c99c156b00cb297037142bb04e29"
+    },
+    "selection_mode": "per_item",
+    "reveal_probability": 0.5,
+    "selected_items": [
+      "e4b52ed6687dd3836c30dcacff19f78dcdfd7414c3b3d2176092a54f52b68722",
+      "165168b5e1456e2e4b054d5a9ebb08d89cfbad0fb3414097153fec3f0f63cc60"
+    ],
+    "selected_count": 2,
+    "total_count": 5,
+    "computed_at": "2026-02-07T17:10:51.287Z"
+  },
+  "signer_activity": {
+    "commitments_past_hour": 6,
+    "commitments_past_month": 18
+  },
+  "server_key": "did:key:z6MkqwzoE3a8Q1WQ1egLu2w5pjDLKDqpmQ9FV67wYXtWnUeK",
+  "server_signature": "93a227142dcefc640be6aed0834ea86f1f2436227c513493c0e0c4ba4bc0b3da75b72743a71cac5685b63cca9e21bcae0a98ef04e999851df5e11bceafb8a607"
+}
