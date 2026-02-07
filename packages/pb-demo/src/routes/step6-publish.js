@@ -82,7 +82,7 @@ function oauthSection(publishServers, signingKeyHex) {
   `;
 }
 
-function renderUploadBlock(u) {
+function renderUploadBlock(u, signingKeyHex) {
   if (u.status === 'ok') {
     const fileRows = (u.files || []).map(f => `
       <div style="padding:4px 0;font-size:0.8rem">
@@ -97,10 +97,17 @@ function renderUploadBlock(u) {
         ${fileRows}
       </div>`;
   } else {
+    // Remote servers: show as optional with OAuth signup link
+    const signupUrl = u.serverUrl
+      ? `${u.serverUrl.replace(/\/$/, '')}/auth/signup?signing_key=${encodeURIComponent(signingKeyHex)}`
+      : null;
     return `
-      <div class="server-result">
-        <h3>${esc(u.serverName)} <span style="color:#6c757d;font-size:0.85rem">FAILED</span></h3>
-        <p style="color:#6c757d;font-size:0.9rem">${esc(u.error)}</p>
+      <div class="server-result" style="opacity:0.75">
+        <h3>${esc(u.serverName)} <span style="color:#6c757d;font-size:0.85rem">OPTIONAL</span></h3>
+        <p style="color:#666;font-size:0.9rem">This publish server requires linking a Google account for anti-spam verification.
+        This is an optional extra mirror — your data is already published on the servers above.</p>
+        ${signupUrl ? `<a href="${esc(signupUrl)}" target="_blank" style="display:inline-block;margin-top:6px;padding:6px 14px;background:var(--accent2);color:#fff;border-radius:6px;font-size:0.85rem;text-decoration:none">Link Google Account &rarr;</a>
+        <p style="font-size:0.8rem;color:#999;margin-top:6px">After linking, re-run this step to publish here too.</p>` : ''}
       </div>`;
   }
 }
@@ -153,15 +160,16 @@ route.get('/', (c) => {
       ${oauthSection(publishServers, signingKeyHex)}
     `;
   } else {
-    const uploadBlocks = publishResults.uploads.map(renderUploadBlock).join('');
+    const uploadBlocks = publishResults.uploads.map(u => renderUploadBlock(u, signingKeyHex)).join('');
+    const okCount = publishResults.uploads.filter(u => u.status === 'ok').length;
 
     content = `
       <h2>Upload Results</h2>
       ${uploadBlocks}
 
-      ${note('Data is now publicly accessible. Next, submit the reveal — the servers will fetch and verify the data at these URLs.')}
-
-      ${oauthSection(publishServers, signingKeyHex)}
+      ${okCount > 0
+        ? note('Data is now publicly accessible. Next, submit the reveal — the servers will fetch and verify the data at these URLs.')
+        : note('No servers accepted the upload. Try linking a Google account or check your network connection.')}
 
       ${nextButton(7)}
     `;
