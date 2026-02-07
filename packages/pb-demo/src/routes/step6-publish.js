@@ -97,7 +97,7 @@ function renderUploadBlock(u, signingKeyHex) {
         ${fileRows}
       </div>`;
   } else {
-    // Remote servers: show as optional with OAuth signup link
+    // Remote servers: show as optional with OAuth signup link + retry button
     const signupUrl = u.serverUrl
       ? `${u.serverUrl.replace(/\/$/, '')}/auth/signup?signing_key=${encodeURIComponent(signingKeyHex)}`
       : null;
@@ -106,8 +106,13 @@ function renderUploadBlock(u, signingKeyHex) {
         <h3>${esc(u.serverName)} <span style="color:#6c757d;font-size:0.85rem">OPTIONAL</span></h3>
         <p style="color:#666;font-size:0.9rem">This publish server requires linking a Google account for anti-spam verification.
         This is an optional extra mirror — your data is already published on the servers above.</p>
-        ${signupUrl ? `<a href="${esc(signupUrl)}" target="_blank" style="display:inline-block;margin-top:6px;padding:6px 14px;background:var(--accent2);color:#fff;border-radius:6px;font-size:0.85rem;text-decoration:none">Link Google Account &rarr;</a>
-        <p style="font-size:0.8rem;color:#999;margin-top:6px">After linking, re-run this step to publish here too.</p>` : ''}
+        <div style="display:flex;gap:10px;align-items:center;margin-top:10px;flex-wrap:wrap">
+          ${signupUrl ? `<a href="${esc(signupUrl)}" target="_blank" style="display:inline-block;padding:6px 14px;background:var(--accent2);color:#fff;border-radius:6px;font-size:0.85rem;text-decoration:none">Link Google Account &rarr;</a>` : ''}
+          <form method="POST" action="/steps/6/retry" style="margin:0">
+            <input type="hidden" name="serverName" value="${esc(u.serverName)}">
+            <button type="submit" class="btn" style="padding:6px 14px;font-size:0.85rem">Retry Upload</button>
+          </form>
+        </div>
       </div>`;
   }
 }
@@ -176,6 +181,61 @@ route.get('/', (c) => {
   }
 
   return c.html(page({ title: 'Step 6: Publish Selected Data', stepNumber: 6, content, session }));
+});
+
+route.post('/retry', async (c) => {
+  const session = c.get('session');
+  const publishServers = c.get('publishServers') || [];
+  const kp = session.keypair;
+  const commitment = session.commitment;
+  const receipt = session.receipt;
+  const selectedItems = session.selectedItems || [];
+
+  const body = await c.req.parseBody();
+  const serverName = body.serverName;
+  const server = publishServers.find(s => s.name === serverName);
+  if (!server) return c.redirect('/steps/6');
+
+  // Build files for selected items
+  const files = [];
+  for (const hash of selectedItems) {
+    const idx = commitment.items.indexOf(hash);
+    if (idx >= 0 && session.sampleData?.[idx]) {
+      files.push({ name: `item-${idx + 1}.txt`, data: session.sampleData[idx], hash });
+    }
+  }
+
+  let result;
+  try {
+    result = await uploadToPublishServer(server, receipt, files, kp);
+    result = { serverName: server.name, serverUrl: server.url, ...result };
+  } catch (err) {
+    result = { serverName: server.name, serverUrl: server.url, status: 'error', error: err.message };
+  }
+
+  // Replace the old entry for this server in publishResults
+  const uploads = (session.publishResults?.uploads || []).map(u =>
+    u.serverName === serverName ? result : u
+  );
+  session.publishResults = { uploads };
+
+  // Rebuild fileUrlMap from all successful uploads
+  const fileUrlMap = {};
+  for (const upload of uploads) {
+    if (upload.status !== 'ok' || !upload.files) continue;
+    for (const f of upload.files) {
+      if (!fileUrlMap[f.hash]) fileUrlMap[f.hash] = {};
+      const isLocal = f.url.includes('localhost') || f.url.includes('127.0.0.1');
+      if (isLocal) {
+        fileUrlMap[f.hash].local = f.url;
+      } else {
+        fileUrlMap[f.hash].public = f.url;
+      }
+    }
+  }
+  session.fileUrlMap = fileUrlMap;
+
+  return c.redirect('/steps/6');
 });
 
 route.post('/', async (c) => {
