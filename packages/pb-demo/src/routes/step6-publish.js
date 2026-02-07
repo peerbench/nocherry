@@ -117,7 +117,7 @@ async function registerMirrorWithServers(mirrorUrl, provider, commitmentHash, kp
   });
 }
 
-function remoteServerSection(publishServers, signingKeyHex, hasPublishResults) {
+function oauthSection(publishServers, signingKeyHex) {
   const remoteServers = publishServers.filter(s => s.environment !== 'embedded');
   if (remoteServers.length === 0) return '';
 
@@ -135,16 +135,11 @@ function remoteServerSection(publishServers, signingKeyHex, hasPublishResults) {
 
   return `
     <details style="margin-top:20px">
-      <summary style="cursor:pointer;font-weight:600;color:var(--accent2)">Remote Publish Servers (Optional)</summary>
+      <summary style="cursor:pointer;font-weight:600;color:var(--accent2)">Link Google Account (Optional)</summary>
       <div style="margin-top:12px">
-        <p style="font-size:0.9rem;color:#444">You can also publish to remote servers hosted on Cloudflare R2 and Google Cloud Storage.
-        First link your signing key via Google OAuth, then publish.</p>
+        <p style="font-size:0.9rem;color:#444">Remote servers accept anonymous uploads by default using your Ed25519 signing key.
+        Optionally link a Google account for higher rate limits and permanent storage.</p>
         ${serverRows}
-        ${hasPublishResults ? `
-          <form method="POST" action="/steps/6/remote" style="margin-top:12px">
-            <button type="submit" class="btn" style="background:#6c757d">Publish to Remote Servers</button>
-          </form>
-        ` : ''}
       </div>
     </details>
   `;
@@ -239,15 +234,13 @@ route.get('/', (c) => {
       return `<li class="selected"><span class="check">SELECTED</span> &nbsp; ${esc(short)}</li>`;
     }).join('');
 
-    // Only show embedded publish server in the demo (remote servers require OAuth signup)
-    const embeddedServers = publishServers.filter(s => s.environment === 'embedded');
-    const serverList = embeddedServers.length > 0
-      ? embeddedServers.map(s => `<li><strong>${esc(s.name)}</strong>: ${esc(s.url)}</li>`).join('')
+    const serverList = publishServers.length > 0
+      ? publishServers.map(s => `<li><strong>${esc(s.name)}</strong>: ${esc(s.url)}</li>`).join('')
       : '<li style="color:#e63946">No publish servers configured</li>';
 
     content = `
       <p>Before telling the servers what you're revealing, first <strong>upload the selected data</strong>
-      to a publish server so it's publicly accessible, then <strong>register the URL</strong> as a data mirror.</p>
+      to publish servers so it's publicly accessible, then <strong>register the URLs</strong> as data mirrors.</p>
 
       <h2>Items to Publish</h2>
       <p><strong>${selectedItems.length} item(s)</strong> randomly selected by the beacon:</p>
@@ -256,15 +249,15 @@ route.get('/', (c) => {
       ${note(`Only the randomly selected items are published. The beacon chose which items to audit —
       this is the anti-cherry-picking guarantee. Non-selected items remain private.`)}
 
-      <h2>Publish Server</h2>
+      <h2>Publish Servers</h2>
       <p>Data will be uploaded to:</p>
       <ul class="item-list">${serverList}</ul>
 
-      ${note('The publish server stores the actual data files (not just hashes). After upload, the returned URL is registered as a mirror with the embedded commit-reveal server.')}
+      ${note('Publish servers store the actual data files (not just hashes). Remote servers accept anonymous uploads using your Ed25519 signing key. After upload, the returned URLs are registered as mirrors with the commit-reveal servers.')}
 
       ${button('Publish Selected Random Sample')}
 
-      ${remoteServerSection(publishServers, signingKeyHex, false)}
+      ${oauthSection(publishServers, signingKeyHex)}
     `;
   } else {
     const uploadBlocks = publishResults.uploads.map(renderUploadBlock).join('');
@@ -278,7 +271,7 @@ route.get('/', (c) => {
 
       ${note('Data is now publicly accessible. Next, submit the reveal to formally tell the servers which items you\'re revealing.')}
 
-      ${remoteServerSection(publishServers, signingKeyHex, true)}
+      ${oauthSection(publishServers, signingKeyHex)}
 
       ${nextButton(7)}
     `;
@@ -309,10 +302,9 @@ route.post('/', async (c) => {
     }
   }
 
-  // Upload to embedded publish server only (remote servers require OAuth signup)
-  const embeddedPublishServers = publishServers.filter(s => s.environment === 'embedded');
+  // Upload to all publish servers (embedded + remote with Ed25519 anon auth)
   const uploads = [];
-  for (const server of embeddedPublishServers) {
+  for (const server of publishServers) {
     try {
       const result = await uploadToPublishServer(server, receipt, files, kp);
       uploads.push({ serverName: server.name, serverUrl: server.url, ...result });
@@ -330,7 +322,8 @@ route.post('/', async (c) => {
     const baseUrl = upload.files[0]?.url?.replace(/\/[^/]+$/, '') || upload.serverUrl;
     const provider = 'peerbench';
 
-    // Only register localhost URLs with the embedded server (remote servers can't reach localhost)
+    // Localhost URLs can only be registered with the embedded server;
+    // public URLs can be registered with all commit-reveal servers
     const isLocalUrl = baseUrl.includes('localhost') || baseUrl.includes('127.0.0.1');
     const targetServers = isLocalUrl
       ? pbServers.filter(s => s.environment === 'embedded')
@@ -345,64 +338,6 @@ route.post('/', async (c) => {
   session.publishResults = { uploads, mirrors: allMirrorResults };
   session.mirrorResults = allMirrorResults.length > 0 ? allMirrorResults : uploads; // ensure step 7 guard passes
   session._completedStep = Math.max(session._completedStep || 0, 6);
-  return c.redirect('/steps/6');
-});
-
-// Publish to remote servers (optional, requires OAuth-linked key)
-route.post('/remote', async (c) => {
-  const session = c.get('session');
-  const pbServers = c.get('pbServers');
-  const publishServers = c.get('publishServers') || [];
-  const kp = session.keypair;
-  const commitment = session.commitment;
-  const receipt = session.receipt;
-  const selectedItems = session.selectedItems || [];
-
-  if (!session.publishResults) return c.redirect('/steps/6');
-
-  // Build files for selected items
-  const files = [];
-  for (const hash of selectedItems) {
-    const idx = commitment.items.indexOf(hash);
-    if (idx >= 0 && session.sampleData?.[idx]) {
-      files.push({
-        name: `item-${idx + 1}.txt`,
-        data: session.sampleData[idx],
-        hash,
-      });
-    }
-  }
-
-  // Upload to remote publish servers only
-  const remotePublishServers = publishServers.filter(s => s.environment !== 'embedded');
-  const remoteUploads = [];
-  for (const server of remotePublishServers) {
-    try {
-      const result = await uploadToPublishServer(server, receipt, files, kp);
-      remoteUploads.push({ serverName: server.name, serverUrl: server.url, ...result });
-    } catch (err) {
-      remoteUploads.push({ serverName: server.name, serverUrl: server.url, status: 'error', error: err.message });
-    }
-  }
-
-  // Register mirrors for successful remote uploads with all commit-reveal servers
-  const remoteMirrorResults = [];
-  for (const upload of remoteUploads) {
-    if (upload.status !== 'ok' || !upload.files) continue;
-
-    const baseUrl = upload.files[0]?.url?.replace(/\/[^/]+$/, '') || upload.serverUrl;
-    const provider = 'peerbench';
-
-    const mirrorResults = await registerMirrorWithServers(
-      baseUrl, provider, commitment.commitment_hash, kp, pbServers
-    );
-    remoteMirrorResults.push(...mirrorResults);
-  }
-
-  // Merge remote results into existing publish results
-  session.publishResults.uploads.push(...remoteUploads);
-  session.publishResults.mirrors.push(...remoteMirrorResults);
-
   return c.redirect('/steps/6');
 });
 
