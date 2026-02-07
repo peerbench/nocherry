@@ -15,69 +15,53 @@ function esc(s) {
 }
 
 /**
- * Build file_urls for a specific server from the fileUrlMap.
- * Embedded servers get localhost URLs; remote servers get public URLs only.
+ * Build file_urls for a specific server.
+ * Embedded → localhost URLs. Remote → public URLs only.
+ * Returns null if any selected item is missing a usable URL.
  */
-function buildFileUrlsForServer(fileUrlMap, isEmbedded) {
+function buildFileUrls(fileUrlMap, selectedItems, isEmbedded) {
   const urls = {};
-  for (const [hash, entry] of Object.entries(fileUrlMap)) {
-    if (isEmbedded) {
-      urls[hash] = entry.local || entry.public;
-    } else {
-      if (entry.public) urls[hash] = entry.public;
-    }
+  for (const hash of selectedItems) {
+    const entry = fileUrlMap[hash];
+    if (!entry) return null;
+    const url = isEmbedded ? (entry.local || entry.public) : entry.public;
+    if (!url) return null;
+    urls[hash] = url;
   }
   return urls;
 }
 
-async function submitRevealToAllServers(reveal, commitmentHash, pbServers, fileUrlMap) {
-  const results = await Promise.allSettled(
-    pbServers.map(async (server) => {
-      const isEmbedded = server.environment === 'embedded';
-      const fileUrls = buildFileUrlsForServer(fileUrlMap, isEmbedded);
-      const body = { ...reveal, file_urls: fileUrls };
-
-      const res = await server.client.request(
-        `http://localhost/v1/commitments/${commitmentHash}/reveals`,
-        {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(body),
-        }
-      );
-
-      if (res.ok) {
-        const resBody = await res.json();
-        return {
-          name: server.name,
-          status: 'ok',
-          revealId: resBody.reveal_id,
-          registeredAt: resBody.registered_at,
-          beaconAtReveal: resBody.beacon_at_reveal,
-          dataVerified: resBody.data_verified,
-          error: null,
-        };
-      } else {
-        let errMsg;
-        try {
-          const errBody = await res.json();
-          errMsg = errBody.error || `HTTP ${res.status}`;
-        } catch {
-          errMsg = `HTTP ${res.status}`;
-        }
-        return { name: server.name, status: 'error', error: errMsg };
-      }
-    })
+async function submitRevealToServer(reveal, commitmentHash, server) {
+  const res = await server.client.request(
+    `http://localhost/v1/commitments/${commitmentHash}/reveals`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(reveal),
+    }
   );
 
-  return results.map((r, i) => {
-    if (r.status === 'fulfilled') return r.value;
+  if (res.ok) {
+    const body = await res.json();
     return {
-      name: pbServers[i].name,
-      status: 'error',
-      error: r.reason?.message || 'Unknown error',
+      name: server.name,
+      status: 'ok',
+      revealId: body.reveal_id,
+      registeredAt: body.registered_at,
+      beaconAtReveal: body.beacon_at_reveal,
+      dataVerified: body.data_verified,
+      error: null,
     };
-  });
+  } else {
+    let errMsg;
+    try {
+      const errBody = await res.json();
+      errMsg = errBody.error || `HTTP ${res.status}`;
+    } catch {
+      errMsg = `HTTP ${res.status}`;
+    }
+    return { name: server.name, status: 'error', error: errMsg };
+  }
 }
 
 route.get('/', (c) => {
@@ -108,6 +92,7 @@ route.get('/', (c) => {
   } else {
     const revealResults = session.revealResults || [];
     const okResults = revealResults.filter(r => r.status === 'ok');
+    const skippedResults = revealResults.filter(r => r.status === 'skipped');
 
     const serverBlocks = revealResults.map(r => {
       if (r.status === 'ok') {
@@ -119,6 +104,12 @@ route.get('/', (c) => {
             ${r.beaconAtReveal ? field('Beacon Round', r.beaconAtReveal.round, false) : ''}
             ${r.dataVerified ? field('Data Verified', 'Server fetched and verified published data', false) : ''}
           </div>`;
+      } else if (r.status === 'skipped') {
+        return `
+          <div class="server-result">
+            <h3>${esc(r.name)} <span style="color:#6c757d;font-size:0.85rem">SKIPPED</span></h3>
+            <p style="color:#6c757d;font-size:0.9rem">${esc(r.reason)}</p>
+          </div>`;
       } else {
         return `
           <div class="server-result">
@@ -128,9 +119,10 @@ route.get('/', (c) => {
       }
     }).join('');
 
+    const submitted = revealResults.length - skippedResults.length;
     content = `
-      <p>Reveal created and submitted to ${revealResults.length} server(s).</p>
-      ${note(`<strong>${okResults.length}</strong> of ${revealResults.length} server(s) accepted the reveal.`)}
+      <p>Reveal created and submitted to ${submitted} server(s)${skippedResults.length > 0 ? `, ${skippedResults.length} skipped` : ''}.</p>
+      ${note(`<strong>${okResults.length}</strong> of ${submitted} server(s) accepted the reveal.`)}
       ${serverBlocks}
 
       ${field('Selected Items', `${reveal.selected_items.length} item(s) revealed`, false)}
@@ -169,15 +161,37 @@ route.post('/', async (c) => {
   const reveal = { ...revealPayload, signature };
   session.reveal = reveal;
 
-  // Submit to ALL servers in parallel, with per-server file_urls:
-  // embedded gets localhost URLs, remote servers get public URLs only
   const fileUrlMap = session.fileUrlMap || {};
-  const revealResults = await submitRevealToAllServers(
-    reveal, commitment.commitment_hash, pbServers, fileUrlMap
+
+  // Submit to each server with the right file_urls.
+  // Skip servers where we can't provide all needed URLs.
+  const revealResults = await Promise.all(
+    pbServers.map(async (server) => {
+      const isEmbedded = server.environment === 'embedded';
+      const fileUrls = buildFileUrls(fileUrlMap, selectedItems, isEmbedded);
+
+      if (!fileUrls) {
+        return {
+          name: server.name,
+          status: 'skipped',
+          reason: 'No public data URLs available — publish to a remote server first',
+        };
+      }
+
+      try {
+        return await submitRevealToServer(
+          { ...reveal, file_urls: fileUrls },
+          commitment.commitment_hash,
+          server
+        );
+      } catch (err) {
+        return { name: server.name, status: 'error', error: err.message };
+      }
+    })
   );
+
   session.revealResults = revealResults;
 
-  // Backward compat: set convenience fields from first successful
   const firstOk = revealResults.find(r => r.status === 'ok');
   if (firstOk) {
     session.revealId = firstOk.revealId;
