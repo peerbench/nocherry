@@ -8,8 +8,8 @@ const STEPS = [
   { num: 3, name: 'Create Commitment', path: '/steps/3' },
   { num: 4, name: 'Submit', path: '/steps/4' },
   { num: 5, name: 'Selection', path: '/steps/5' },
-  { num: 6, name: 'Reveal', path: '/steps/6' },
-  { num: 7, name: 'Publish', path: '/steps/7' },
+  { num: 6, name: 'Publish', path: '/steps/6' },
+  { num: 7, name: 'Reveal', path: '/steps/7' },
   { num: 8, name: 'Verify', path: '/steps/8' },
 ];
 
@@ -43,6 +43,7 @@ export function page({ title, stepNumber, content, codeRefs = [], rightPanel, se
   <footer>
     <p>PeerBench Commit-Reveal Protocol v0.2.0</p>
   </footer>
+  ${stepNumber ? FAB_SCRIPT : ''}
 </body>
 </html>`;
 }
@@ -500,4 +501,86 @@ details summary:hover { color: #b4befe; }
   from { opacity: 0; transform: translateY(8px); }
   to { opacity: 1; transform: translateY(0); }
 }
+
+/* Floating action button */
+#fab {
+  position: fixed;
+  bottom: 24px;
+  right: 24px;
+  z-index: 1000;
+  padding: 12px 24px;
+  background: var(--accent);
+  color: #fff;
+  border: none;
+  border-radius: 28px;
+  font-size: 0.95rem;
+  font-weight: 600;
+  cursor: pointer;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.25);
+  transition: background 0.15s, transform 0.1s, opacity 0.2s;
+  text-decoration: none;
+  display: none;
+  max-width: 280px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+#fab:hover { background: var(--accent2); transform: translateY(-1px); }
+#fab:active { transform: translateY(0); }
 `;
+
+const FAB_SCRIPT = [
+  '<div id="fab" role="presentation"></div>',
+  '<script>',
+  '(function() {',
+  '  var fab = document.getElementById("fab");',
+  '  var currentTarget = null;',
+  '  var debounceTimer = null;',
+  '  function findPrimaryAction() {',
+  '    var candidates = document.querySelectorAll(".content-panel .btn-next, .content-panel button.btn, .content-panel a.btn, #submit-btn");',
+  '    for (var i = candidates.length - 1; i >= 0; i--) {',
+  '      var el = candidates[i];',
+  '      if (el.dataset.fab) continue;',
+  '      if (el.closest("noscript")) continue;',
+  '      if (el.closest("details:not([open])")) continue;',
+  '      var rect = el.getBoundingClientRect();',
+  '      if (rect.width === 0 && rect.height === 0) continue;',
+  '      if (el.style.display === "none") continue;',
+  '      if (el.disabled) continue;',
+  '      return el;',
+  '    }',
+  '    return null;',
+  '  }',
+  '  function updateFab() {',
+  '    var target = findPrimaryAction();',
+  '    if (target) {',
+  '      currentTarget = target;',
+  '      var text = target.textContent.trim().replace(/\\s+/g, " ");',
+  '      if (text.length > 30) text = text.substring(0, 28) + "...";',
+  '      fab.textContent = text;',
+  '      fab.style.display = "block";',
+  '    } else {',
+  '      fab.style.display = "none";',
+  '      currentTarget = null;',
+  '    }',
+  '  }',
+  '  function debouncedUpdate() {',
+  '    clearTimeout(debounceTimer);',
+  '    debounceTimer = setTimeout(updateFab, 100);',
+  '  }',
+  '  fab.addEventListener("click", function(e) {',
+  '    e.preventDefault();',
+  '    e.stopPropagation();',
+  '    if (currentTarget) {',
+  '      currentTarget.click();',
+  '      setTimeout(updateFab, 300);',
+  '    }',
+  '  });',
+  '  updateFab();',
+  '  setInterval(updateFab, 1000);',
+  '  if (typeof MutationObserver !== "undefined") {',
+  '    new MutationObserver(debouncedUpdate).observe(document.body, { childList: true, subtree: true });',
+  '  }',
+  '})();',
+  '</' + 'script>',
+].join('\n');
