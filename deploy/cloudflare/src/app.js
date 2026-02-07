@@ -26,7 +26,10 @@ export function createApp() {
   });
 
   // Health check
-  app.get('/health', (c) => c.json({ status: 'ok' }));
+  app.get('/health', (c) => {
+    const config = c.get('config');
+    return c.json({ status: 'ok', version: config.version });
+  });
 
   // Routes
   app.route('/v1/server-info', serverInfoRoute);

@@ -9,6 +9,7 @@ export const config = {
   operator: process.env.OPERATOR || 'Local Development',
   beaconTypes: ['drand'],
   specVersion: '0.2.0',
+  version: '0.2.0',
   batchThreshold: 20,
   activityWindows: ['1h', '30d'],
   verifyRevealData: process.env.VERIFY_REVEAL_DATA !== 'false',

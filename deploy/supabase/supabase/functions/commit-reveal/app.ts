@@ -23,7 +23,7 @@ export function createApp(storage: KyselyStorage): Hono {
   });
 
   // Health check
-  app.get("/health", (c: Context) => c.json({ status: "ok" }));
+  app.get("/health", (c: Context) => c.json({ status: "ok", version: "0.2.0" }));
 
   // Routes
   app.route("/v1/server-info", serverInfoRoute);

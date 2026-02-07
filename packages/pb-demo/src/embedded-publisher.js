@@ -115,20 +115,8 @@ export function createEmbeddedPublisher() {
       return c.json({ error: 'Not found' }, 404);
     }
 
-    const ext = filename.split('.').pop()?.toLowerCase();
-    const types = {
-      json: 'application/json',
-      txt: 'text/plain',
-      csv: 'text/csv',
-      html: 'text/html',
-      png: 'image/png',
-      jpg: 'image/jpeg',
-      jpeg: 'image/jpeg',
-    };
-    const contentType = types[ext] || 'application/octet-stream';
-
     return new Response(data, {
-      headers: { 'Content-Type': contentType },
+      headers: { 'Content-Type': 'application/octet-stream' },
     });
   });
 

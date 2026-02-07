@@ -16,6 +16,33 @@ import type { KyselyStorage } from "../storage/postgres.ts";
 const route = new Hono();
 
 /**
+ * Fetch a URL, hash the response, and compare against itemHash.
+ * Retries once after 2s on failure or mismatch.
+ */
+async function fetchAndVerify(url: string, itemHash: string): Promise<Record<string, unknown>> {
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      const res = await fetch(url, { signal: AbortSignal.timeout(15000) });
+      if (!res.ok) {
+        if (attempt === 0) { await new Promise(r => setTimeout(r, 2000)); continue; }
+        return { hash: itemHash, url, status: "fetch_error", detail: `HTTP ${res.status}` };
+      }
+      const data = new Uint8Array(await res.arrayBuffer());
+      const computed = wasm.hashBytes(data);
+      if (computed === itemHash) {
+        return { hash: itemHash, url, status: "match" };
+      }
+      if (attempt === 0) { await new Promise(r => setTimeout(r, 2000)); continue; }
+      return { hash: itemHash, url, status: "mismatch", computed_hash: computed };
+    } catch (e) {
+      if (attempt === 0) { await new Promise(r => setTimeout(r, 2000)); continue; }
+      return { hash: itemHash, url, status: "fetch_error", detail: (e as Error).message };
+    }
+  }
+  return { hash: itemHash, url, status: "fetch_error", detail: "retry exhausted" };
+}
+
+/**
  * POST /v1/commitments/:hash/reveals — submit a reveal.
  */
 route.post("/:hash/reveals", async (c: Context) => {
@@ -125,22 +152,7 @@ route.post("/:hash/reveals", async (c: Context) => {
         results.push({ hash: itemHash, status: "missing_url" });
         continue;
       }
-      try {
-        const res = await fetch(url, { signal: AbortSignal.timeout(15000) });
-        if (!res.ok) {
-          results.push({ hash: itemHash, url, status: "fetch_error", detail: `HTTP ${res.status}` });
-          continue;
-        }
-        const data = new Uint8Array(await res.arrayBuffer());
-        const computed = wasm.hashBytes(data);
-        if (computed === itemHash) {
-          results.push({ hash: itemHash, url, status: "match" });
-        } else {
-          results.push({ hash: itemHash, url, status: "mismatch", computed_hash: computed });
-        }
-      } catch (e) {
-        results.push({ hash: itemHash, url, status: "fetch_error", detail: (e as Error).message });
-      }
+      results.push(await fetchAndVerify(url, itemHash));
     }
 
     const matchCount = results.filter((r) => r.status === "match").length;
@@ -261,22 +273,7 @@ route.post("/:hash/verify-publication", async (c: Context) => {
       results.push({ hash: itemHash, url, status: "not_in_commitment" });
       continue;
     }
-    try {
-      const res = await fetch(url, { signal: AbortSignal.timeout(15000) });
-      if (!res.ok) {
-        results.push({ hash: itemHash, url, status: "fetch_error", detail: `HTTP ${res.status}` });
-        continue;
-      }
-      const data = new Uint8Array(await res.arrayBuffer());
-      const computed = wasm.hashBytes(data);
-      if (computed === itemHash) {
-        results.push({ hash: itemHash, url, status: "match" });
-      } else {
-        results.push({ hash: itemHash, url, status: "mismatch", computed_hash: computed });
-      }
-    } catch (e) {
-      results.push({ hash: itemHash, url, status: "fetch_error", detail: (e as Error).message });
-    }
+    results.push(await fetchAndVerify(url, itemHash));
   }
 
   const matchCount = results.filter((r) => r.status === "match").length;
