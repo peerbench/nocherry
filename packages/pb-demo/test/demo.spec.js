@@ -324,7 +324,7 @@ test.describe('Session redirect guards', () => {
     expect(url).not.toContain('/steps/6');
   });
 
-  test('step 7 redirects without mirrorResults', async ({ page }) => {
+  test('step 7 redirects without publishResults', async ({ page }) => {
     await page.goto('/steps/7');
     const url = page.url();
     expect(url).not.toContain('/steps/7');
@@ -567,7 +567,8 @@ test.describe('Full walkthrough', () => {
       await expect(page.locator('.content-panel', { hasText: 'Data Integrity' })).toBeVisible();
       await expect(page.locator('.content-panel', { hasText: 'Completeness' })).toBeVisible();
 
-      // "Start Over" link at the end
+      // Audit log download and "Start Over" link
+      await expect(page.locator('a', { hasText: 'Download Audit Log' })).toBeVisible();
       await expect(page.locator('a', { hasText: 'Start Over' })).toBeVisible();
     });
   });

@@ -1,46 +1,46 @@
 {
   "servers": [
     {
-      "name": "local",
-      "url": "http://localhost:7420",
-      "server_key": null,
-      "operator": "peerbench",
-      "environment": "dev"
-    },
-    {
       "name": "cloudflare-1",
-      "url": "https://commit-reveal.orgtopus.workers.dev",
+      "primary_url": "https://commit-reveal-cloudflare-dev.peerbench.ai",
+      "alternative_url": "https://commit-reveal.orgtopus.workers.dev",
       "server_key": "did:key:z6MkqwzoE3a8Q1WQ1egLu2w5pjDLKDqpmQ9FV67wYXtWnUeK",
       "operator": "peerbench",
       "environment": "dev"
     },
     {
       "name": "supabase-1",
-      "url": "https://zgyneuohwbzufajusohz.supabase.co/functions/v1/commit-reveal",
+      "primary_url": "https://zgyneuohwbzufajusohz.supabase.co/functions/v1/commit-reveal",
+      "alternative_url": null,
       "server_key": "did:key:z6MkmSjTtLHTfdmTTuN6v5KNDCNxheEfnyxzSz4Zk1stQRYT",
       "operator": "peerbench",
       "environment": "dev"
     },
     {
       "name": "google-cloud-1",
-      "url": "https://commit-reveal-323104702830.us-central1.run.app",
+      "primary_url": "https://commit-reveal-323104702830.us-central1.run.app",
+      "alternative_url": "https://commit-reveal-gcp-dev.peerbench.ai",
       "server_key": "did:key:z6MkjzBJL9zxTKqhoogzgrh6VoWMf1z5Jjyv7bVJwSfbASqM",
       "operator": "peerbench",
-      "environment": "dev"
+      "environment": "dev",
+      "note": "Custom domain (commit-reveal-gcp-dev.peerbench.ai) needs Cloud Run domain mapping configured. Using .run.app URL as primary until then."
     }
   ],
   "reveal_publishers": [
     {
-      "name": "dev-r2",
-      "url": "https://reveal-r2.orgtopus.workers.dev",
+      "name": "dev-cloudflare",
+      "primary_url": "https://publish-cloudflare-dev.peerbench.ai",
+      "alternative_url": "https://reveal-r2.orgtopus.workers.dev",
       "operator": "peerbench",
       "environment": "dev"
     },
     {
-      "name": "dev-gcs",
-      "url": "https://reveal-gcs-323104702830.us-central1.run.app",
+      "name": "dev-gcp",
+      "primary_url": "https://reveal-gcs-323104702830.us-central1.run.app",
+      "alternative_url": "https://publish-gcp-dev.peerbench.ai",
       "operator": "peerbench",
-      "environment": "dev"
+      "environment": "dev",
+      "note": "Custom domain (publish-gcp-dev.peerbench.ai) needs Cloud Run domain mapping configured. Using .run.app URL as primary until then."
     }
   ]
 }

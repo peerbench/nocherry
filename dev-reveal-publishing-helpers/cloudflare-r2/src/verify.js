@@ -45,7 +45,10 @@ export function verifyUpload(receipt, fileHashes) {
   }
 
   // Build set of committed hashes for lookup
-  const committedHashSet = new Set(committedItems.map(item => item.hash));
+  // Items can be plain hash strings or objects with a .hash property
+  const committedHashSet = new Set(committedItems.map(item =>
+    typeof item === 'string' ? item : item.hash
+  ));
 
   // Verify each uploaded file hash is in the commitment
   for (const { name, hash } of fileHashes) {

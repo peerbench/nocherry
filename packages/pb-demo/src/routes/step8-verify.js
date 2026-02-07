@@ -136,6 +136,7 @@ function runVerificationChecks(commitment, receipt, reveal, sampleData) {
 route.get('/', (c) => {
   const session = c.get('session');
   if (!session.reveal) return c.redirect('/steps/7');
+  if (!session.publishResults) return c.redirect('/steps/6');
 
   const verificationResults = session.verificationResults;
 
@@ -199,13 +200,62 @@ route.get('/', (c) => {
       3. The revealed data matches the committed hashes<br>
       4. All selected items were actually revealed (no cherry-picking)`)}
 
-      <div style="margin-top:24px">
+      <h2>Audit Log</h2>
+      <p>Download a combined audit log containing all signed server confirmations,
+      the commitment, reveal, and verification results.</p>
+      <div style="margin-top:12px;display:flex;gap:12px;flex-wrap:wrap">
+        <a href="/steps/8/audit-log" download="${esc(session.commitment.commitment_hash.substring(0, 12))}-audit-log.json" class="btn" style="background:var(--accent2)">Download Audit Log (JSON)</a>
         <a href="/" class="btn">Start Over</a>
       </div>
     `;
   }
 
   return c.html(page({ title: 'Step 8: Verify', stepNumber: 8, content, codeRefs: refs, session }));
+});
+
+route.get('/audit-log', (c) => {
+  const session = c.get('session');
+  if (!session.verificationResults) return c.json({ error: 'No verification results' }, 400);
+
+  const auditLog = {
+    generated_at: new Date().toISOString(),
+    spec_version: '0.2.0',
+    commitment: session.commitment,
+    server_receipts: (session.serverResults || []).filter(r => r.status === 'ok').map(r => ({
+      server: r.name,
+      receipt: r.receipt,
+    })),
+    publish: {
+      uploads: (session.publishResults?.uploads || []).map(u => ({
+        server: u.serverName,
+        status: u.status,
+        commitment_hash: u.commitment_hash,
+        files: u.files || [],
+        uploaded_at: u.uploaded_at,
+        error: u.error || undefined,
+      })),
+      file_urls: session.fileUrls || {},
+    },
+    reveal: session.reveal,
+    reveal_confirmations: (session.revealResults || []).map(r => ({
+      server: r.name,
+      status: r.status,
+      reveal_id: r.revealId,
+      registered_at: r.registeredAt,
+      beacon_at_reveal: r.beaconAtReveal,
+      error: r.error || undefined,
+    })),
+    verification: session.verificationResults.map(vr => ({
+      server: vr.name,
+      all_passed: vr.allPassed,
+      checks: vr.checks,
+    })),
+  };
+
+  const hashPrefix = session.commitment?.commitment_hash?.substring(0, 12) || 'unknown';
+  return c.json(auditLog, 200, {
+    'Content-Disposition': `attachment; filename="${hashPrefix}-audit-log.json"`,
+  });
 });
 
 route.post('/', (c) => {

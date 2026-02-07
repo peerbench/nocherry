@@ -14,26 +14,47 @@ function esc(s) {
   return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
 
-async function submitRevealToAllServers(reveal, commitmentHash, pbServers) {
+/**
+ * Build file_urls for a specific server from the fileUrlMap.
+ * Embedded servers get localhost URLs; remote servers get public URLs only.
+ */
+function buildFileUrlsForServer(fileUrlMap, isEmbedded) {
+  const urls = {};
+  for (const [hash, entry] of Object.entries(fileUrlMap)) {
+    if (isEmbedded) {
+      urls[hash] = entry.local || entry.public;
+    } else {
+      if (entry.public) urls[hash] = entry.public;
+    }
+  }
+  return urls;
+}
+
+async function submitRevealToAllServers(reveal, commitmentHash, pbServers, fileUrlMap) {
   const results = await Promise.allSettled(
     pbServers.map(async (server) => {
+      const isEmbedded = server.environment === 'embedded';
+      const fileUrls = buildFileUrlsForServer(fileUrlMap, isEmbedded);
+      const body = { ...reveal, file_urls: fileUrls };
+
       const res = await server.client.request(
         `http://localhost/v1/commitments/${commitmentHash}/reveals`,
         {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(reveal),
+          body: JSON.stringify(body),
         }
       );
 
       if (res.ok) {
-        const body = await res.json();
+        const resBody = await res.json();
         return {
           name: server.name,
           status: 'ok',
-          revealId: body.reveal_id,
-          registeredAt: body.registered_at,
-          beaconAtReveal: body.beacon_at_reveal,
+          revealId: resBody.reveal_id,
+          registeredAt: resBody.registered_at,
+          beaconAtReveal: resBody.beacon_at_reveal,
+          dataVerified: resBody.data_verified,
           error: null,
         };
       } else {
@@ -61,31 +82,28 @@ async function submitRevealToAllServers(reveal, commitmentHash, pbServers) {
 
 route.get('/', (c) => {
   const session = c.get('session');
-  if (!session.selectedItems) return c.redirect('/steps/5');
+  if (!session.publishResults) return c.redirect('/steps/6');
 
   const reveal = session.reveal;
 
   let content;
   if (!reveal) {
     const selectedItems = session.selectedItems || [];
-    const allItems = session.commitment.items || [];
-    const voluntaryItems = allItems.filter(h => !selectedItems.includes(h));
 
     content = `
-      <p>Now you <strong>reveal</strong> the data behind selected items. A reveal object
-      declares which items you're revealing and where the data lives.</p>
+      <p>Your data is published. Now <strong>submit the reveal</strong> to formally tell the
+      servers which items you're revealing. This creates a signed cryptographic proof tying
+      the beacon selection to your committed data.</p>
 
       <h2>Items to Reveal</h2>
-      <p><strong>Selected (mandatory):</strong> ${selectedItems.length} item(s) chosen by the beacon</p>
-      <p><strong>Not selected:</strong> ${voluntaryItems.length} item(s) remain private</p>
+      <p><strong>${selectedItems.length} item(s)</strong> randomly selected by the beacon will be revealed.</p>
 
-      ${note(`Only the randomly selected items are revealed. This is the core anti-cherry-picking
-      guarantee — the beacon chose which items to audit, not the submitter. Non-selected items
-      stay private unless you voluntarily reveal them later.`)}
+      ${note(`Only the randomly selected items are included in the reveal. This is the core
+      anti-cherry-picking guarantee — the beacon chose which items to audit, not the submitter.`)}
 
       <h2>Reveal Signing Payload</h2>
       <p>Key order: <code>spec_version, commitment_hash, selected_items, voluntary_items, revealed_at, signing_key</code></p>
-      ${button('Create & Submit Reveal')}
+      ${button('Submit Reveal to Servers')}
     `;
   } else {
     const revealResults = session.revealResults || [];
@@ -114,18 +132,17 @@ route.get('/', (c) => {
       ${note(`<strong>${okResults.length}</strong> of ${revealResults.length} server(s) accepted the reveal.`)}
       ${serverBlocks}
 
-      ${field('Selected Items', `${reveal.selected_items.length} item(s)`, false)}
-      ${field('Voluntary Items', `${reveal.voluntary_items.length} item(s)`, false)}
+      ${field('Selected Items', `${reveal.selected_items.length} item(s) revealed`, false)}
 
-      ${note('The server stores the reveal <em>metadata</em> but NOT the actual data. Data lives wherever you publish it — GitHub, IPFS, a personal website. The server is just a receipt printer.')}
+      ${note('The server now knows which items you revealed and can direct verifiers to your published data mirrors. The reveal ID is your receipt.')}
 
       <h2>Full Reveal Object</h2>
       ${jsonBlock(reveal)}
-      ${nextButton(7)}
+      ${nextButton(8)}
     `;
   }
 
-  return c.html(page({ title: 'Step 6: Reveal', stepNumber: 6, content, codeRefs: refs, session }));
+  return c.html(page({ title: 'Step 7: Reveal', stepNumber: 7, content, codeRefs: refs, session }));
 });
 
 route.post('/', async (c) => {
@@ -134,14 +151,13 @@ route.post('/', async (c) => {
   const kp = session.keypair;
   const commitment = session.commitment;
   const selectedItems = session.selectedItems || [];
-  const voluntaryItems = [];
 
-  // Build reveal signing payload (canonical key order from spec)
+  // Only reveal selected items — no voluntary reveals
   const revealPayload = {
     spec_version: '0.2.0',
     commitment_hash: commitment.commitment_hash,
     selected_items: selectedItems,
-    voluntary_items: voluntaryItems,
+    voluntary_items: [],
     revealed_at: new Date().toISOString(),
     signing_key: kp.did_key,
   };
@@ -152,9 +168,11 @@ route.post('/', async (c) => {
   const reveal = { ...revealPayload, signature };
   session.reveal = reveal;
 
-  // Submit to ALL servers in parallel
+  // Submit to ALL servers in parallel, with per-server file_urls:
+  // embedded gets localhost URLs, remote servers get public URLs only
+  const fileUrlMap = session.fileUrlMap || {};
   const revealResults = await submitRevealToAllServers(
-    reveal, commitment.commitment_hash, pbServers
+    reveal, commitment.commitment_hash, pbServers, fileUrlMap
   );
   session.revealResults = revealResults;
 
@@ -166,8 +184,8 @@ route.post('/', async (c) => {
     session.beaconAtReveal = firstOk.beaconAtReveal;
   }
 
-  session._completedStep = Math.max(session._completedStep || 0, 6);
-  return c.redirect('/steps/6');
+  session._completedStep = Math.max(session._completedStep || 0, 7);
+  return c.redirect('/steps/7');
 });
 
 export default route;

@@ -5,7 +5,7 @@
 import { describe, it, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, writeFileSync, mkdirSync, readFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, mkdirSync, readFileSync, rmSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -121,6 +121,105 @@ describe('JS CLI', () => {
       assert.fail('Should have failed');
     } catch (e) {
       assert.ok(e.stdout.includes('INVALID') || e.stderr.includes('INVALID') || e.status !== 0);
+    }
+  });
+
+  // ── File trail tests ──
+
+  it('hash dir creates manifest.json', () => {
+    const dir = join(tempDir, 'trail-hash');
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, 'a.txt'), 'alpha');
+    writeFileSync(join(dir, 'b.txt'), 'bravo');
+
+    run(['hash', 'dir', dir]);
+
+    assert.ok(existsSync(join(dir, 'manifest.json')), 'manifest.json should exist');
+    const manifest = JSON.parse(readFileSync(join(dir, 'manifest.json'), 'utf-8'));
+    assert.equal(manifest.spec_version, '0.2.0');
+    assert.ok(manifest.root_hash);
+    assert.equal(manifest.root_hash.length, 64);
+    assert.ok(Array.isArray(manifest.items));
+    assert.equal(manifest.items.length, 2);
+    assert.ok(manifest.created_at);
+
+    // Items should have path and hash
+    for (const item of manifest.items) {
+      assert.ok(item.path);
+      assert.ok(item.hash);
+      assert.equal(item.hash.length, 64);
+    }
+  });
+
+  it('hash dir produces same hash after manifest.json exists (protocol file exclusion)', () => {
+    const dir = join(tempDir, 'trail-exclusion');
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, 'data.txt'), 'test data');
+
+    // First hash — creates manifest.json
+    const output1 = run(['hash', 'dir', dir]);
+    const result1 = JSON.parse(output1);
+
+    // Second hash — manifest.json now present but should be excluded
+    const output2 = run(['hash', 'dir', dir]);
+    const result2 = JSON.parse(output2);
+
+    assert.equal(result1.hash, result2.hash, 'Hash should be stable after manifest.json is created');
+    assert.equal(result1.items, result2.items, 'Item count should be stable');
+  });
+
+  it('protocol files exclusion: directory with protocol files produces same hash as without', () => {
+    // Create a clean dir
+    const dir = join(tempDir, 'trail-exclusion2');
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, 'file1.json'), '{"x":1}');
+
+    // Get hash before any protocol files exist
+    const output1 = run(['hash', 'dir', dir]);
+    const hash1 = JSON.parse(output1).hash;
+
+    // Now create protocol files manually (simulating previous runs)
+    writeFileSync(join(dir, 'commitment.json'), '{}');
+    writeFileSync(join(dir, 'receipt.json'), '{}');
+    writeFileSync(join(dir, 'server-receipts.json'), '{}');
+    writeFileSync(join(dir, 'reveal.json'), '{}');
+    writeFileSync(join(dir, 'reveal-receipts.json'), '{}');
+    writeFileSync(join(dir, 'publication.json'), '{}');
+    writeFileSync(join(dir, 'verify.sh'), '#!/bin/bash');
+    writeFileSync(join(dir, 'README.md'), '# Test');
+
+    // Hash should be the same — protocol files excluded
+    const output2 = run(['hash', 'dir', dir]);
+    const hash2 = JSON.parse(output2).hash;
+
+    assert.equal(hash1, hash2, 'Protocol files should be excluded from hash');
+  });
+
+  it('commit creates commitment.json in directory', () => {
+    const dir = join(tempDir, 'trail-commit');
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, 'result.json'), '{"score": 0.95}');
+
+    run(['commit', dir, '-p', '0.50'], {
+      env: { HOME: join(tempDir, 'home1') },
+    });
+
+    assert.ok(existsSync(join(dir, 'commitment.json')), 'commitment.json should exist');
+    const commitment = JSON.parse(readFileSync(join(dir, 'commitment.json'), 'utf-8'));
+    assert.equal(commitment.spec_version, '0.2.0');
+    assert.ok(commitment.commitment_hash);
+    assert.ok(commitment.signature);
+    assert.equal(commitment.item_count, 1);
+    assert.equal(commitment.reveal_probability, 0.5);
+  });
+
+  it('usage includes reveal command', () => {
+    try {
+      run([]);
+      assert.fail('Should have exited');
+    } catch (e) {
+      const output = e.stdout || e.stderr || '';
+      assert.ok(output.includes('reveal'));
     }
   });
 });

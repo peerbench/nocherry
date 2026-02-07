@@ -54,69 +54,6 @@ async function uploadToPublishServer(publishServer, receipt, files, kp) {
   }
 }
 
-/**
- * Register a mirror URL with all commit-reveal servers.
- */
-async function registerMirrorWithServers(mirrorUrl, provider, commitmentHash, kp, pbServers) {
-  const mirrorPayload = {
-    spec_version: '0.2.0',
-    commitment_hash: commitmentHash,
-    url: mirrorUrl,
-    provider,
-    registered_at: new Date().toISOString(),
-    signing_key: kp.did_key,
-  };
-
-  const payloadBytes = new TextEncoder().encode(JSON.stringify(mirrorPayload));
-  const signature = wasm.signMessage(kp.private_key_hex, payloadBytes);
-  const signed = { ...mirrorPayload, signature };
-
-  const results = await Promise.allSettled(
-    pbServers.map(async (server) => {
-      const res = await server.client.request(
-        `http://localhost/v1/commitments/${commitmentHash}/mirrors`,
-        {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(signed),
-        }
-      );
-
-      if (res.ok) {
-        const body = await res.json();
-        return {
-          name: server.name,
-          status: 'ok',
-          mirrorId: body.mirror_id,
-          serverRegisteredAt: body.server_registered_at,
-          url: mirrorUrl,
-          provider,
-        };
-      } else {
-        let errMsg;
-        try {
-          const errBody = await res.json();
-          errMsg = errBody.error || `HTTP ${res.status}`;
-        } catch {
-          errMsg = `HTTP ${res.status}`;
-        }
-        return { name: server.name, status: 'error', error: errMsg, url: mirrorUrl, provider };
-      }
-    })
-  );
-
-  return results.map((r, i) => {
-    if (r.status === 'fulfilled') return r.value;
-    return {
-      name: pbServers[i].name,
-      status: 'error',
-      error: r.reason?.message || 'Unknown error',
-      url: mirrorUrl,
-      provider,
-    };
-  });
-}
-
 function oauthSection(publishServers, signingKeyHex) {
   const remoteServers = publishServers.filter(s => s.environment !== 'embedded');
   if (remoteServers.length === 0) return '';
@@ -168,50 +105,6 @@ function renderUploadBlock(u) {
   }
 }
 
-function renderMirrorBlocks(mirrorResults) {
-  if (mirrorResults.length === 0) return '';
-
-  const okMirrors = mirrorResults.filter(r => r.status === 'ok');
-  const byServer = {};
-  for (const r of mirrorResults) {
-    if (!byServer[r.name]) byServer[r.name] = [];
-    byServer[r.name].push(r);
-  }
-
-  const blocks = Object.entries(byServer).map(([name, results]) => {
-    const allOk = results.every(r => r.status === 'ok');
-    const rows = results.map(r => {
-      if (r.status === 'ok') {
-        return `
-          <div style="padding:8px 0;border-bottom:1px solid #eee">
-            <span class="check" style="font-size:1.1rem">\u2713</span>
-            <strong>${esc(r.provider)}</strong>: <a href="${esc(r.url)}" target="_blank" style="color:var(--accent)">${esc(r.url)}</a>
-            <div style="font-size:0.8rem;color:#666">mirror_id: ${esc(r.mirrorId)}</div>
-          </div>`;
-      } else {
-        return `
-          <div style="padding:8px 0;border-bottom:1px solid #eee">
-            <span class="cross" style="font-size:1.1rem">\u2717</span>
-            <strong>${esc(r.provider)}</strong>: ${esc(r.url)}
-            <div style="font-size:0.8rem;color:#e63946">${esc(r.error)}</div>
-          </div>`;
-      }
-    }).join('');
-
-    return `
-      <div class="server-result">
-        <h3>${esc(name)} <span class="${allOk ? 'check' : 'cross'}">${allOk ? 'OK' : 'PARTIAL'}</span></h3>
-        ${rows}
-      </div>`;
-  }).join('');
-
-  return `
-    <h2>Mirror Registration</h2>
-    <p>Registered ${okMirrors.length} mirror(s) across ${Object.keys(byServer).length} server(s).</p>
-    ${blocks}
-  `;
-}
-
 route.get('/', (c) => {
   const session = c.get('session');
   if (!session.selectedItems) return c.redirect('/steps/5');
@@ -240,7 +133,7 @@ route.get('/', (c) => {
 
     content = `
       <p>Before telling the servers what you're revealing, first <strong>upload the selected data</strong>
-      to publish servers so it's publicly accessible, then <strong>register the URLs</strong> as data mirrors.</p>
+      to publish servers so it's publicly accessible.</p>
 
       <h2>Items to Publish</h2>
       <p><strong>${selectedItems.length} item(s)</strong> randomly selected by the beacon:</p>
@@ -253,7 +146,7 @@ route.get('/', (c) => {
       <p>Data will be uploaded to:</p>
       <ul class="item-list">${serverList}</ul>
 
-      ${note('Publish servers store the actual data files (not just hashes). Remote servers accept anonymous uploads using your Ed25519 signing key. After upload, the returned URLs are registered as mirrors with the commit-reveal servers.')}
+      ${note('Publish servers store the actual data files (not just hashes). Remote servers accept anonymous uploads using your Ed25519 signing key. When you submit the reveal in the next step, the servers will fetch and verify the data from these URLs.')}
 
       ${button('Publish Selected Random Sample')}
 
@@ -261,15 +154,12 @@ route.get('/', (c) => {
     `;
   } else {
     const uploadBlocks = publishResults.uploads.map(renderUploadBlock).join('');
-    const mirrorResults = publishResults.mirrors || [];
 
     content = `
       <h2>Upload Results</h2>
       ${uploadBlocks}
 
-      ${renderMirrorBlocks(mirrorResults)}
-
-      ${note('Data is now publicly accessible. Next, submit the reveal to formally tell the servers which items you\'re revealing.')}
+      ${note('Data is now publicly accessible. Next, submit the reveal — the servers will fetch and verify the data at these URLs.')}
 
       ${oauthSection(publishServers, signingKeyHex)}
 
@@ -313,30 +203,24 @@ route.post('/', async (c) => {
     }
   }
 
-  // Register mirrors for each successful upload
-  const allMirrorResults = [];
+  // Build file_urls: store both local and public URLs per hash so step 7
+  // can send the right URLs to each server (localhost to embedded, public to remote).
+  const fileUrlMap = {};
   for (const upload of uploads) {
     if (upload.status !== 'ok' || !upload.files) continue;
-
-    // The upload response includes per-file URLs; register the base path as a mirror
-    const baseUrl = upload.files[0]?.url?.replace(/\/[^/]+$/, '') || upload.serverUrl;
-    const provider = 'peerbench';
-
-    // Localhost URLs can only be registered with the embedded server;
-    // public URLs can be registered with all commit-reveal servers
-    const isLocalUrl = baseUrl.includes('localhost') || baseUrl.includes('127.0.0.1');
-    const targetServers = isLocalUrl
-      ? pbServers.filter(s => s.environment === 'embedded')
-      : pbServers;
-
-    const mirrorResults = await registerMirrorWithServers(
-      baseUrl, provider, commitment.commitment_hash, kp, targetServers
-    );
-    allMirrorResults.push(...mirrorResults);
+    for (const f of upload.files) {
+      if (!fileUrlMap[f.hash]) fileUrlMap[f.hash] = {};
+      const isLocal = f.url.includes('localhost') || f.url.includes('127.0.0.1');
+      if (isLocal) {
+        fileUrlMap[f.hash].local = f.url;
+      } else {
+        fileUrlMap[f.hash].public = f.url;
+      }
+    }
   }
 
-  session.publishResults = { uploads, mirrors: allMirrorResults };
-  session.mirrorResults = allMirrorResults.length > 0 ? allMirrorResults : uploads; // ensure step 7 guard passes
+  session.publishResults = { uploads };
+  session.fileUrlMap = fileUrlMap;
   session._completedStep = Math.max(session._completedStep || 0, 6);
   return c.redirect('/steps/6');
 });

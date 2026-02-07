@@ -38,6 +38,17 @@
 
 ## TODO
 
+### Deploy & Test Publishing Helper Auth (DO FIRST)
+
+- [ ] **Deploy auth updates to both publishing helpers**
+  - **Cloudflare R2:** run `wrangler d1 migrations apply` for `0002_auth.sql`, set secrets (`TURNSTILE_SITE_KEY`, `TURNSTILE_SECRET_KEY`, `GOOGLE_OAUTH_CLIENT_ID`, `GOOGLE_OAUTH_CLIENT_SECRET`, `GOOGLE_OAUTH_REDIRECT_URI`), then `wrangler deploy`
+  - **Google Cloud Storage:** `npm install` (picks up `better-sqlite3`), rebuild Docker image, set env vars (`RECAPTCHA_SITE_KEY`, `RECAPTCHA_SECRET_KEY`, `GOOGLE_OAUTH_CLIENT_ID`, `GOOGLE_OAUTH_CLIENT_SECRET`, `GOOGLE_OAUTH_REDIRECT_URI`, `DB_PATH`), `gcloud run deploy`
+  - Pre-requisites: create Turnstile site in Cloudflare dashboard, create reCAPTCHA v3 site in Google console, create Google OAuth client (redirect URIs pointing to each service's `/auth/callback`)
+- [ ] **Human: end-to-end test publish through reCAPTCHA/Turnstile auth flow**
+  - **Cloudflare R2:** `https://reveal-r2.orgtopus.workers.dev/auth/signup`
+  - **Google Cloud Storage:** `https://reveal-gcs-323104702830.us-central1.run.app/auth/signup`
+  - Walk through: visit `/auth/signup`, complete captcha, sign in with Google, copy bearer token, use token to `POST /v1/upload`, confirm 201 success. Also verify: upload without token returns 401, signing key is linked to user in DB, rate limiting works per-user.
+
 ### CLI Protocol File Trail
 
 - [ ] **Every CLI step should save a local file** — see [docs/plan-cli-file-trail.md](docs/plan-cli-file-trail.md)
@@ -242,6 +253,78 @@
 - [ ] **Format: MP4 for YouTube/Twitter, GIF/WebM snippet for README** — full video hosted externally, 10-15s highlight GIF in README
 - [ ] **Resolution: 1280x720 or 1920x1080** — make sure browser zoom is set so text is readable at small embed sizes
 
+### Unify CLI `pb go` and Web Demo Flows
+
+The CLI wizard (`pb go <dir>`) and the web demo (`pb-demo`) implement the same commit-reveal protocol but have diverged in step ordering, data sources, selection logic, publishing strategy, and verification. They should share a single protocol engine so fixes and features land in one place.
+
+#### Step ordering differs
+
+| # | CLI (`pb go`) | Web Demo |
+|---|--------------|----------|
+| 1 | Hash directory → `manifest.json` | Generate Ed25519 keypair |
+| 2 | Sign commitment → `commitment.json` | Hash data (random or custom) |
+| 3 | Submit to servers → `server-receipts.json` | Sign commitment |
+| 4 | Publish (GitHub + publish server) | Submit to servers |
+| 5 | Reveal → `reveal.json` + `reveal-receipts.json` | View beacon selection |
+| — | *(no explicit selection step)* | Publish to embedded/remote servers |
+| — | *(no verification step)* | Submit reveal |
+| — | — | Run 6-check offline verification |
+
+**Key differences:**
+- CLI: 5 steps. Demo: 8 steps. Demo splits selection into its own visible step and adds verification.
+- CLI generates key automatically or loads from `~/.peerbench/key.json`. Demo generates per-session ephemeral key as an explicit step.
+- CLI publishes *before* reveal (GitHub is required, publish server is best-effort). Demo also publishes before reveal but only to embedded/publish servers (no GitHub).
+- CLI has no offline verification step in the wizard — it saves files for later `pb verify`.
+
+#### Data model differs
+
+- **CLI**: Hashes a real directory of files. `manifest.json` contains `{ path, hash }` entries. Items submitted are file-level SHA-256 hashes.
+- **Demo**: Hashes arbitrary text strings (random benchmark-style lines or user input). No manifest file. Items are plain text hashed in-memory.
+- **CLI**: Saves every artifact to disk (`manifest.json`, `commitment.json`, `server-receipts.json`, `receipt.json`, `publication.json`, `reveal.json`, `reveal-receipts.json`).
+- **Demo**: Stores everything in HTTP session state. No files persisted.
+
+#### Selection logic differs
+
+- **CLI**: Reads `selected_items` directly from the first server receipt. No client-side selection recomputation.
+- **Demo**: Recomputes selection client-side using `wasm.selectPerItem()` against the beacon output from each server, then takes the union across all servers. This is more correct (cross-server union) but the CLI doesn't do it.
+
+#### Beacon configuration differs
+
+- **CLI**: Uses `{ type: 'drand', chain_hash: '<quicknet_hash>' }` (explicit chain hash).
+- **Demo**: Uses `{ type: 'drand-quicknet', schedule: 'after_deadline' }` (shorthand).
+- These may be functionally equivalent but the field names differ, which could cause interop issues.
+
+#### Publishing strategy differs
+
+- **CLI**: Primary publish target is GitHub (`cmdPublishGithub()`), with publish server upload as best-effort secondary. Registers mirrors, runs server-side `verify-publication`. Saves `publication.json` with file URLs. Pushes reveal files back to GitHub after reveal.
+- **Demo**: Publishes only to embedded in-memory server (no persistent storage) or remote R2/GCS publish servers. Registers mirrors with embedded commit-reveal server. No GitHub integration, no `verify-publication` call.
+
+#### Reveal differs
+
+- **CLI**: Includes `file_urls` (from `publication.json`) in the reveal submission so servers can fetch and verify data.
+- **Demo**: Also includes `file_urls` from session but they're localhost URLs (only reachable by embedded server).
+
+#### Verification differs
+
+- **CLI**: No verification step in the wizard. Users must run `pb verify <commitment.json>` separately, which only checks commitment signature (not the full 6-check suite).
+- **Demo**: Step 8 runs all 6 offline verification checks: commitment signature, beacon temporal ordering, selection recomputation, reveal signature, data integrity, completeness.
+
+#### Plan to unify
+
+- [ ] **Extract shared protocol engine** — Create `packages/pb-protocol/` (or add to `pb-js/src/protocol.js`) with pure functions for each step:
+  - `createManifest(items)` — hash items into a manifest (works for both files and strings)
+  - `createAndSignCommitment(itemHashes, probability, keypair, beaconConfig)` — sign commitment
+  - `submitToServers(commitment, servers)` — submit and collect receipts
+  - `computeSelection(receipts, commitment)` — client-side selection recomputation (union across servers)
+  - `createAndSignReveal(commitment, selectedItems, keypair, fileUrls)` — sign reveal
+  - `submitReveal(reveal, commitmentHash, servers)` — submit reveal to servers
+  - `verifyAll(commitment, receipt, reveal, itemData)` — run all 6 verification checks
+- [ ] **Standardize beacon config** — Pick one format (`drand-quicknet` shorthand or explicit `chain_hash`). Make `wasm.createCommitment()` accept both, normalize internally.
+- [ ] **Add selection recomputation to CLI** — CLI currently trusts the server's `selected_items`. Should recompute client-side and compare, matching what the demo does.
+- [ ] **Add verification step to CLI `go` wizard** — After reveal, run the same 6-check verification the demo does. Print pass/fail for each.
+- [ ] **Add GitHub publish to demo** (optional, stretch) — If user has `gh` token, offer GitHub as a publish target alongside embedded server.
+- [ ] **Unify receipt handling** — CLI saves `receipt.json` (single server) + `server-receipts.json` (multi-server wrapper). Demo keeps receipts in session as array. Standardize on the multi-server format everywhere.
+
 ### Demo Website Improvements
 
 - [ ] **Multi-node demo** — Show commits going to multiple servers (in progress by another agent)
@@ -285,6 +368,74 @@
 - **PyO3 bindings for pb-core** — Important for ML/data science users
   - `pip install peerbench` → same API as JS SDK
   - The Rust crate is ready for bindings, but the Python audience is peerbench's, not nocherry's
+
+---
+
+## TypeScript Migration
+
+> **Pre-requisite: comprehensive test coverage.** Before touching any JS→TS conversion, the existing JavaScript codebase needs thorough test coverage so the migration can be validated mechanically. Write the tests first, then migrate file-by-file with tests green the whole way.
+
+### Phase 1: Test Coverage (do this FIRST)
+
+- [ ] **pb-node API tests** — Current: 16 tests. Need full coverage of:
+  - All error paths (malformed JSON, missing fields, invalid signatures, duplicate commits)
+  - Beacon timeout / retry behavior
+  - Server info endpoint
+  - Concurrent commits race conditions
+  - All mirrors + verify-publication edge cases
+- [ ] **pb-js CLI tests** — Current: 9 tests. Need full coverage of:
+  - Every command's happy path with file output verification
+  - Error handling (missing key, bad file paths, unreachable servers, invalid JSON)
+  - `pb submit` single-file mode vs directory mode
+  - `pb publish github` full flow (mock `gh` CLI)
+  - `pb mirrors add/list` with mock server
+  - `pb verify` with tampered commitments
+  - Key generation idempotency, PB_SIGNING_KEY env var
+- [ ] **pb-storage tests** — Currently: 0 dedicated tests. Need:
+  - All CRUD operations for commitments, reveals, mirrors
+  - Schema migration (fresh DB creation)
+  - Edge cases: duplicate inserts, missing records, concurrent writes
+- [ ] **pb-demo walkthrough tests** — Current: 9 tests. Need:
+  - Each step's error states (e.g., skip to step 4 without step 3)
+  - Session isolation (two concurrent users don't interfere)
+  - All 8 steps with full data verification
+- [ ] **E2E integration tests** — Current: 6 tests. Need:
+  - Multi-server submission with receipt cross-validation
+  - Full CLI file trail (manifest → commitment → receipts → reveal → publication)
+  - Offline verification of every artifact
+- [ ] **Deploy target tests** — Currently: 0. Need at minimum:
+  - Cloudflare D1 storage adapter unit tests
+  - Google Firestore storage adapter unit tests
+  - Supabase Postgres storage adapter unit tests
+
+### Phase 2: TypeScript Migration
+
+- [ ] **Set up TypeScript infrastructure**
+  - Add `tsconfig.json` to each package (pb-node, pb-js, pb-storage, pb-demo)
+  - Configure `strict: true`, `noUncheckedIndexedAccess: true`
+  - Add build step (`tsc`) to each package
+  - Keep `.js` entry points that import compiled `.ts` during transition
+- [ ] **Migrate pb-storage first** — Smallest package, fewest dependencies, most benefit from types
+  - `types.js` → `types.ts` (already has JSDoc typedefs, convert to interfaces)
+  - `storage.js` → `storage.ts`
+  - `sqlite.js` → `sqlite.ts`
+  - `postgres.js` → `postgres.ts`
+- [ ] **Migrate pb-node** — Server routes benefit heavily from typed request/response
+  - `app.js` → `app.ts`
+  - `routes/commitments.js` → `routes/commitments.ts`
+  - `routes/reveals.js` → `routes/reveals.ts`
+  - `routes/mirrors.js` → `routes/mirrors.ts`
+  - `signing.js` → `signing.ts`
+  - `beacon.js` → `beacon.ts`
+- [ ] **Migrate pb-js** — CLI + SDK
+  - `cli.js` → `cli.ts`
+  - `registry.js` → `registry.ts`
+  - `index.js` → `index.ts`
+- [ ] **Migrate pb-demo** — Last, lowest priority
+  - Template and route files
+- [ ] **Migrate deploy targets** — Cloudflare, Google Cloud, Supabase
+- [ ] **Type pb-wasm bindings** — Add `.d.ts` for the WASM module so all consumers get type safety
+- [ ] **Remove JSDoc type annotations** — Once TypeScript types are in place, clean up redundant JSDoc `@typedef` blocks
 
 ---
 
