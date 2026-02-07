@@ -506,7 +506,7 @@ test.describe('Full walkthrough', () => {
 
       // Pre-publish: shows selected items and publish servers
       await expect(page.locator('.content-panel', { hasText: 'Items to Publish' })).toBeVisible();
-      await expect(page.locator('.content-panel', { hasText: 'Publish Server' })).toBeVisible();
+      await expect(page.locator('.content-panel', { hasText: 'Publish Servers' })).toBeVisible();
 
       await page.locator('button', { hasText: 'Publish Selected Random Sample' }).click();
       await page.waitForURL('**/steps/6');
