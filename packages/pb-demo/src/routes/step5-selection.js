@@ -20,8 +20,18 @@ route.get('/', (c) => {
   const commitment = session.commitment;
   const selectedSet = new Set(selection?.selected_items || []);
 
-  // Store which items were selected for later steps
-  session.selectedItems = selection?.selected_items || [];
+  // Store the union of selected items across ALL server receipts
+  // (different servers may use different drand rounds and select different items)
+  const allServerResults = session.serverResults || [];
+  const selectedUnion = new Set(selection?.selected_items || []);
+  for (const sr of allServerResults) {
+    if (sr.status === 'ok' && sr.receipt?.selection?.selected_items) {
+      for (const item of sr.receipt.selection.selected_items) {
+        selectedUnion.add(item);
+      }
+    }
+  }
+  session.selectedItems = [...selectedUnion];
   session._completedStep = Math.max(session._completedStep || 0, 5);
 
   const arrival = receipt.arrival_beacon;

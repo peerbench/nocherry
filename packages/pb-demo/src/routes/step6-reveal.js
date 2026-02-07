@@ -77,11 +77,11 @@ route.get('/', (c) => {
 
       <h2>Items to Reveal</h2>
       <p><strong>Selected (mandatory):</strong> ${selectedItems.length} item(s) chosen by the beacon</p>
-      <p><strong>Voluntary:</strong> ${voluntaryItems.length} additional item(s) you choose to reveal</p>
+      <p><strong>Not selected:</strong> ${voluntaryItems.length} item(s) remain private</p>
 
-      ${note(`In this demo, we'll reveal <em>all</em> items — the randomly selected ones plus
-      the rest as voluntary reveals. In practice, you only <em>must</em> reveal the selected items.
-      Voluntary reveals are valuable for transparency but carry less anti-cherry-picking assurance.`)}
+      ${note(`Only the randomly selected items are revealed. This is the core anti-cherry-picking
+      guarantee — the beacon chose which items to audit, not the submitter. Non-selected items
+      stay private unless you voluntarily reveal them later.`)}
 
       <h2>Reveal Signing Payload</h2>
       <p>Key order: <code>spec_version, commitment_hash, selected_items, voluntary_items, revealed_at, signing_key</code></p>
@@ -134,7 +134,7 @@ route.post('/', async (c) => {
   const kp = session.keypair;
   const commitment = session.commitment;
   const selectedItems = session.selectedItems || [];
-  const voluntaryItems = commitment.items.filter(h => !selectedItems.includes(h));
+  const voluntaryItems = [];
 
   // Build reveal signing payload (canonical key order from spec)
   const revealPayload = {
