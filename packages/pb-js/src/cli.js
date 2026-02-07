@@ -17,6 +17,7 @@
  *   pb-js publish github <dir> [--repo <name>]    Publish data to GitHub
  *   pb-js publish huggingface <dir> [--repo <name>] Publish data to Hugging Face
  *   pb-js publish <dir>                   Interactive: detect providers & choose
+ *   pb-js generate-random-data [dir] [-n <count>]        Generate random test data
  *   pb-js mirrors add <hash> <url> [--provider github]  Register data mirror
  *   pb-js mirrors list <hash> [-s <server>]             List mirrors
  */
@@ -26,6 +27,7 @@ import { join, basename, resolve } from 'node:path';
 import { homedir } from 'node:os';
 import { execSync } from 'node:child_process';
 import { createInterface } from 'node:readline';
+import { randomBytes, randomInt } from 'node:crypto';
 import * as wasm from 'pb-wasm';
 import { getServers, resolveServer, getRevealPublishers } from './registry.js';
 
@@ -1403,10 +1405,12 @@ async function cmdGo(dirPath, probability = 0.50) {
       const publishUrl = `${publisher.url.replace(/\/$/, '')}/v1/upload`;
       console.log(`\n  Uploading to publish server: ${publisher.name}...`);
 
-      // Load receipt
-      const receiptPath = existsSync(join(dir, 'server-receipts.json'))
-        ? join(dir, 'server-receipts.json')
-        : join(dir, 'receipt.json');
+      // Load receipt (the individual server receipt with .commitment inside, not the wrapper)
+      const receiptPath = join(dir, 'receipt.json');
+      if (!existsSync(receiptPath)) {
+        console.log('  ⚠ No receipt.json found — skipping publish server upload');
+        throw new Error('skip');
+      }
       const receiptJson = readFileSync(receiptPath, 'utf-8');
 
       // Collect data files (non-protocol files)
@@ -1465,8 +1469,10 @@ async function cmdGo(dirPath, probability = 0.50) {
       }
     }
   } catch (err) {
-    console.log(`  ⚠ Publish server upload failed: ${err.message}`);
-    console.log('  (continuing — GitHub publish succeeded)');
+    if (err.message !== 'skip') {
+      console.log(`  ⚠ Publish server upload failed: ${err.message}`);
+      console.log('  (continuing — GitHub publish succeeded)');
+    }
   }
 
   console.log();
@@ -1580,6 +1586,53 @@ async function cmdGo(dirPath, probability = 0.50) {
   console.log();
 }
 
+// ── Generate random test data ──
+
+function cmdGenerate(baseDir, count) {
+  const dir = resolve(baseDir);
+  // Find next available index
+  let idx = 0;
+  while (existsSync(join(dir, `random_data_${idx}`))) idx++;
+
+  for (let batch = 0; batch < count; batch++) {
+    const outDir = join(dir, `random_data_${idx + batch}`);
+    mkdirSync(outDir, { recursive: true });
+
+    const topics = [
+      'contracts', 'torts', 'constitutional', 'criminal-law', 'evidence',
+      'civil-procedure', 'property', 'family-law', 'administrative', 'ethics'
+    ];
+    const difficulties = ['easy', 'medium', 'hard'];
+
+    const numFiles = 3 + randomInt(4); // 3-6 files per batch
+    for (let f = 0; f < numFiles; f++) {
+      const topic = topics[randomInt(topics.length)];
+      const numQuestions = 2 + randomInt(4); // 2-5 questions per file
+      const questions = [];
+      for (let q = 0; q < numQuestions; q++) {
+        questions.push({
+          id: q + 1,
+          topic,
+          question: `Sample question ${randomBytes(4).toString('hex')}?`,
+          choices: [
+            `Answer_${randomBytes(3).toString('hex')}`,
+            `Answer_${randomBytes(3).toString('hex')}`,
+            `Answer_${randomBytes(3).toString('hex')}`,
+            `Answer_${randomBytes(3).toString('hex')}`
+          ],
+          answer: randomInt(4),
+          difficulty: difficulties[randomInt(3)],
+          nonce: randomBytes(8).toString('hex')
+        });
+      }
+      const filename = `${topic}_${randomBytes(4).toString('hex')}.json`;
+      writeFileSync(join(outDir, filename), JSON.stringify(questions, null, 2) + '\n');
+    }
+
+    console.log(`Created ${outDir}  (${numFiles} files)`);
+  }
+}
+
 // ── Argument parsing ──
 
 function usage() {
@@ -1597,6 +1650,7 @@ function usage() {
   pb-js publish github <dir> [--repo <r>]   Publish reveal to GitHub
   pb-js publish huggingface <dir> [--repo <r>]  Publish reveal to Hugging Face
   pb-js publish <dir>                       Interactive provider selection
+  pb-js generate-random-data [dir] [-n <n>] Generate random test data (default: random-sample/)
   pb-js mirrors add <hash> <url> [--provider github]  Register data mirror
   pb-js mirrors list <hash> [-s <server>]   List mirrors for a commitment`);
   process.exit(1);
@@ -1681,6 +1735,18 @@ async function main() {
       console.error('Usage: pb-js publish [github|huggingface] <dir> [--repo <name>]');
       process.exit(1);
     }
+  } else if (cmd === 'generate-random-data') {
+    let count = 1;
+    let dirArg = 'random-sample';
+    for (let i = 1; i < args.length; i++) {
+      if ((args[i] === '-n' || args[i] === '--count') && args[i + 1]) {
+        count = parseInt(args[i + 1], 10);
+        i++;
+      } else if (!args[i].startsWith('-')) {
+        dirArg = args[i];
+      }
+    }
+    cmdGenerate(dirArg, count);
   } else if (cmd === 'mirrors' && sub === 'add' && args[2] && args[3]) {
     let provider = 'custom';
     for (let i = 4; i < args.length; i++) {
