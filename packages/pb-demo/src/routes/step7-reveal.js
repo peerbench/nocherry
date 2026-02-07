@@ -117,6 +117,7 @@ route.get('/', (c) => {
             ${field('Reveal ID', r.revealId)}
             ${field('Registered At', r.registeredAt)}
             ${r.beaconAtReveal ? field('Beacon Round', r.beaconAtReveal.round, false) : ''}
+            ${r.dataVerified ? field('Data Verified', 'Server fetched and verified published data', false) : ''}
           </div>`;
       } else {
         return `
