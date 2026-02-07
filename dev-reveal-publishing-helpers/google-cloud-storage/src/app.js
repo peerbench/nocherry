@@ -7,14 +7,16 @@ import { Hono } from 'hono';
 
 import uploadRoute from './routes/upload.js';
 import dataRoute from './routes/data.js';
+import authRoute from './routes/auth.js';
 
-export function createApp(bucket, config) {
+export function createApp(bucket, config, db) {
   const app = new Hono();
 
-  // Middleware: inject bucket and config
+  // Middleware: inject bucket, config, and db
   app.use('*', async (c, next) => {
     c.set('bucket', bucket);
     c.set('config', config);
+    c.set('db', db);
     await next();
   });
 
@@ -29,6 +31,7 @@ export function createApp(bucket, config) {
   });
 
   // Routes
+  app.route('/auth', authRoute);
   app.route('/v1', uploadRoute);
   app.route('/v1/data', dataRoute);
 

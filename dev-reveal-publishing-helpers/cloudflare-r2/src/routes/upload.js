@@ -4,11 +4,12 @@
 
 import { Hono } from 'hono';
 import { verifyUpload } from '../verify.js';
+import { requireAuth, linkSigningKey } from '../middleware/auth.js';
 import * as wasm from '../wasm/pb_wasm.js';
 
 const app = new Hono();
 
-app.post('/upload', async (c) => {
+app.post('/upload', requireAuth(), async (c) => {
   const config = c.get('config');
   const db = c.env.DB;
   const bucket = c.env.DATA_BUCKET;
@@ -71,11 +72,15 @@ app.post('/upload', async (c) => {
 
   const { commitmentHash, signingKey } = verified;
 
-  // Rate limit check via D1
+  // Link signing key to authenticated user
+  const user = c.get('user');
+  await linkSigningKey(db, user.id, signingKey);
+
+  // Rate limit check via D1 (by user_id)
   const oneHourAgo = new Date(Date.now() - 3600_000).toISOString();
   const rateResult = await db.prepare(
-    'SELECT COUNT(*) as cnt FROM upload_logs WHERE signing_key = ? AND created_at > ?'
-  ).bind(signingKey, oneHourAgo).first();
+    'SELECT COUNT(*) as cnt FROM upload_logs WHERE signing_key IN (SELECT signing_key FROM user_keys WHERE user_id = ?) AND created_at > ?'
+  ).bind(user.id, oneHourAgo).first();
 
   if (rateResult.cnt >= config.rateLimitPerHour) {
     return c.json({ error: 'Rate limit exceeded. Try again later.' }, 429);

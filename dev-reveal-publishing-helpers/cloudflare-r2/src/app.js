@@ -8,6 +8,7 @@ import { getConfig } from './config.js';
 
 import uploadRoute from './routes/upload.js';
 import dataRoute from './routes/data.js';
+import authRoute from './routes/auth.js';
 
 export function createApp() {
   const app = new Hono();
@@ -29,6 +30,7 @@ export function createApp() {
   });
 
   // Routes
+  app.route('/auth', authRoute);
   app.route('/v1', uploadRoute);
   app.route('/v1/data', dataRoute);
 

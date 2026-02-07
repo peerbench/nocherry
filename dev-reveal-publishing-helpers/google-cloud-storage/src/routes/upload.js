@@ -4,12 +4,12 @@
 
 import { Hono } from 'hono';
 import { verifyUpload } from '../verify.js';
-import { checkRateLimit } from '../rate-limit.js';
+import { requireAuth, linkSigningKey } from '../middleware/auth.js';
 import * as wasm from '../wasm/pb_wasm.js';
 
 const app = new Hono();
 
-app.post('/upload', async (c) => {
+app.post('/upload', requireAuth(), async (c) => {
   const config = c.get('config');
   const bucket = c.get('bucket');
 
@@ -71,8 +71,18 @@ app.post('/upload', async (c) => {
 
   const { commitmentHash, signingKey } = verified;
 
-  // Rate limit check (in-memory)
-  if (!checkRateLimit(signingKey, config.rateLimitPerHour)) {
+  // Link signing key to authenticated user
+  const db = c.get('db');
+  const user = c.get('user');
+  linkSigningKey(db, user.id, signingKey);
+
+  // Rate limit check via SQLite (by user_id)
+  const oneHourAgo = new Date(Date.now() - 3600_000).toISOString();
+  const rateResult = db.prepare(
+    'SELECT COUNT(*) as cnt FROM upload_logs WHERE signing_key IN (SELECT signing_key FROM user_keys WHERE user_id = ?) AND created_at > ?'
+  ).get(user.id, oneHourAgo);
+
+  if (rateResult.cnt >= config.rateLimitPerHour) {
     return c.json({ error: 'Rate limit exceeded. Try again later.' }, 429);
   }
 
@@ -98,6 +108,11 @@ app.post('/upload', async (c) => {
       hash,
     });
   }
+
+  // Log upload to SQLite
+  db.prepare(
+    'INSERT INTO upload_logs (commitment_hash, signing_key, file_count, total_bytes) VALUES (?, ?, ?, ?)'
+  ).run(commitmentHash, signingKey, files.length, totalBytes);
 
   return c.json({
     commitment_hash: commitmentHash,
