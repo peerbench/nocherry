@@ -11,4 +11,5 @@ export const config = {
   specVersion: '0.2.0',
   batchThreshold: 20,
   activityWindows: ['1h', '30d'],
+  verifyRevealData: process.env.VERIFY_REVEAL_DATA !== 'false',
 };
