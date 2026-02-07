@@ -11,7 +11,7 @@
  *   5. Get selection (which items to reveal)
  *   6. Create signed reveal, submit to server
  *   7. "Publish" data (serve from local HTTP server)
- *   8. Register mirror URL with server
+ *   8. Verify file_urls persisted via GET mirrors endpoint
  *   9. Call verify-publication — server fetches data from URLs, hashes, compares
  *  10. Assert signed attestation: all items match, server signature valid
  */
@@ -90,7 +90,7 @@ describe('E2E: commit → submit → reveal → publish → verify-publication',
     rmSync(tmpDir, { recursive: true, force: true });
   });
 
-  it('full cycle: commit, submit, reveal, publish, register mirror, verify publication — all hashes match, signed attestation valid', async () => {
+  it('full cycle: commit, submit, reveal with file_urls, verify publication — all hashes match, signed attestation valid', async () => {
     // ── 1. Generate Ed25519 keypair ──
     const kp = wasm.generateKeypair();
     assert.ok(kp.did_key.startsWith('did:key:z'));
@@ -191,6 +191,7 @@ describe('E2E: commit → submit → reveal → publish → verify-publication',
     assert.ok(revealBody.server_key, 'Reveal response should have server_key');
     assert.ok(revealBody.server_signature, 'Reveal response should have server_signature');
     assert.equal(revealBody.data_verified, true, 'Reveal should have data_verified: true');
+    assert.equal(revealBody.file_urls_registered, selectedItems.length, 'Reveal should report file_urls_registered count');
 
     // Verify reveal is stored
     const revealsRes = await req('GET', `/v1/commitments/${commitment.commitment_hash}/reveals`);
@@ -205,31 +206,19 @@ describe('E2E: commit → submit → reveal → publish → verify-publication',
     const testContent = await testFetch.text();
     assert.equal(testContent, files[0].content);
 
-    // ── 8. Register mirror URL with server ──
-    const mirrorBaseUrl = `http://127.0.0.1:${fileServerPort}/published`;
-    const mirrorPayload = {
-      spec_version: '0.2.0',
-      commitment_hash: commitment.commitment_hash,
-      url: mirrorBaseUrl,
-      provider: 'custom',
-      registered_at: new Date().toISOString(),
-      signing_key: kp.did_key,
-    };
-    const mirrorBytes = new TextEncoder().encode(JSON.stringify(mirrorPayload));
-    const mirrorSig = wasm.signMessage(kp.private_key_hex, mirrorBytes);
-    const mirror = { ...mirrorPayload, signature: mirrorSig };
-
-    const mirrorRes = await req('POST', `/v1/commitments/${commitment.commitment_hash}/mirrors`, mirror);
-    assert.equal(mirrorRes.status, 201, 'Mirror registration should return 201');
-    const mirrorBody = await mirrorRes.json();
-    assert.ok(mirrorBody.mirror_id);
-
-    // Verify mirror is stored
+    // ── 8. Verify file_urls persisted via GET mirrors endpoint ──
     const mirrorsRes = await req('GET', `/v1/commitments/${commitment.commitment_hash}/mirrors`);
     assert.equal(mirrorsRes.status, 200);
     const mirrorsList = await mirrorsRes.json();
-    assert.equal(mirrorsList.mirrors.length, 1);
-    assert.equal(mirrorsList.mirrors[0].url, mirrorBaseUrl);
+    assert.equal(mirrorsList.commitment_hash, commitment.commitment_hash);
+    // Mirrors should contain file_urls from the reveal
+    assert.equal(mirrorsList.mirrors.length, selectedItems.length, 'Mirrors should contain one entry per revealed file_url');
+    for (const m of mirrorsList.mirrors) {
+      assert.ok(m.item_hash, 'Mirror entry should have item_hash');
+      assert.ok(m.url, 'Mirror entry should have url');
+      assert.ok(m.url.startsWith('http://127.0.0.1:'), 'Mirror URL should point to local file server');
+      assert.ok(m.revealed_at, 'Mirror entry should have revealed_at');
+    }
 
     // ── 9. Verify publication — server fetches each file and hashes it ──
     const fileUrls = {};
@@ -274,11 +263,7 @@ describe('E2E: commit → submit → reveal → publish → verify-publication',
       commitment_hash: commitment.commitment_hash,
       published_at: new Date().toISOString(),
       provider: 'custom',
-      mirror_url: mirrorBaseUrl,
       file_urls: fileUrls,
-      mirror_registrations: [
-        { server: 'embedded', status: 'ok', mirror_id: mirrorBody.mirror_id },
-      ],
       server_attestations: [
         { server: 'embedded', attestation: verification },
       ],
@@ -291,10 +276,7 @@ describe('E2E: commit → submit → reveal → publish → verify-publication',
     assert.equal(saved.spec_version, '0.2.0');
     assert.equal(saved.commitment_hash, commitment.commitment_hash);
     assert.equal(saved.provider, 'custom');
-    assert.equal(saved.mirror_url, mirrorBaseUrl);
     assert.equal(Object.keys(saved.file_urls).length, 3, 'file_urls should map all 3 items');
-    assert.equal(saved.mirror_registrations.length, 1);
-    assert.equal(saved.mirror_registrations[0].status, 'ok');
     assert.equal(saved.server_attestations.length, 1);
     assert.equal(saved.server_attestations[0].attestation.all_match, true);
     assert.ok(saved.server_attestations[0].attestation.server_key);

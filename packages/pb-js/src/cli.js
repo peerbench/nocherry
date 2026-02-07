@@ -18,8 +18,6 @@
  *   pb-js publish huggingface <dir> [--repo <name>] Publish data to Hugging Face
  *   pb-js publish <dir>                   Interactive: detect providers & choose
  *   pb-js generate-random-data [dir] [-n <count>]        Generate random test data
- *   pb-js mirrors add <hash> <url> [--provider github]  Register data mirror
- *   pb-js mirrors list <hash> [-s <server>]             List mirrors
  */
 
 import { readFileSync, writeFileSync, mkdirSync, readdirSync, statSync, existsSync, cpSync } from 'node:fs';
@@ -442,7 +440,11 @@ async function cmdReveal(dirPath) {
     const result = settled[i];
     if (result.status === 'fulfilled') {
       const r = result.value;
-      console.log(`  ${r.server_name}: accepted (reveal_id: ${r.response.reveal_id})`);
+      const resp = r.response;
+      const parts = [`reveal_id: ${resp.reveal_id}`];
+      if (resp.data_verified) parts.push('data_verified: true');
+      if (resp.file_urls_registered > 0) parts.push(`${resp.file_urls_registered} file URLs registered`);
+      console.log(`  ${r.server_name}: accepted (${parts.join(', ')})`);
       revealReceipts.push(r);
     } else {
       console.error(`  ${servers[i].name}: ${result.reason?.message || 'unknown error'}`);
@@ -557,146 +559,6 @@ fi
 `;
 }
 
-// ── Mirror registration ──
-
-async function registerMirrorWithServers(srcDir, url, provider) {
-  const receipt = findReceipt(srcDir);
-  if (!receipt?.commitment_hash) {
-    console.log('No commitment_hash found in directory — skipping mirror registration.');
-    return null;
-  }
-
-  const key = loadKey();
-  const servers = getServers();
-  if (servers.length === 0) {
-    console.log('No servers in registry — skipping mirror registration.');
-    return null;
-  }
-
-  const mirrorPayload = {
-    spec_version: '0.2.0',
-    commitment_hash: receipt.commitment_hash,
-    url,
-    provider,
-    registered_at: new Date().toISOString(),
-    signing_key: key.did || key.did_key,
-  };
-
-  const payloadBytes = new TextEncoder().encode(JSON.stringify(mirrorPayload));
-  const signature = wasm.signMessage(key.private_key_hex, payloadBytes);
-  const mirror = { ...mirrorPayload, signature };
-
-  console.log(`\nRegistering mirror with ${servers.length} server(s)...`);
-
-  const settled = await Promise.allSettled(
-    servers.map(async (server) => {
-      const endpoint = `${server.url.replace(/\/$/, '')}/v1/commitments/${receipt.commitment_hash}/mirrors`;
-      const res = await fetch(endpoint, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(mirror),
-      });
-      if (res.ok) {
-        const body = await res.json();
-        return { server: server.name, server_url: server.url, status: 'ok', mirror_id: body.mirror_id, server_registered_at: body.server_registered_at };
-      } else if (res.status === 404) {
-        return { server: server.name, server_url: server.url, status: 'unsupported' };
-      } else {
-        const body = await res.text();
-        return { server: server.name, server_url: server.url, status: 'error', error: `${res.status}: ${body}` };
-      }
-    })
-  );
-
-  const mirrorResults = settled.map((r, i) => {
-    if (r.status === 'fulfilled') return r.value;
-    return { server: servers[i].name, server_url: servers[i].url, status: 'error', error: r.reason?.message || 'unknown error' };
-  });
-
-  const supported = mirrorResults.filter(v => v.status !== 'unsupported');
-  if (supported.length === 0) {
-    console.log('  (no servers support mirror registration)');
-  }
-  for (const v of supported) {
-    if (v.status === 'ok') {
-      console.log(`  ${v.server}: registered (mirror_id: ${v.mirror_id})`);
-    } else {
-      console.log(`  ${v.server}: ${v.error}`);
-    }
-  }
-
-  return { mirror_request: mirror, results: mirrorResults };
-}
-
-async function cmdMirrorsAdd(commitmentHash, url, provider) {
-  const key = loadKey();
-  const servers = getServers();
-  if (servers.length === 0) {
-    console.error('No servers in registry.');
-    process.exit(1);
-  }
-
-  const mirrorPayload = {
-    spec_version: '0.2.0',
-    commitment_hash: commitmentHash,
-    url,
-    provider,
-    registered_at: new Date().toISOString(),
-    signing_key: key.did || key.did_key,
-  };
-
-  const payloadBytes = new TextEncoder().encode(JSON.stringify(mirrorPayload));
-  const signature = wasm.signMessage(key.private_key_hex, payloadBytes);
-  const mirror = { ...mirrorPayload, signature };
-
-  console.log(`Registering mirror with ${servers.length} server(s)...`);
-
-  for (const server of servers) {
-    const endpoint = `${server.url.replace(/\/$/, '')}/v1/commitments/${commitmentHash}/mirrors`;
-    try {
-      const res = await fetch(endpoint, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(mirror),
-      });
-      if (res.ok) {
-        const body = await res.json();
-        console.log(`  ${server.name}: registered (mirror_id: ${body.mirror_id})`);
-      } else {
-        const body = await res.text();
-        console.log(`  ${server.name}: ${res.status} ${body}`);
-      }
-    } catch (e) {
-      console.log(`  ${server.name}: unreachable (${e.message})`);
-    }
-  }
-}
-
-async function cmdMirrorsList(commitmentHash, serverNameOrUrl) {
-  const server = resolveServer(serverNameOrUrl);
-  const endpoint = `${server.url.replace(/\/$/, '')}/v1/commitments/${commitmentHash}/mirrors`;
-
-  const res = await fetch(endpoint);
-  if (!res.ok) {
-    const body = await res.text();
-    console.error(`Server returned ${res.status}: ${body}`);
-    process.exit(1);
-  }
-
-  const data = await res.json();
-  if (data.mirrors.length === 0) {
-    console.log('No mirrors registered for this commitment.');
-    return;
-  }
-
-  console.log(`Mirrors for ${commitmentHash}:`);
-  for (const m of data.mirrors) {
-    console.log(`  ${m.provider}: ${m.url}`);
-    console.log(`    mirror_id: ${m.mirror_id}`);
-    console.log(`    registered: ${m.server_registered_at}`);
-    console.log();
-  }
-}
 
 // ── Publication verification ──
 
@@ -913,9 +775,6 @@ Each folder in \`reveals/\` contains data that was committed before evaluation, 
   console.log(`  ${githubUrl}`);
   console.log(`  Verify: cd ${revealFolder} && ./verify.sh`);
 
-  // Register mirror with servers
-  const mirrorResult = await registerMirrorWithServers(srcDir, githubUrl, 'github');
-
   // Verify publication — server fetches data from GitHub and confirms hashes
   let attestations = [];
   let fileUrls = {};
@@ -941,7 +800,6 @@ Each folder in \`reveals/\` contains data that was committed before evaluation, 
     repository: fullRepo,
     reveal_folder: revealFolder,
     file_urls: fileUrls,
-    mirror_registrations: mirrorResult?.results || [],
     server_attestations: attestations,
   };
   const pubPath = join(srcDir, 'publication.json');
@@ -1145,9 +1003,6 @@ npx @peerbench/sdk verify reveals/<folder>/commitment.json
   console.log(`\nPublished to Hugging Face:`);
   console.log(`  ${hfUrl}`);
 
-  // Register mirror with servers
-  const mirrorResult = await registerMirrorWithServers(srcDir, hfUrl, 'huggingface');
-
   // Verify publication — server fetches data from HF and confirms hashes
   let attestations = [];
   let fileUrls = {};
@@ -1173,7 +1028,6 @@ npx @peerbench/sdk verify reveals/<folder>/commitment.json
     repository: fullRepo,
     reveal_folder: revealFolder,
     file_urls: fileUrls,
-    mirror_registrations: mirrorResult?.results || [],
     server_attestations: attestations,
   };
   const pubPath = join(srcDir, 'publication.json');
@@ -1481,12 +1335,6 @@ async function cmdGo(dirPath, probability = 0.50) {
         if (uploadRes.ok) {
           const uploadResult = await uploadRes.json();
           console.log(`  ✓ Uploaded ${dataFiles.length} file${dataFiles.length !== 1 ? 's' : ''} to ${publisher.name}`);
-
-          // Register publish server as an additional mirror
-          if (uploadResult.files && uploadResult.files.length > 0) {
-            const mirrorUrl = `${publisher.url.replace(/\/$/, '')}/v1/data/${uploadResult.commitment_hash}`;
-            await registerMirrorWithServers(dir, mirrorUrl, publisher.name);
-          }
         } else {
           const errBody = await uploadRes.text();
           console.log(`  ⚠ Publish server upload failed: ${uploadRes.status} ${errBody}`);
@@ -1578,8 +1426,13 @@ async function cmdGo(dirPath, probability = 0.50) {
   for (let i = 0; i < revealSettled.length; i++) {
     const r = revealSettled[i];
     if (r.status === 'fulfilled') {
-      if (!firstRevealPrinted) { revealSpinner.stop(`${r.value.server_name}: accepted`); firstRevealPrinted = true; }
-      else console.log(`  ✓ ${r.value.server_name}: accepted`);
+      const resp = r.value.response;
+      const parts = [r.value.server_name + ': accepted'];
+      if (resp.data_verified) parts.push('data verified');
+      if (resp.file_urls_registered > 0) parts.push(`${resp.file_urls_registered} file URLs registered`);
+      const msg = parts.join(', ');
+      if (!firstRevealPrinted) { revealSpinner.stop(msg); firstRevealPrinted = true; }
+      else console.log(`  ✓ ${msg}`);
       revealReceipts.push(r.value);
     } else {
       if (!firstRevealPrinted) { revealSpinner.fail(`${servers[i].name}: ${r.reason?.message || 'failed'}`); firstRevealPrinted = true; }
@@ -1711,9 +1564,7 @@ function usage() {
   pb-js publish github <dir> [--repo <r>]   Publish reveal to GitHub
   pb-js publish huggingface <dir> [--repo <r>]  Publish reveal to Hugging Face
   pb-js publish <dir>                       Interactive provider selection
-  pb-js generate-random-data [dir] [-n <n>] Generate random test data (default: random-sample/)
-  pb-js mirrors add <hash> <url> [--provider github]  Register data mirror
-  pb-js mirrors list <hash> [-s <server>]   List mirrors for a commitment`);
+  pb-js generate-random-data [dir] [-n <n>] Generate random test data (default: random-sample/)`);
   process.exit(1);
 }
 
@@ -1808,24 +1659,6 @@ async function main() {
       }
     }
     cmdGenerate(dirArg, count);
-  } else if (cmd === 'mirrors' && sub === 'add' && args[2] && args[3]) {
-    let provider = 'custom';
-    for (let i = 4; i < args.length; i++) {
-      if (args[i] === '--provider' && args[i + 1]) {
-        provider = args[i + 1];
-        i++;
-      }
-    }
-    await cmdMirrorsAdd(args[2], args[3], provider);
-  } else if (cmd === 'mirrors' && sub === 'list' && args[2]) {
-    let server = undefined;
-    for (let i = 3; i < args.length; i++) {
-      if ((args[i] === '-s' || args[i] === '--server') && args[i + 1]) {
-        server = args[i + 1];
-        i++;
-      }
-    }
-    await cmdMirrorsList(args[2], server);
   } else {
     usage();
   }

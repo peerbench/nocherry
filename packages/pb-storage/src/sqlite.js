@@ -48,17 +48,6 @@ CREATE TABLE IF NOT EXISTS beacon_cache (
   PRIMARY KEY (beacon_type, round_number)
 );
 
-CREATE TABLE IF NOT EXISTS mirrors (
-  id TEXT PRIMARY KEY,
-  commitment_hash TEXT NOT NULL REFERENCES commitments(id),
-  url TEXT NOT NULL,
-  provider TEXT NOT NULL,
-  signing_key TEXT NOT NULL,
-  body TEXT NOT NULL,
-  server_registered_at TEXT NOT NULL
-);
-CREATE INDEX IF NOT EXISTS idx_mirrors_commitment_hash ON mirrors(commitment_hash);
-CREATE UNIQUE INDEX IF NOT EXISTS idx_mirrors_commitment_url ON mirrors(commitment_hash, url);
 `;
 
 /**

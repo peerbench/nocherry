@@ -10,8 +10,6 @@ import { config } from './config.js';
 import serverInfoRoute from './routes/server-info.js';
 import commitmentsRoute from './routes/commitments.js';
 import revealsRoute from './routes/reveals.js';
-import mirrorsRoute from './routes/mirrors.js';
-
 /**
  * Create a Hono app with the given storage backend.
  * Storage must already have server key initialized.
@@ -32,7 +30,6 @@ export function createApp(storage) {
   app.route('/v1/server-info', serverInfoRoute);
   app.route('/v1/commitments', commitmentsRoute);
   app.route('/v1/commitments', revealsRoute);
-  app.route('/v1/commitments', mirrorsRoute);
 
   // 404 fallback
   app.notFound((c) => c.json({ error: 'Not found' }, 404));

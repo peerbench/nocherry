@@ -15,7 +15,6 @@
  *   commitments: CommitmentsTable,
  *   selections: SelectionsTable,
  *   reveals: RevealsTable,
- *   mirrors: MirrorsTable,
  *   server_identity: ServerIdentityTable,
  *   beacon_cache: BeaconCacheTable,
  * }} Database
@@ -54,15 +53,6 @@
  *   fetched_at: string,
  * }} BeaconCacheTable
  *
- * @typedef {{
- *   id: string,
- *   commitment_hash: string,
- *   url: string,
- *   provider: string,
- *   signing_key: string,
- *   body: string,
- *   server_registered_at: string,
- * }} MirrorsTable
  */
 
 export {};
