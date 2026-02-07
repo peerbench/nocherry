@@ -1,6 +1,5 @@
 import { Hono } from 'hono';
-import { page, button } from '../template.js';
-import { resetSession } from '../session.js';
+import { page } from '../template.js';
 
 const route = new Hono();
 
@@ -31,14 +30,24 @@ route.get('/', (c) => {
           </div>
         </div>
 
-        ${button('Start Demo', '/steps/1')}
+        <div style="display:flex;gap:16px;justify-content:center;margin-top:28px;flex-wrap:wrap">
+          <form method="POST" action="/steps/1" style="margin:0">
+            <input type="hidden" name="mode" value="local">
+            <button type="submit" class="btn" style="padding:12px 28px;font-size:1rem">Local Demo</button>
+            <div style="font-size:0.8rem;color:#666;margin-top:6px;text-align:center">Single embedded server<br>Self-contained, works offline</div>
+          </form>
+          <form method="POST" action="/steps/1" style="margin:0">
+            <input type="hidden" name="mode" value="live">
+            <button type="submit" class="btn" style="padding:12px 28px;font-size:1rem;background:var(--accent2)">Live Demo</button>
+            <div style="font-size:0.8rem;color:#666;margin-top:6px;text-align:center">Remote servers on peerbench.ai<br>Real multi-server experience</div>
+          </form>
+        </div>
       </div>
     `,
   }));
 });
 
 route.post('/', (c) => {
-  resetSession(c);
   return c.redirect('/steps/1');
 });
 
