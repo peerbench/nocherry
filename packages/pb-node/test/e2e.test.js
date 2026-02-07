@@ -173,12 +173,24 @@ describe('E2E: commit → submit → reveal → publish → verify-publication',
     const revealSig = wasm.signMessage(kp.private_key_hex, revealBytes);
     const reveal = { ...revealPayload, signature: revealSig };
 
+    // Build file_urls for server-side data verification
+    const revealFileUrls = {};
+    for (const item of selectedItems) {
+      const file = files.find(f => f.hash === item);
+      if (file) {
+        revealFileUrls[item] = `http://127.0.0.1:${fileServerPort}/published/data/${file.name}`;
+      }
+    }
+
     // Submit reveal to server
-    const revealRes = await req('POST', `/v1/commitments/${commitment.commitment_hash}/reveals`, reveal);
+    const revealRes = await req('POST', `/v1/commitments/${commitment.commitment_hash}/reveals`, { ...reveal, file_urls: revealFileUrls });
     assert.equal(revealRes.status, 201, 'Reveal submission should return 201');
     const revealBody = await revealRes.json();
     assert.ok(revealBody.reveal_id, 'Reveal response should have reveal_id');
     assert.ok(revealBody.registered_at, 'Reveal response should have registered_at');
+    assert.ok(revealBody.server_key, 'Reveal response should have server_key');
+    assert.ok(revealBody.server_signature, 'Reveal response should have server_signature');
+    assert.equal(revealBody.data_verified, true, 'Reveal should have data_verified: true');
 
     // Verify reveal is stored
     const revealsRes = await req('GET', `/v1/commitments/${commitment.commitment_hash}/reveals`);

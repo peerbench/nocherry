@@ -386,6 +386,23 @@ async function cmdReveal(dirPath) {
   writeFileSync(join(dir, 'reveal.json'), JSON.stringify(reveal, null, 2) + '\n');
   console.error('Saved reveal.json');
 
+  // Load file_urls from publication.json for server-side data verification
+  let selectedFileUrls = {};
+  const pubPath = join(dir, 'publication.json');
+  if (existsSync(pubPath)) {
+    try {
+      const pub = JSON.parse(readFileSync(pubPath, 'utf-8'));
+      if (pub.file_urls && typeof pub.file_urls === 'object') {
+        for (const hash of selectedItems) {
+          if (pub.file_urls[hash]) selectedFileUrls[hash] = pub.file_urls[hash];
+        }
+      }
+    } catch {}
+  }
+  if (Object.keys(selectedFileUrls).length === 0) {
+    console.error('Warning: No publication.json found — servers may reject reveal without file_urls');
+  }
+
   // Submit to all servers
   const servers = getServers();
   if (servers.length === 0) {
@@ -402,7 +419,7 @@ async function cmdReveal(dirPath) {
       const res = await fetch(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(reveal),
+        body: JSON.stringify({ ...reveal, file_urls: selectedFileUrls }),
       });
       if (res.ok) {
         const body = await res.json();
@@ -1486,6 +1503,23 @@ async function cmdGo(dirPath, probability = 0.50) {
 
   console.log(`  ✓ Revealing ${selectedItems.length} selected item${selectedItems.length !== 1 ? 's' : ''}`);
 
+  // Load file_urls from publication.json for server-side data verification
+  let selectedFileUrls = {};
+  const pubPath = join(dir, 'publication.json');
+  if (existsSync(pubPath)) {
+    try {
+      const pub = JSON.parse(readFileSync(pubPath, 'utf-8'));
+      if (pub.file_urls && typeof pub.file_urls === 'object') {
+        for (const hash of selectedItems) {
+          if (pub.file_urls[hash]) selectedFileUrls[hash] = pub.file_urls[hash];
+        }
+      }
+    } catch {}
+  }
+  if (Object.keys(selectedFileUrls).length === 0) {
+    console.log('  ⚠ No publication.json found — servers may reject reveal without file_urls');
+  }
+
   // Submit reveal to servers
   const revealSpinner = startSpinner('Submitting reveal...');
 
@@ -1495,7 +1529,7 @@ async function cmdGo(dirPath, probability = 0.50) {
       const res = await fetch(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(reveal),
+        body: JSON.stringify({ ...reveal, file_urls: selectedFileUrls }),
       });
       if (res.ok) {
         const body = await res.json();

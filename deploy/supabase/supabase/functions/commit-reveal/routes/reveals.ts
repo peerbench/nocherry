@@ -8,6 +8,7 @@ import { Hono, type Context } from "npm:hono@^4.6.0";
 import * as wasm from "../wasm/mod.ts";
 import { signResponse } from "../signing.ts";
 import { getArrivalBeacon } from "../beacon.ts";
+import { config } from "../config.ts";
 import type { KyselyStorage } from "../storage/postgres.ts";
 
 const route = new Hono();
@@ -99,6 +100,65 @@ route.post("/:hash/reveals", async (c: Context) => {
     );
   }
 
+  // ── Data verification ──
+  const verifyEnabled = config.verifyRevealData;
+  const fileUrls = body.file_urls as Record<string, string> | undefined;
+  let dataVerified = false;
+  let verification: Record<string, unknown> | null = null;
+
+  if (verifyEnabled) {
+    if (!fileUrls || typeof fileUrls !== "object" || Object.keys(fileUrls).length === 0) {
+      return c.json(
+        { error: "file_urls required when server has data verification enabled. Provide a mapping of item hashes to public URLs." },
+        400,
+      );
+    }
+
+    const selectedItems = body.selected_items as string[];
+    const results: Record<string, unknown>[] = [];
+    for (const itemHash of selectedItems) {
+      const url = fileUrls[itemHash];
+      if (!url) {
+        results.push({ hash: itemHash, status: "missing_url" });
+        continue;
+      }
+      try {
+        const res = await fetch(url, { signal: AbortSignal.timeout(15000) });
+        if (!res.ok) {
+          results.push({ hash: itemHash, url, status: "fetch_error", detail: `HTTP ${res.status}` });
+          continue;
+        }
+        const data = new Uint8Array(await res.arrayBuffer());
+        const computed = wasm.hashBytes(data);
+        if (computed === itemHash) {
+          results.push({ hash: itemHash, url, status: "match" });
+        } else {
+          results.push({ hash: itemHash, url, status: "mismatch", computed_hash: computed });
+        }
+      } catch (e) {
+        results.push({ hash: itemHash, url, status: "fetch_error", detail: (e as Error).message });
+      }
+    }
+
+    const matchCount = results.filter((r) => r.status === "match").length;
+    const allMatch = matchCount === selectedItems.length && matchCount > 0;
+
+    if (!allMatch) {
+      return c.json(
+        {
+          error: "Data verification failed — not all selected items could be verified",
+          verification: { verified_items: matchCount, total_selected: selectedItems.length, items: results },
+        },
+        422,
+      );
+    }
+
+    dataVerified = true;
+    verification = { verified_items: matchCount, total_selected: selectedItems.length, items: results };
+  } else {
+    verification = { verification_skipped: true };
+  }
+
   const registeredAt = new Date().toISOString();
   const revealId = crypto.randomUUID().replace(/-/g, "");
 
@@ -117,11 +177,13 @@ route.post("/:hash/reveals", async (c: Context) => {
   }
 
   return c.json(
-    {
+    signResponse({
       reveal_id: revealId,
       registered_at: registeredAt,
       beacon_at_reveal: beaconAtReveal,
-    },
+      data_verified: dataVerified,
+      verification,
+    }),
     201,
   );
 });

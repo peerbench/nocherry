@@ -9,4 +9,5 @@ export const config = {
   specVersion: "0.2.0",
   batchThreshold: 20,
   activityWindows: ["1h", "30d"],
+  verifyRevealData: Deno.env.get("VERIFY_REVEAL_DATA") !== "false",
 };
