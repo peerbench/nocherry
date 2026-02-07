@@ -23,7 +23,7 @@ import { createServer } from 'node:http';
 import { readFileSync, writeFileSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { getApp, cleanup } from './_setup.js';
+import { getApp, cleanup, isRemote } from './_setup.js';
 
 const DRAND_CHAIN_HASH = '52db9ba70e0cc0f6eaf7803dd07447a1f5477735fd3f661792ba94600c84e971';
 
@@ -75,7 +75,7 @@ function startFileServer(dir) {
   });
 }
 
-describe('E2E: commit → submit → reveal → publish → verify-publication', () => {
+describe('E2E: commit → submit → reveal → publish → verify-publication (local only)', { skip: isRemote ? 'requires local file server — skipped in remote mode' : false }, () => {
   before(async () => {
     app = await getApp();
     tmpDir = mkdtempSync(join(tmpdir(), 'pb-e2e-'));
