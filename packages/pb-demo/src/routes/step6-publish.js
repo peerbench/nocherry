@@ -117,6 +117,106 @@ async function registerMirrorWithServers(mirrorUrl, provider, commitmentHash, kp
   });
 }
 
+function remoteServerSection(publishServers, signingKeyHex, hasPublishResults) {
+  const remoteServers = publishServers.filter(s => s.environment !== 'embedded');
+  if (remoteServers.length === 0) return '';
+
+  const serverRows = remoteServers.map(s => {
+    const signupUrl = `${s.url.replace(/\/$/, '')}/auth/signup?signing_key=${encodeURIComponent(signingKeyHex)}`;
+    return `
+      <div style="padding:8px 10px;margin:4px 0;background:#f8f9fa;border:1px solid #dee2e6;border-radius:6px;display:flex;align-items:center;gap:12px">
+        <div style="flex:1">
+          <strong>${esc(s.name)}</strong>
+          <div style="font-size:0.8rem;color:#666">${esc(s.url)}</div>
+        </div>
+        <a href="${esc(signupUrl)}" target="_blank" style="font-size:0.85rem;color:var(--accent);white-space:nowrap">Link Account &rarr;</a>
+      </div>`;
+  }).join('');
+
+  return `
+    <details style="margin-top:20px">
+      <summary style="cursor:pointer;font-weight:600;color:var(--accent2)">Remote Publish Servers (Optional)</summary>
+      <div style="margin-top:12px">
+        <p style="font-size:0.9rem;color:#444">You can also publish to remote servers hosted on Cloudflare R2 and Google Cloud Storage.
+        First link your signing key via Google OAuth, then publish.</p>
+        ${serverRows}
+        ${hasPublishResults ? `
+          <form method="POST" action="/steps/6/remote" style="margin-top:12px">
+            <button type="submit" class="btn" style="background:#6c757d">Publish to Remote Servers</button>
+          </form>
+        ` : ''}
+      </div>
+    </details>
+  `;
+}
+
+function renderUploadBlock(u) {
+  if (u.status === 'ok') {
+    const fileRows = (u.files || []).map(f => `
+      <div style="padding:4px 0;font-size:0.8rem">
+        <span class="check">\u2713</span> <code>${esc(f.name)}</code>
+        <a href="${esc(f.url)}" target="_blank" style="color:var(--accent);margin-left:8px">${esc(f.url)}</a>
+      </div>`).join('');
+    return `
+      <div class="server-result">
+        <h3>${esc(u.serverName)} <span class="check">UPLOADED</span></h3>
+        ${field('Commitment', u.commitment_hash)}
+        ${field('Uploaded At', u.uploaded_at)}
+        ${fileRows}
+      </div>`;
+  } else {
+    return `
+      <div class="server-result">
+        <h3>${esc(u.serverName)} <span class="cross">FAILED</span></h3>
+        <p style="color:#e63946">${esc(u.error)}</p>
+      </div>`;
+  }
+}
+
+function renderMirrorBlocks(mirrorResults) {
+  if (mirrorResults.length === 0) return '';
+
+  const okMirrors = mirrorResults.filter(r => r.status === 'ok');
+  const byServer = {};
+  for (const r of mirrorResults) {
+    if (!byServer[r.name]) byServer[r.name] = [];
+    byServer[r.name].push(r);
+  }
+
+  const blocks = Object.entries(byServer).map(([name, results]) => {
+    const allOk = results.every(r => r.status === 'ok');
+    const rows = results.map(r => {
+      if (r.status === 'ok') {
+        return `
+          <div style="padding:8px 0;border-bottom:1px solid #eee">
+            <span class="check" style="font-size:1.1rem">\u2713</span>
+            <strong>${esc(r.provider)}</strong>: <a href="${esc(r.url)}" target="_blank" style="color:var(--accent)">${esc(r.url)}</a>
+            <div style="font-size:0.8rem;color:#666">mirror_id: ${esc(r.mirrorId)}</div>
+          </div>`;
+      } else {
+        return `
+          <div style="padding:8px 0;border-bottom:1px solid #eee">
+            <span class="cross" style="font-size:1.1rem">\u2717</span>
+            <strong>${esc(r.provider)}</strong>: ${esc(r.url)}
+            <div style="font-size:0.8rem;color:#e63946">${esc(r.error)}</div>
+          </div>`;
+      }
+    }).join('');
+
+    return `
+      <div class="server-result">
+        <h3>${esc(name)} <span class="${allOk ? 'check' : 'cross'}">${allOk ? 'OK' : 'PARTIAL'}</span></h3>
+        ${rows}
+      </div>`;
+  }).join('');
+
+  return `
+    <h2>Mirror Registration</h2>
+    <p>Registered ${okMirrors.length} mirror(s) across ${Object.keys(byServer).length} server(s).</p>
+    ${blocks}
+  `;
+}
+
 route.get('/', (c) => {
   const session = c.get('session');
   if (!session.selectedItems) return c.redirect('/steps/5');
@@ -125,6 +225,7 @@ route.get('/', (c) => {
   const commitment = session.commitment;
   const selectedItems = session.selectedItems || [];
   const publishServers = c.get('publishServers') || [];
+  const signingKeyHex = session.keypair?.public_key_hex || '';
 
   let content;
   if (!publishResults) {
@@ -162,79 +263,22 @@ route.get('/', (c) => {
       ${note('The publish server stores the actual data files (not just hashes). After upload, the returned URL is registered as a mirror with the embedded commit-reveal server.')}
 
       ${button('Publish Selected Random Sample')}
+
+      ${remoteServerSection(publishServers, signingKeyHex, false)}
     `;
   } else {
-    // Show upload results + mirror registration results
-    const uploadBlocks = publishResults.uploads.map(u => {
-      if (u.status === 'ok') {
-        const fileRows = (u.files || []).map(f => `
-          <div style="padding:4px 0;font-size:0.8rem">
-            <span class="check">\u2713</span> <code>${esc(f.name)}</code>
-            <a href="${esc(f.url)}" target="_blank" style="color:var(--accent);margin-left:8px">${esc(f.url)}</a>
-          </div>`).join('');
-        return `
-          <div class="server-result">
-            <h3>${esc(u.serverName)} <span class="check">UPLOADED</span></h3>
-            ${field('Commitment', u.commitment_hash)}
-            ${field('Uploaded At', u.uploaded_at)}
-            ${fileRows}
-          </div>`;
-      } else {
-        return `
-          <div class="server-result">
-            <h3>${esc(u.serverName)} <span class="cross">FAILED</span></h3>
-            <p style="color:#e63946">${esc(u.error)}</p>
-            ${u.httpStatus === 403 ? `<p style="font-size:0.85rem;color:#666">Signing key not linked to a publisher account. Visit the publish server's <code>/auth/signup</code> to link your key.</p>` : ''}
-          </div>`;
-      }
-    }).join('');
-
+    const uploadBlocks = publishResults.uploads.map(renderUploadBlock).join('');
     const mirrorResults = publishResults.mirrors || [];
-    const okMirrors = mirrorResults.filter(r => r.status === 'ok');
-    const byServer = {};
-    for (const r of mirrorResults) {
-      if (!byServer[r.name]) byServer[r.name] = [];
-      byServer[r.name].push(r);
-    }
-
-    const mirrorBlocks = Object.entries(byServer).map(([name, results]) => {
-      const allOk = results.every(r => r.status === 'ok');
-      const rows = results.map(r => {
-        if (r.status === 'ok') {
-          return `
-            <div style="padding:8px 0;border-bottom:1px solid #eee">
-              <span class="check" style="font-size:1.1rem">\u2713</span>
-              <strong>${esc(r.provider)}</strong>: <a href="${esc(r.url)}" target="_blank" style="color:var(--accent)">${esc(r.url)}</a>
-              <div style="font-size:0.8rem;color:#666">mirror_id: ${esc(r.mirrorId)}</div>
-            </div>`;
-        } else {
-          return `
-            <div style="padding:8px 0;border-bottom:1px solid #eee">
-              <span class="cross" style="font-size:1.1rem">\u2717</span>
-              <strong>${esc(r.provider)}</strong>: ${esc(r.url)}
-              <div style="font-size:0.8rem;color:#e63946">${esc(r.error)}</div>
-            </div>`;
-        }
-      }).join('');
-
-      return `
-        <div class="server-result">
-          <h3>${esc(name)} <span class="${allOk ? 'check' : 'cross'}">${allOk ? 'OK' : 'PARTIAL'}</span></h3>
-          ${rows}
-        </div>`;
-    }).join('');
 
     content = `
       <h2>Upload Results</h2>
       ${uploadBlocks}
 
-      ${mirrorResults.length > 0 ? `
-        <h2>Mirror Registration</h2>
-        <p>Registered ${okMirrors.length} mirror(s) across ${Object.keys(byServer).length} server(s).</p>
-        ${mirrorBlocks}
-      ` : ''}
+      ${renderMirrorBlocks(mirrorResults)}
 
       ${note('Data is now publicly accessible. Next, submit the reveal to formally tell the servers which items you\'re revealing.')}
+
+      ${remoteServerSection(publishServers, signingKeyHex, true)}
 
       ${nextButton(7)}
     `;
@@ -301,6 +345,64 @@ route.post('/', async (c) => {
   session.publishResults = { uploads, mirrors: allMirrorResults };
   session.mirrorResults = allMirrorResults.length > 0 ? allMirrorResults : uploads; // ensure step 7 guard passes
   session._completedStep = Math.max(session._completedStep || 0, 6);
+  return c.redirect('/steps/6');
+});
+
+// Publish to remote servers (optional, requires OAuth-linked key)
+route.post('/remote', async (c) => {
+  const session = c.get('session');
+  const pbServers = c.get('pbServers');
+  const publishServers = c.get('publishServers') || [];
+  const kp = session.keypair;
+  const commitment = session.commitment;
+  const receipt = session.receipt;
+  const selectedItems = session.selectedItems || [];
+
+  if (!session.publishResults) return c.redirect('/steps/6');
+
+  // Build files for selected items
+  const files = [];
+  for (const hash of selectedItems) {
+    const idx = commitment.items.indexOf(hash);
+    if (idx >= 0 && session.sampleData?.[idx]) {
+      files.push({
+        name: `item-${idx + 1}.txt`,
+        data: session.sampleData[idx],
+        hash,
+      });
+    }
+  }
+
+  // Upload to remote publish servers only
+  const remotePublishServers = publishServers.filter(s => s.environment !== 'embedded');
+  const remoteUploads = [];
+  for (const server of remotePublishServers) {
+    try {
+      const result = await uploadToPublishServer(server, receipt, files, kp);
+      remoteUploads.push({ serverName: server.name, serverUrl: server.url, ...result });
+    } catch (err) {
+      remoteUploads.push({ serverName: server.name, serverUrl: server.url, status: 'error', error: err.message });
+    }
+  }
+
+  // Register mirrors for successful remote uploads with all commit-reveal servers
+  const remoteMirrorResults = [];
+  for (const upload of remoteUploads) {
+    if (upload.status !== 'ok' || !upload.files) continue;
+
+    const baseUrl = upload.files[0]?.url?.replace(/\/[^/]+$/, '') || upload.serverUrl;
+    const provider = 'peerbench';
+
+    const mirrorResults = await registerMirrorWithServers(
+      baseUrl, provider, commitment.commitment_hash, kp, pbServers
+    );
+    remoteMirrorResults.push(...mirrorResults);
+  }
+
+  // Merge remote results into existing publish results
+  session.publishResults.uploads.push(...remoteUploads);
+  session.publishResults.mirrors.push(...remoteMirrorResults);
+
   return c.redirect('/steps/6');
 });
 
