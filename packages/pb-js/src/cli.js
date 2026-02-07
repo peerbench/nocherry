@@ -4,6 +4,7 @@
  * PeerBench CLI — JS implementation using pb-wasm.
  *
  * Usage:
+ *   pb-js go <dir> [-p <prob>]              Guided wizard (just hit Enter)
  *   pb-js key generate
  *   pb-js key show
  *   pb-js hash file <path>
@@ -11,7 +12,8 @@
  *   pb-js commit <dir> --probability <p> [--beacon drand]
  *   pb-js verify <commitment.json>
  *   pb-js servers                         List known servers
- *   pb-js submit <commitment.json> [-s <server>]  Submit commitment
+ *   pb-js submit <dir|file> [-s <server>]  Submit commitment to server(s)
+ *   pb-js reveal <dir>                           Create & submit reveal
  *   pb-js publish github <dir> [--repo <name>]    Publish data to GitHub
  *   pb-js publish huggingface <dir> [--repo <name>] Publish data to Hugging Face
  *   pb-js publish <dir>                   Interactive: detect providers & choose
@@ -71,11 +73,18 @@ function hashFile(filePath) {
   return wasm.hashBytes(new Uint8Array(data));
 }
 
+const PROTOCOL_FILES = new Set([
+  'manifest.json', 'commitment.json', 'server-receipts.json',
+  'reveal.json', 'reveal-receipts.json', 'publication.json',
+  'receipt.json', 'verify.sh', 'README.md',
+]);
+
 function walkDir(dirPath, prefix = '') {
   const entries = readdirSync(dirPath).sort();
   const manifest = [];
   for (const name of entries) {
     if (name.startsWith('.')) continue;
+    if (prefix === '' && PROTOCOL_FILES.has(name)) continue;
     const fullPath = join(dirPath, name);
     const relName = prefix ? `${prefix}/${name}` : name;
     const stat = statSync(fullPath);
@@ -118,7 +127,20 @@ function cmdHashFile(filePath) {
 }
 
 function cmdHashDir(dirPath) {
-  const result = hashDir(resolve(dirPath));
+  const dir = resolve(dirPath);
+  const result = hashDir(dir);
+
+  const manifestData = {
+    spec_version: '0.2.0',
+    root_hash: result.hash,
+    items: result.manifest
+      .filter(e => e.type === 'file')
+      .map(e => ({ path: e.name, hash: e.hash })),
+    created_at: new Date().toISOString(),
+  };
+  writeFileSync(join(dir, 'manifest.json'), JSON.stringify(manifestData, null, 2) + '\n');
+  console.error('Saved manifest.json');
+
   console.log(JSON.stringify({ hash: result.hash, items: result.manifest.length }, null, 2));
 }
 
@@ -152,6 +174,9 @@ function cmdCommit(dirPath, probability, beacon) {
     JSON.stringify(params),
     key.private_key_hex
   );
+
+  writeFileSync(join(dir, 'commitment.json'), JSON.stringify(commitment, null, 2) + '\n');
+  console.error('Saved commitment.json');
 
   console.log(JSON.stringify(commitment, null, 2));
 }
@@ -194,8 +219,19 @@ function cmdServers() {
   }
 }
 
-async function cmdSubmit(commitmentPath, serverNameOrUrl) {
-  const raw = readFileSync(resolve(commitmentPath), 'utf-8');
+async function cmdSubmit(target, serverNameOrUrl) {
+  const resolved = resolve(target);
+  const isDir = existsSync(resolved) && statSync(resolved).isDirectory();
+
+  if (isDir) {
+    await cmdSubmitDir(resolved);
+  } else {
+    await cmdSubmitFile(resolved, serverNameOrUrl);
+  }
+}
+
+async function cmdSubmitFile(commitmentPath, serverNameOrUrl) {
+  const raw = readFileSync(commitmentPath, 'utf-8');
   const commitment = JSON.parse(raw);
 
   const server = resolveServer(serverNameOrUrl);
@@ -225,6 +261,187 @@ async function cmdSubmit(commitmentPath, serverNameOrUrl) {
   }
 }
 
+async function cmdSubmitDir(dir) {
+  const commitmentPath = join(dir, 'commitment.json');
+  if (!existsSync(commitmentPath)) {
+    console.error('No commitment.json found in directory. Run: pb-js commit <dir>');
+    process.exit(1);
+  }
+
+  const commitment = JSON.parse(readFileSync(commitmentPath, 'utf-8'));
+  const servers = getServers();
+  if (servers.length === 0) {
+    console.error('No servers in registry.');
+    process.exit(1);
+  }
+
+  console.log(`Submitting to ${servers.length} server(s)...`);
+
+  const settled = await Promise.allSettled(
+    servers.map(async (server) => {
+      const url = `${server.url.replace(/\/$/, '')}/v1/commitments`;
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(commitment),
+      });
+      if (res.ok) {
+        const receipt = await res.json();
+        return { server_name: server.name, server_url: server.url, receipt };
+      } else {
+        const body = await res.text();
+        throw new Error(`${server.name}: ${res.status} ${body}`);
+      }
+    })
+  );
+
+  const receipts = [];
+  for (let i = 0; i < settled.length; i++) {
+    const result = settled[i];
+    if (result.status === 'fulfilled') {
+      const r = result.value;
+      console.log(`  ${r.server_name}: 201 Created (round ${r.receipt.selection?.beacon_output?.round || '?'})`);
+      receipts.push(r);
+    } else {
+      console.error(`  ${servers[i].name}: ${result.reason?.message || 'unknown error'}`);
+    }
+  }
+
+  if (receipts.length === 0) {
+    console.error('All servers failed.');
+    process.exit(1);
+  }
+
+  const serverReceipts = {
+    spec_version: '0.2.0',
+    commitment_hash: commitment.commitment_hash,
+    submitted_at: new Date().toISOString(),
+    receipts,
+  };
+  writeFileSync(join(dir, 'server-receipts.json'), JSON.stringify(serverReceipts, null, 2) + '\n');
+  console.error('Saved server-receipts.json');
+
+  // Save first successful receipt as receipt.json for backward compat
+  writeFileSync(join(dir, 'receipt.json'), JSON.stringify(receipts[0].receipt, null, 2) + '\n');
+  console.error('Saved receipt.json');
+
+  console.log(JSON.stringify(serverReceipts, null, 2));
+}
+
+// ── Reveal ──
+
+async function cmdReveal(dirPath) {
+  const dir = resolve(dirPath);
+  const key = loadKey();
+
+  // Load commitment (from commitment.json or extract from receipts)
+  let commitment;
+  const commitmentPath = join(dir, 'commitment.json');
+  if (existsSync(commitmentPath)) {
+    commitment = JSON.parse(readFileSync(commitmentPath, 'utf-8'));
+  } else {
+    console.error('No commitment.json found in directory. Run: pb-js commit <dir>');
+    process.exit(1);
+  }
+
+  // Load selection from server-receipts.json or receipt.json
+  let selectedItems;
+  const serverReceiptsPath = join(dir, 'server-receipts.json');
+  const receiptPath = join(dir, 'receipt.json');
+
+  if (existsSync(serverReceiptsPath)) {
+    const sr = JSON.parse(readFileSync(serverReceiptsPath, 'utf-8'));
+    const firstReceipt = sr.receipts.find(r => r.receipt?.selection?.selected_items);
+    if (firstReceipt) {
+      selectedItems = firstReceipt.receipt.selection.selected_items;
+    }
+  }
+  if (!selectedItems && existsSync(receiptPath)) {
+    const receipt = JSON.parse(readFileSync(receiptPath, 'utf-8'));
+    selectedItems = receipt.selection?.selected_items;
+  }
+
+  if (!selectedItems) {
+    console.error('No selection found. Run: pb-js submit <dir>');
+    process.exit(1);
+  }
+
+  const voluntaryItems = commitment.items.filter(h => !selectedItems.includes(h));
+
+  // Build reveal signing payload (canonical key order from spec)
+  const revealPayload = {
+    spec_version: '0.2.0',
+    commitment_hash: commitment.commitment_hash,
+    selected_items: selectedItems,
+    voluntary_items: voluntaryItems,
+    revealed_at: new Date().toISOString(),
+    signing_key: key.did || key.did_key,
+  };
+
+  const payloadBytes = new TextEncoder().encode(JSON.stringify(revealPayload));
+  const signature = wasm.signMessage(key.private_key_hex, payloadBytes);
+  const reveal = { ...revealPayload, signature };
+
+  // Save reveal.json
+  writeFileSync(join(dir, 'reveal.json'), JSON.stringify(reveal, null, 2) + '\n');
+  console.error('Saved reveal.json');
+
+  // Submit to all servers
+  const servers = getServers();
+  if (servers.length === 0) {
+    console.log('No servers in registry — skipping reveal submission.');
+    console.log(JSON.stringify(reveal, null, 2));
+    return;
+  }
+
+  console.log(`Submitting reveal to ${servers.length} server(s)...`);
+
+  const settled = await Promise.allSettled(
+    servers.map(async (server) => {
+      const url = `${server.url.replace(/\/$/, '')}/v1/commitments/${commitment.commitment_hash}/reveals`;
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(reveal),
+      });
+      if (res.ok) {
+        const body = await res.json();
+        return {
+          server_name: server.name,
+          server_url: server.url,
+          response: body,
+        };
+      } else {
+        const body = await res.text();
+        throw new Error(`${res.status}: ${body}`);
+      }
+    })
+  );
+
+  const revealReceipts = [];
+  for (let i = 0; i < settled.length; i++) {
+    const result = settled[i];
+    if (result.status === 'fulfilled') {
+      const r = result.value;
+      console.log(`  ${r.server_name}: accepted (reveal_id: ${r.response.reveal_id})`);
+      revealReceipts.push(r);
+    } else {
+      console.error(`  ${servers[i].name}: ${result.reason?.message || 'unknown error'}`);
+    }
+  }
+
+  const revealReceiptsData = {
+    spec_version: '0.2.0',
+    commitment_hash: commitment.commitment_hash,
+    revealed_at: reveal.revealed_at,
+    receipts: revealReceipts,
+  };
+  writeFileSync(join(dir, 'reveal-receipts.json'), JSON.stringify(revealReceiptsData, null, 2) + '\n');
+  console.error('Saved reveal-receipts.json');
+
+  console.log(JSON.stringify(reveal, null, 2));
+}
+
 // ── Publish helpers ──
 
 function shell(cmd, opts = {}) {
@@ -246,6 +463,29 @@ function hasCommand(name) {
 function prompt(question) {
   const rl = createInterface({ input: process.stdin, output: process.stdout });
   return new Promise(res => rl.question(question, ans => { rl.close(); res(ans.trim()); }));
+}
+
+async function waitForEnter() {
+  await prompt('  [Enter] ');
+}
+
+const SPINNER_FRAMES = ['◐', '◓', '◑', '◒'];
+
+function startSpinner(message) {
+  let i = 0;
+  const id = setInterval(() => {
+    process.stdout.write(`\r  ${SPINNER_FRAMES[i++ % SPINNER_FRAMES.length]} ${message}`);
+  }, 120);
+  return {
+    stop(finalMessage) {
+      clearInterval(id);
+      process.stdout.write(`\r  ✓ ${finalMessage}\n`);
+    },
+    fail(finalMessage) {
+      clearInterval(id);
+      process.stdout.write(`\r  ✗ ${finalMessage}\n`);
+    },
+  };
 }
 
 function findReceipt(dir) {
@@ -482,6 +722,59 @@ async function verifyPublicationWithServers(commitmentHash, fileUrls) {
   return attestations;
 }
 
+function generateRevealReadme(srcDir, commitHash) {
+  let md = `# Commitment Reveal: ${commitHash.slice(0, 12)}\n\n`;
+  md += `## Protocol Evidence\n\n`;
+
+  // Commitment table
+  const commitmentPath = join(srcDir, 'commitment.json');
+  if (existsSync(commitmentPath)) {
+    const c = JSON.parse(readFileSync(commitmentPath, 'utf-8'));
+    md += `### Commitment\n`;
+    md += `| Field | Value |\n|-------|-------|\n`;
+    md += `| Hash | \`${c.commitment_hash}\` |\n`;
+    md += `| Items | ${c.item_count} files |\n`;
+    md += `| Reveal probability | ${(c.reveal_probability * 100).toFixed(0)}% |\n`;
+    md += `| Signing key | \`${c.signing_key}\` |\n`;
+    md += `| Created | ${c.committed_at || 'N/A'} |\n\n`;
+  }
+
+  // Server receipts table
+  const srPath = join(srcDir, 'server-receipts.json');
+  if (existsSync(srPath)) {
+    const sr = JSON.parse(readFileSync(srPath, 'utf-8'));
+    md += `### Server Receipts\n`;
+    md += `| Server | Beacon Round | Received At |\n|--------|-------------|-------------|\n`;
+    for (const r of sr.receipts) {
+      const round = r.receipt?.selection?.beacon_output?.round || '?';
+      const registeredAt = r.receipt?.registered_at || '?';
+      md += `| ${r.server_name} | ${round} | ${registeredAt} |\n`;
+    }
+    md += '\n';
+  }
+
+  // Selection results table
+  const manifestPath = join(srcDir, 'manifest.json');
+  const revealPath = join(srcDir, 'reveal.json');
+  if (existsSync(manifestPath) && existsSync(revealPath)) {
+    const manifest = JSON.parse(readFileSync(manifestPath, 'utf-8'));
+    const reveal = JSON.parse(readFileSync(revealPath, 'utf-8'));
+    const selectedSet = new Set(reveal.selected_items || []);
+    md += `### Random Selection\n`;
+    md += `| # | File | Hash | Selected? |\n|---|------|------|-----------|\n`;
+    manifest.items.forEach((item, i) => {
+      const sel = selectedSet.has(item.hash) ? 'Yes' : 'No';
+      md += `| ${i + 1} | ${item.path} | \`${item.hash.slice(0, 12)}...\` | ${sel} |\n`;
+    });
+    md += '\n';
+  }
+
+  md += `## Verify Yourself\n\n`;
+  md += '```bash\n./verify.sh\n```\n';
+
+  return md;
+}
+
 // ── Publish: GitHub ──
 
 async function cmdPublishGithub(dir, repoName) {
@@ -538,38 +831,33 @@ async function cmdPublishGithub(dir, repoName) {
   const destDir = join(cloneDir, revealFolder);
   mkdirSync(destDir, { recursive: true });
 
-  // Copy data
+  // Copy data (excluding protocol files from the data subfolder)
   const dataDir = join(destDir, 'data');
-  cpSync(srcDir, dataDir, { recursive: true });
+  cpSync(srcDir, dataDir, { recursive: true, filter: (src) => {
+    const name = basename(src);
+    if (src === srcDir) return true; // allow root
+    return !PROTOCOL_FILES.has(name);
+  }});
 
-  // Copy receipt/commitment if present
+  // Copy all protocol files into reveal folder root
   const receipt = findReceipt(srcDir);
-  if (existsSync(join(srcDir, 'receipt.json'))) {
-    cpSync(join(srcDir, 'receipt.json'), join(destDir, 'receipt.json'));
-  }
-  if (existsSync(join(srcDir, 'commitment.json'))) {
-    cpSync(join(srcDir, 'commitment.json'), join(destDir, 'commitment.json'));
+  const protocolFilesToCopy = [
+    'manifest.json', 'commitment.json', 'server-receipts.json',
+    'reveal.json', 'reveal-receipts.json', 'receipt.json',
+  ];
+  for (const pf of protocolFilesToCopy) {
+    if (existsSync(join(srcDir, pf))) {
+      cpSync(join(srcDir, pf), join(destDir, pf));
+    }
   }
 
   // Generate verify script
   writeFileSync(join(destDir, 'verify.sh'), generateVerifyScript(receipt?.commitment_hash));
   shell(`chmod +x "${join(destDir, 'verify.sh')}"`);
 
-  // Write a README for this reveal
+  // Generate enhanced README with protocol evidence tables
   const commitHash = receipt?.commitment_hash || 'unknown';
-  const readmeContent = `# PeerBench Reveal
-
-- **Commitment Hash**: \`${commitHash}\`
-- **Date**: ${new Date().toISOString()}
-- **Verification**: Run \`./verify.sh\` or \`npx @peerbench/sdk verify commitment.json\`
-
-## Contents
-
-- \`data/\` — Revealed benchmark data
-- \`commitment.json\` — Original cryptographic commitment
-- \`receipt.json\` — Server receipt with timestamp proof
-- \`verify.sh\` — One-command verification script
-`;
+  const readmeContent = generateRevealReadme(srcDir, commitHash);
   writeFileSync(join(destDir, 'README.md'), readmeContent);
 
   // Ensure repo-level README exists
@@ -929,10 +1217,267 @@ async function cmdPublishInteractive(dir) {
   }
 }
 
+// ── Go: Interactive Wizard ──
+
+async function cmdGo(dirPath, probability = 0.50) {
+  const dir = resolve(dirPath);
+  if (!existsSync(dir) || !statSync(dir).isDirectory()) {
+    console.error(`Directory not found: ${dir}`);
+    process.exit(1);
+  }
+
+  // Count data files
+  const dataFiles = walkDir(dir);
+  const fileCount = dataFiles.filter(e => e.type === 'file').length;
+  if (fileCount === 0) {
+    console.error('No files found in directory.');
+    process.exit(1);
+  }
+
+  // Auto-generate key if needed
+  let key;
+  if (!process.env.PB_SIGNING_KEY && !existsSync(KEY_FILE)) {
+    console.log('  No signing key found — generating one now...');
+    const kp = wasm.generateKeypair();
+    saveKey(kp);
+    key = JSON.parse(readFileSync(KEY_FILE, 'utf-8'));
+    console.log(`  ✓ Key saved: ${key.did}`);
+    console.log();
+  } else {
+    key = loadKey();
+  }
+
+  console.log();
+  console.log('  PeerBench Commit-Reveal Protocol');
+  console.log('  ─────────────────────────────────');
+  console.log(`  Directory: ${dirPath} (${fileCount} file${fileCount !== 1 ? 's' : ''})`);
+  console.log();
+
+  // ── Step 1: Hash ──
+  console.log('  Step 1 of 5 — Hash');
+  console.log('  Compute SHA-256 hash of every file to create a tamper-proof manifest.');
+  console.log('  → manifest.json');
+  console.log();
+  await waitForEnter();
+
+  const result = hashDir(dir);
+  const manifestData = {
+    spec_version: '0.2.0',
+    root_hash: result.hash,
+    items: result.manifest
+      .filter(e => e.type === 'file')
+      .map(e => ({ path: e.name, hash: e.hash })),
+    created_at: new Date().toISOString(),
+  };
+  writeFileSync(join(dir, 'manifest.json'), JSON.stringify(manifestData, null, 2) + '\n');
+
+  console.log(`  ✓ Root hash: ${result.hash.slice(0, 16)}...${result.hash.slice(-6)}`);
+  console.log(`  ✓ Saved manifest.json (${manifestData.items.length} item${manifestData.items.length !== 1 ? 's' : ''})`);
+  console.log();
+
+  // ── Step 2: Commit ──
+  console.log('  Step 2 of 5 — Commit');
+  console.log(`  Sign a cryptographic commitment locking in your data and a ${(probability * 100).toFixed(0)}% reveal rate.`);
+  console.log('  → commitment.json');
+  console.log();
+  await waitForEnter();
+
+  const itemHashes = result.manifest
+    .filter(e => e.type === 'file')
+    .map(e => e.hash);
+
+  const beaconRef = { type: 'drand', chain_hash: DRAND_CHAIN_HASH };
+  const commitParams = {
+    items: itemHashes,
+    reveal_probability: probability,
+    beacon: beaconRef,
+    committed_at: new Date().toISOString(),
+  };
+
+  const commitment = wasm.createCommitment(
+    JSON.stringify(commitParams),
+    key.private_key_hex
+  );
+  writeFileSync(join(dir, 'commitment.json'), JSON.stringify(commitment, null, 2) + '\n');
+
+  console.log(`  ✓ Commitment: ${commitment.commitment_hash.slice(0, 16)}...${commitment.commitment_hash.slice(-6)}`);
+  console.log('  ✓ Saved commitment.json');
+  console.log();
+
+  // ── Step 3: Submit ──
+  console.log('  Step 3 of 5 — Submit');
+  console.log('  Send commitment to independent timestamp servers. Each waits for the next');
+  console.log('  drand random beacon (~3s) before returning a receipt.');
+  console.log('  → server-receipts.json');
+  console.log();
+  await waitForEnter();
+
+  const servers = getServers();
+  if (servers.length === 0) {
+    console.log('  ✗ No servers in registry. Run: pb-js servers');
+    process.exit(1);
+  }
+
+  const spinner = startSpinner('Waiting for drand beacon...');
+
+  const settled = await Promise.allSettled(
+    servers.map(async (server) => {
+      const url = `${server.url.replace(/\/$/, '')}/v1/commitments`;
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(commitment),
+      });
+      if (res.ok) {
+        const receipt = await res.json();
+        return { server_name: server.name, server_url: server.url, receipt };
+      } else {
+        const body = await res.text();
+        throw new Error(`${server.name}: ${res.status} ${body}`);
+      }
+    })
+  );
+
+  const receipts = [];
+  let firstFailure = null;
+  for (let i = 0; i < settled.length; i++) {
+    const r = settled[i];
+    if (r.status === 'fulfilled') {
+      if (receipts.length === 0) spinner.stop(`${r.value.server_name}: round ${r.value.receipt.selection?.beacon_output?.round || '?'}`);
+      else console.log(`  ✓ ${r.value.server_name}: round ${r.value.receipt.selection?.beacon_output?.round || '?'}`);
+      receipts.push(r.value);
+    } else {
+      if (!firstFailure) { spinner.fail(`${servers[i].name}: ${r.reason?.message || 'failed'}`); firstFailure = true; }
+      else console.log(`  ✗ ${servers[i].name}: ${r.reason?.message || 'failed'}`);
+    }
+  }
+
+  if (receipts.length === 0) {
+    console.log('  ✗ All servers failed.');
+    process.exit(1);
+  }
+
+  const serverReceipts = {
+    spec_version: '0.2.0',
+    commitment_hash: commitment.commitment_hash,
+    submitted_at: new Date().toISOString(),
+    receipts,
+  };
+  writeFileSync(join(dir, 'server-receipts.json'), JSON.stringify(serverReceipts, null, 2) + '\n');
+  writeFileSync(join(dir, 'receipt.json'), JSON.stringify(receipts[0].receipt, null, 2) + '\n');
+
+  console.log(`  ✓ Saved server-receipts.json (${receipts.length} receipt${receipts.length !== 1 ? 's' : ''})`);
+  console.log();
+
+  // ── Step 4: Reveal ──
+  console.log('  Step 4 of 5 — Reveal');
+  console.log('  The beacon chose which items to reveal. Sign and submit your reveal.');
+  console.log('  → reveal.json, reveal-receipts.json');
+  console.log();
+  await waitForEnter();
+
+  // Get selected items from first receipt
+  const firstReceipt = receipts.find(r => r.receipt?.selection?.selected_items);
+  if (!firstReceipt) {
+    console.log('  ✗ No selection found in receipts.');
+    process.exit(1);
+  }
+  const selectedItems = firstReceipt.receipt.selection.selected_items;
+  const voluntaryItems = commitment.items.filter(h => !selectedItems.includes(h));
+
+  const revealPayload = {
+    spec_version: '0.2.0',
+    commitment_hash: commitment.commitment_hash,
+    selected_items: selectedItems,
+    voluntary_items: voluntaryItems,
+    revealed_at: new Date().toISOString(),
+    signing_key: key.did || key.did_key,
+  };
+
+  const payloadBytes = new TextEncoder().encode(JSON.stringify(revealPayload));
+  const signature = wasm.signMessage(key.private_key_hex, payloadBytes);
+  const reveal = { ...revealPayload, signature };
+
+  writeFileSync(join(dir, 'reveal.json'), JSON.stringify(reveal, null, 2) + '\n');
+
+  console.log(`  ✓ Selected: ${selectedItems.length} item${selectedItems.length !== 1 ? 's' : ''}, Voluntary: ${voluntaryItems.length} item${voluntaryItems.length !== 1 ? 's' : ''}`);
+
+  // Submit reveal to servers
+  const revealSpinner = startSpinner('Submitting reveal...');
+
+  const revealSettled = await Promise.allSettled(
+    servers.map(async (server) => {
+      const url = `${server.url.replace(/\/$/, '')}/v1/commitments/${commitment.commitment_hash}/reveals`;
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(reveal),
+      });
+      if (res.ok) {
+        const body = await res.json();
+        return { server_name: server.name, server_url: server.url, response: body };
+      } else {
+        const body = await res.text();
+        throw new Error(`${res.status}: ${body}`);
+      }
+    })
+  );
+
+  const revealReceipts = [];
+  let firstRevealPrinted = false;
+  for (let i = 0; i < revealSettled.length; i++) {
+    const r = revealSettled[i];
+    if (r.status === 'fulfilled') {
+      if (!firstRevealPrinted) { revealSpinner.stop(`${r.value.server_name}: accepted`); firstRevealPrinted = true; }
+      else console.log(`  ✓ ${r.value.server_name}: accepted`);
+      revealReceipts.push(r.value);
+    } else {
+      if (!firstRevealPrinted) { revealSpinner.fail(`${servers[i].name}: ${r.reason?.message || 'failed'}`); firstRevealPrinted = true; }
+      else console.log(`  ✗ ${servers[i].name}: ${r.reason?.message || 'failed'}`);
+    }
+  }
+
+  if (!firstRevealPrinted) revealSpinner.stop('done');
+
+  const revealReceiptsData = {
+    spec_version: '0.2.0',
+    commitment_hash: commitment.commitment_hash,
+    revealed_at: reveal.revealed_at,
+    receipts: revealReceipts,
+  };
+  writeFileSync(join(dir, 'reveal-receipts.json'), JSON.stringify(revealReceiptsData, null, 2) + '\n');
+
+  console.log('  ✓ Saved reveal.json + reveal-receipts.json');
+  console.log();
+
+  // ── Step 5: Publish (optional) ──
+  console.log('  Step 5 of 5 — Publish (optional)');
+  console.log('  Publish your data and protocol evidence to a public repository.');
+  console.log();
+  const publishAnswer = await prompt('  Publish now? [y/N] ');
+  console.log();
+
+  if (publishAnswer.toLowerCase() === 'y') {
+    await cmdPublishInteractive(dirPath);
+    console.log();
+  }
+
+  // ── Summary ──
+  console.log('  ─────────────────────────────────');
+  console.log(`  Done! Evidence chain in ${dirPath}:`);
+  console.log('    manifest.json        file hashes');
+  console.log('    commitment.json      signed commitment');
+  console.log('    server-receipts.json server timestamps');
+  console.log('    reveal.json          signed reveal');
+  console.log('    reveal-receipts.json server confirmations');
+  console.log();
+}
+
 // ── Argument parsing ──
 
 function usage() {
   console.log(`Usage:
+  pb-js go <dir> [-p <prob>]                Guided wizard (just hit Enter)
   pb-js key generate                        Generate Ed25519 keypair
   pb-js key show                            Show stored did:key
   pb-js hash file <path>                    Hash a file (SHA-256)
@@ -940,7 +1485,8 @@ function usage() {
   pb-js commit <dir> -p <prob>              Create commitment from directory
   pb-js verify <commitment.json>            Verify commitment signature
   pb-js servers                             List known servers
-  pb-js submit <file> [-s <srv>]            Submit commitment to server
+  pb-js submit <dir|file> [-s <srv>]         Submit commitment to server(s)
+  pb-js reveal <dir>                        Create & submit reveal
   pb-js publish github <dir> [--repo <r>]   Publish reveal to GitHub
   pb-js publish huggingface <dir> [--repo <r>]  Publish reveal to Hugging Face
   pb-js publish <dir>                       Interactive provider selection
@@ -956,7 +1502,17 @@ async function main() {
   const cmd = args[0];
   const sub = args[1];
 
-  if (cmd === 'key' && sub === 'generate') {
+  if (cmd === 'go' && args[1]) {
+    let probability = 0.50;
+    let dirArg = args[1];
+    for (let i = 2; i < args.length; i++) {
+      if ((args[i] === '-p' || args[i] === '--probability') && args[i + 1]) {
+        probability = parseFloat(args[i + 1]);
+        i++;
+      }
+    }
+    await cmdGo(dirArg, probability);
+  } else if (cmd === 'key' && sub === 'generate') {
     cmdKeyGenerate();
   } else if (cmd === 'key' && sub === 'show') {
     cmdKeyShow();
@@ -990,6 +1546,8 @@ async function main() {
       }
     }
     await cmdSubmit(args[1], server);
+  } else if (cmd === 'reveal' && args[1]) {
+    await cmdReveal(args[1]);
   } else if (cmd === 'publish') {
     let repoName = undefined;
     // Parse --repo flag from remaining args
