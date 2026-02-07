@@ -15,6 +15,8 @@ const STEPS = [
 
 export function page({ title, stepNumber, content, codeRefs = [], rightPanel, session = {} }) {
   const completedStep = session._completedStep || 0;
+  const demoMode = session._demoMode;
+  const badgeText = demoMode === 'local' ? 'Local Demo' : demoMode === 'live' ? 'Live Demo' : 'Interactive Demo';
   const hasRightPanel = rightPanel || false; // codeRefs disabled for now
   return `<!DOCTYPE html>
 <html lang="en">
@@ -27,7 +29,7 @@ export function page({ title, stepNumber, content, codeRefs = [], rightPanel, se
 <body>
   <header>
     <a href="/" class="logo">PeerBench Commit-Reveal</a>
-    <span class="badge">Interactive Demo</span>
+    <span class="badge">${esc(badgeText)}</span>
   </header>
 
   ${stepNumber ? renderNav(stepNumber, completedStep) : ''}

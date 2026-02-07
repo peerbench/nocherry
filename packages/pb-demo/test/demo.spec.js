@@ -2,10 +2,10 @@ import { test, expect } from '@playwright/test';
 
 // ── Helpers ──────────────────────────────────────────────────────────
 
-/** Generate a keypair by clicking Start Demo from the home page. Lands on GET /steps/1. */
+/** Generate a keypair by clicking Local Demo from the home page. Lands on GET /steps/1. */
 async function generateKeypair(page) {
   await page.goto('/');
-  await page.locator('button', { hasText: 'Start Demo' }).click();
+  await page.locator('button', { hasText: 'Local Demo' }).click();
   await page.waitForURL('**/steps/1');
 }
 
@@ -48,10 +48,11 @@ async function setupThroughStep4(page, opts = {}) {
 // ── Home Page ────────────────────────────────────────────────────────
 
 test.describe('Home page', () => {
-  test('loads with heading, features, and start button', async ({ page }) => {
+  test('loads with heading, features, and mode buttons', async ({ page }) => {
     await page.goto('/');
     await expect(page.locator('.hero h1')).toContainText('Commit-Reveal Protocol');
-    await expect(page.locator('button', { hasText: 'Start Demo' })).toBeVisible();
+    await expect(page.locator('button', { hasText: 'Local Demo' })).toBeVisible();
+    await expect(page.locator('button', { hasText: 'Live Demo' })).toBeVisible();
 
     // Three feature cards
     const features = page.locator('.feature');
@@ -61,12 +62,14 @@ test.describe('Home page', () => {
     await expect(features.nth(2).locator('h3')).toContainText('Unbiased Selection');
   });
 
-  test('Start Demo generates keypair and lands on step 1', async ({ page }) => {
+  test('Local Demo generates keypair and lands on step 1', async ({ page }) => {
     await page.goto('/');
-    await page.locator('button', { hasText: 'Start Demo' }).click();
+    await page.locator('button', { hasText: 'Local Demo' }).click();
     await page.waitForURL('**/steps/1');
     // Should see the generated keypair, not the "Generate Keypair" button
     await expect(page.locator('.content-panel .field-value', { hasText: 'did:key:z' })).toBeVisible();
+    // Badge should say Local Demo
+    await expect(page.locator('.badge')).toContainText('Local Demo');
   });
 });
 
@@ -391,9 +394,9 @@ test.describe('Navigation', () => {
 test.describe('Full walkthrough', () => {
   test('complete 8-step flow with detailed assertions', async ({ page }) => {
     // ─── Step 1: Generate Keypair ───
-    await test.step('Step 1: Generate keypair via Start Demo', async () => {
+    await test.step('Step 1: Generate keypair via Local Demo', async () => {
       await page.goto('/');
-      await page.locator('button', { hasText: 'Start Demo' }).click();
+      await page.locator('button', { hasText: 'Local Demo' }).click();
       await page.waitForURL('**/steps/1');
 
       await expect(page.locator('.content-panel .field-value', { hasText: 'did:key:z6Mk' })).toBeVisible();

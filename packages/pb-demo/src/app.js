@@ -45,8 +45,8 @@ export async function createDemoApp(options) {
   await signingMod.initServerKey(pbStorage);
   const embeddedApp = pbNodeMod.createApp(pbStorage);
 
-  // Build server list: embedded first, then prod remotes from servers.json
-  const pbServers = [
+  // Build full server lists: embedded + remotes
+  const allPbServers = [
     { name: 'embedded', client: embeddedApp, environment: 'embedded' },
   ];
 
@@ -55,7 +55,7 @@ export async function createDemoApp(options) {
   app.route('/publish', embeddedPublisher);
 
   const port = process.env.PORT || 7421;
-  const publishServers = [
+  const allPublishServers = [
     { name: 'embedded', url: `http://localhost:${port}/publish`, environment: 'embedded' },
   ];
 
@@ -65,7 +65,7 @@ export async function createDemoApp(options) {
       const url = srv.primary_url || srv.url;
       // Skip localhost entries — the embedded server handles local
       if (url && !url.includes('localhost')) {
-        pbServers.push({
+        allPbServers.push({
           name: srv.name,
           client: createRemoteClient(url),
           url,
@@ -76,7 +76,7 @@ export async function createDemoApp(options) {
     for (const pub of revealPublishers) {
       const url = pub.primary_url || pub.url;
       if (url) {
-        publishServers.push({ name: pub.name, url, environment: pub.environment });
+        allPublishServers.push({ name: pub.name, url, environment: pub.environment });
       }
     }
   }
@@ -84,10 +84,21 @@ export async function createDemoApp(options) {
   // Session middleware
   app.use('*', sessionMiddleware());
 
-  // Inject server array + publish servers into every request context
+  // Inject server arrays filtered by session demo mode
   app.use('*', async (c, next) => {
-    c.set('pbServers', pbServers);
-    c.set('publishServers', publishServers);
+    const session = c.get('session');
+    const mode = session._demoMode;
+
+    if (mode === 'local') {
+      c.set('pbServers', allPbServers.filter(s => s.environment === 'embedded'));
+      c.set('publishServers', allPublishServers.filter(s => s.environment === 'embedded'));
+    } else if (mode === 'live') {
+      c.set('pbServers', allPbServers.filter(s => s.environment !== 'embedded'));
+      c.set('publishServers', allPublishServers.filter(s => s.environment !== 'embedded'));
+    } else {
+      c.set('pbServers', allPbServers);
+      c.set('publishServers', allPublishServers);
+    }
     await next();
   });
 
@@ -109,5 +120,5 @@ export async function createDemoApp(options) {
     return c.html(`<h1>Error</h1><pre>${err.message}</pre>`, 500);
   });
 
-  return { app, pbStorage, pbServers };
+  return { app, pbStorage, pbServers: allPbServers };
 }

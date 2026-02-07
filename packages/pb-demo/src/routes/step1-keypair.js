@@ -37,8 +37,15 @@ route.get('/', (c) => {
   return c.html(page({ title: 'Step 1: Generate Keypair', stepNumber: 1, content, codeRefs: refs, session }));
 });
 
-route.post('/', (c) => {
+route.post('/', async (c) => {
   const session = c.get('session');
+  const body = await c.req.parseBody();
+
+  // Mode selection from home page (local/live)
+  if (body.mode) {
+    session._demoMode = body.mode === 'live' ? 'live' : 'local';
+  }
+
   session.keypair = wasm.generateKeypair();
   session._completedStep = Math.max(session._completedStep || 0, 1);
   return c.redirect('/steps/1');
