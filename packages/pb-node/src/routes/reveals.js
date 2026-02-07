@@ -92,7 +92,8 @@ route.post('/:hash/reveals', async (c) => {
       dataVerified = true;
       verification = { verified_items: 0, total_selected: 0, items: [] };
     } else if (!fileUrls || typeof fileUrls !== 'object' || Object.keys(fileUrls).length === 0) {
-      return c.json({ error: 'file_urls required when server has data verification enabled. Provide a mapping of item hashes to public URLs.' }, 400);
+      // No file_urls provided — accept reveal but skip verification
+      verification = { verified_items: 0, total_selected: selectedItems.length, items: [], note: 'no file_urls provided' };
     } else {
 
     const results = [];
@@ -123,14 +124,7 @@ route.post('/:hash/reveals', async (c) => {
     const matchCount = results.filter(r => r.status === 'match').length;
     const allMatch = matchCount === selectedItems.length && matchCount > 0;
 
-    if (!allMatch) {
-      return c.json({
-        error: 'Data verification failed — not all selected items could be verified',
-        verification: { verified_items: matchCount, total_selected: selectedItems.length, items: results },
-      }, 422);
-    }
-
-    dataVerified = true;
+    dataVerified = allMatch;
     verification = { verified_items: matchCount, total_selected: selectedItems.length, items: results };
     } // end else (has file_urls)
   } else {
