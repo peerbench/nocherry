@@ -2,6 +2,8 @@
  * Reveal routes:
  *   POST /v1/commitments/:hash/reveals
  *   GET  /v1/commitments/:hash/reveals
+ *   GET  /v1/commitments/:hash/mirrors    — file_urls from reveals
+ *   POST /v1/commitments/:hash/verify-publication
  */
 
 import { Hono, type Context } from "npm:hono@^4.6.0";
@@ -187,6 +189,7 @@ route.post("/:hash/reveals", async (c: Context) => {
       beacon_at_reveal: beaconAtReveal,
       data_verified: dataVerified,
       verification,
+      file_urls_registered: fileUrls && typeof fileUrls === "object" ? Object.keys(fileUrls).length : 0,
     }),
     201,
   );
@@ -206,6 +209,103 @@ route.get("/:hash/reveals", async (c: Context) => {
 
   const reveals = await storage.getReveals(hash);
   return c.json({ commitment_hash: hash, reveals });
+});
+
+/**
+ * GET /v1/commitments/:hash/mirrors — file_urls extracted from reveals.
+ */
+route.get("/:hash/mirrors", async (c: Context) => {
+  const storage = c.get("storage") as KyselyStorage;
+  const hash = c.req.param("hash");
+
+  const record = await storage.getCommitment(hash);
+  if (!record) {
+    return c.json({ error: "Commitment not found" }, 404);
+  }
+
+  const reveals = await storage.getReveals(hash);
+  const mirrors: { item_hash: string; url: string; revealed_at: string }[] = [];
+  const seen = new Set<string>();
+  for (const reveal of reveals) {
+    const fileUrls = (reveal as Record<string, unknown>).file_urls as Record<string, string> | undefined;
+    if (fileUrls && typeof fileUrls === "object") {
+      for (const [itemHash, url] of Object.entries(fileUrls)) {
+        if (!seen.has(url)) {
+          seen.add(url);
+          mirrors.push({ item_hash: itemHash, url, revealed_at: (reveal as Record<string, unknown>).revealed_at as string });
+        }
+      }
+    }
+  }
+  return c.json({ commitment_hash: hash, mirrors });
+});
+
+/**
+ * POST /v1/commitments/:hash/verify-publication — verify published data hashes.
+ */
+route.post("/:hash/verify-publication", async (c: Context) => {
+  const storage = c.get("storage") as KyselyStorage;
+  const hash = c.req.param("hash");
+
+  let body: Record<string, unknown>;
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "Invalid JSON body" }, 400);
+  }
+
+  const record = await storage.getCommitment(hash);
+  if (!record) {
+    return c.json({ error: "Commitment not found" }, 404);
+  }
+
+  const file_urls = body.file_urls as Record<string, string> | undefined;
+  if (!file_urls || typeof file_urls !== "object" || Object.keys(file_urls).length === 0) {
+    return c.json({ error: "file_urls must be a non-empty object mapping item hashes to URLs" }, 400);
+  }
+
+  const commitment = record.commitment;
+  const committedItems = new Set(commitment.items as string[]);
+  const results: Record<string, unknown>[] = [];
+
+  for (const [itemHash, url] of Object.entries(file_urls)) {
+    if (!committedItems.has(itemHash)) {
+      results.push({ hash: itemHash, url, status: "not_in_commitment" });
+      continue;
+    }
+    try {
+      const res = await fetch(url, { signal: AbortSignal.timeout(15000) });
+      if (!res.ok) {
+        results.push({ hash: itemHash, url, status: "fetch_error", detail: `HTTP ${res.status}` });
+        continue;
+      }
+      const data = new Uint8Array(await res.arrayBuffer());
+      const computed = wasm.hashBytes(data);
+      if (computed === itemHash) {
+        results.push({ hash: itemHash, url, status: "match" });
+      } else {
+        results.push({ hash: itemHash, url, status: "mismatch", computed_hash: computed });
+      }
+    } catch (e) {
+      results.push({ hash: itemHash, url, status: "fetch_error", detail: (e as Error).message });
+    }
+  }
+
+  const matchCount = results.filter((r) => r.status === "match").length;
+  const allMatch = matchCount === Object.keys(file_urls).length && matchCount > 0;
+
+  return c.json(
+    signResponse({
+      commitment_hash: hash,
+      verified_items: matchCount,
+      total_items: (commitment.items as string[]).length,
+      provided_items: Object.keys(file_urls).length,
+      all_match: allMatch,
+      items: results,
+      verified_at: new Date().toISOString(),
+    }),
+    200,
+  );
 });
 
 export default route;

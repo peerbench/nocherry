@@ -50,6 +50,7 @@ async function submitRevealToServer(reveal, commitmentHash, server) {
       registeredAt: body.registered_at,
       beaconAtReveal: body.beacon_at_reveal,
       dataVerified: body.data_verified,
+      fileUrlsRegistered: body.file_urls_registered || 0,
       error: null,
     };
   } else {
@@ -103,6 +104,7 @@ route.get('/', (c) => {
             ${field('Registered At', r.registeredAt)}
             ${r.beaconAtReveal ? field('Beacon Round', r.beaconAtReveal.round, false) : ''}
             ${r.dataVerified ? field('Data Verified', 'Server fetched and verified published data', false) : ''}
+            ${r.fileUrlsRegistered > 0 ? field('File URLs Registered', `${r.fileUrlsRegistered} file URL(s) persisted for verifiers`, false) : ''}
           </div>`;
       } else if (r.status === 'skipped') {
         return `

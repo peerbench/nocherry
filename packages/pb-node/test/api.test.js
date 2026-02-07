@@ -152,121 +152,64 @@ describe('Server API', () => {
     assert.equal(res.status, 400);
   });
 
-  // ── Mirror tests ──
+  // ── Mirrors (via reveals) tests ──
 
-  it('POST mirrors rejects without commitment', async () => {
-    const res = await req('POST', '/v1/commitments/' + '0'.repeat(64) + '/mirrors', { foo: 'bar' });
+  it('GET mirrors returns 404 for unknown commitment', async () => {
+    const res = await req('GET', '/v1/commitments/' + '0'.repeat(64) + '/mirrors');
     assert.equal(res.status, 404);
   });
 
-  it('POST mirrors registers a valid mirror and GET returns it', async () => {
+  it('GET mirrors returns empty list when no reveals exist', async () => {
     const kp = wasm.generateKeypair();
-    const itemHash = wasm.hashBytes(new TextEncoder().encode('mirror-test-item'));
+    const itemHash = wasm.hashBytes(new TextEncoder().encode('mirrors-no-reveal-test'));
     const commitment = makeCommitment(kp, [itemHash]);
+    await req('POST', '/v1/commitments', commitment);
 
-    // Submit commitment first
+    const res = await req('GET', `/v1/commitments/${commitment.commitment_hash}/mirrors`);
+    assert.equal(res.status, 200);
+    const body = await res.json();
+    assert.equal(body.commitment_hash, commitment.commitment_hash);
+    assert.equal(body.mirrors.length, 0);
+  });
+
+  it('GET mirrors returns file_urls from reveal submissions', async () => {
+    const kp = wasm.generateKeypair();
+    const itemHash = wasm.hashBytes(new TextEncoder().encode('mirrors-via-reveal-test'));
+    const commitment = makeCommitment(kp, [itemHash]);
     const commitRes = await req('POST', '/v1/commitments', commitment);
     assert.equal(commitRes.status, 201);
+    const receipt = await commitRes.json();
 
-    // Create mirror payload
-    const mirrorPayload = {
+    // Create and submit a reveal with file_urls
+    const selectedItems = receipt.selection.selected_items || [];
+    const revealPayload = {
       spec_version: '0.2.0',
       commitment_hash: commitment.commitment_hash,
-      url: 'https://github.com/user/peerbench-reveals/tree/main/reveals/test',
-      provider: 'github',
-      registered_at: new Date().toISOString(),
+      selected_items: selectedItems,
+      voluntary_items: commitment.items.filter(h => !selectedItems.includes(h)),
+      revealed_at: new Date().toISOString(),
       signing_key: kp.did_key,
     };
-    const payloadBytes = new TextEncoder().encode(JSON.stringify(mirrorPayload));
-    const signature = wasm.signMessage(kp.private_key_hex, payloadBytes);
-    const mirror = { ...mirrorPayload, signature };
+    const revealBytes = new TextEncoder().encode(JSON.stringify(revealPayload));
+    const revealSig = wasm.signMessage(kp.private_key_hex, revealBytes);
 
-    // Register mirror
-    const mirrorRes = await req('POST', `/v1/commitments/${commitment.commitment_hash}/mirrors`, mirror);
-    assert.equal(mirrorRes.status, 201);
-    const mirrorBody = await mirrorRes.json();
-    assert.ok(mirrorBody.mirror_id);
-    assert.ok(mirrorBody.server_registered_at);
+    const fileUrls = { [itemHash]: 'https://example.com/data/result.json' };
+    const revealRes = await req('POST', `/v1/commitments/${commitment.commitment_hash}/reveals`, {
+      ...revealPayload, signature: revealSig, file_urls: fileUrls,
+    });
+    assert.equal(revealRes.status, 201);
+    const revealBody = await revealRes.json();
+    assert.equal(revealBody.file_urls_registered, 1, 'Should report 1 file URL registered');
 
-    // GET mirrors
-    const listRes = await req('GET', `/v1/commitments/${commitment.commitment_hash}/mirrors`);
-    assert.equal(listRes.status, 200);
-    const listBody = await listRes.json();
-    assert.equal(listBody.commitment_hash, commitment.commitment_hash);
-    assert.equal(listBody.mirrors.length, 1);
-    assert.equal(listBody.mirrors[0].url, mirrorPayload.url);
-    assert.equal(listBody.mirrors[0].provider, 'github');
-  });
-
-  it('POST mirrors rejects duplicate URL', async () => {
-    const kp = wasm.generateKeypair();
-    const itemHash = wasm.hashBytes(new TextEncoder().encode('mirror-dup-test'));
-    const commitment = makeCommitment(kp, [itemHash]);
-    await req('POST', '/v1/commitments', commitment);
-
-    const mirrorPayload = {
-      spec_version: '0.2.0',
-      commitment_hash: commitment.commitment_hash,
-      url: 'https://github.com/user/reveals/tree/main/dup-test',
-      provider: 'github',
-      registered_at: new Date().toISOString(),
-      signing_key: kp.did_key,
-    };
-    const payloadBytes = new TextEncoder().encode(JSON.stringify(mirrorPayload));
-    const signature = wasm.signMessage(kp.private_key_hex, payloadBytes);
-    const mirror = { ...mirrorPayload, signature };
-
-    await req('POST', `/v1/commitments/${commitment.commitment_hash}/mirrors`, mirror);
-    const dupRes = await req('POST', `/v1/commitments/${commitment.commitment_hash}/mirrors`, mirror);
-    assert.equal(dupRes.status, 409);
-  });
-
-  it('POST mirrors rejects wrong signing key', async () => {
-    const kp = wasm.generateKeypair();
-    const kp2 = wasm.generateKeypair();
-    const itemHash = wasm.hashBytes(new TextEncoder().encode('mirror-wrongkey-test'));
-    const commitment = makeCommitment(kp, [itemHash]);
-    await req('POST', '/v1/commitments', commitment);
-
-    // Sign with kp2 but claim kp2's key (doesn't match commitment)
-    const mirrorPayload = {
-      spec_version: '0.2.0',
-      commitment_hash: commitment.commitment_hash,
-      url: 'https://github.com/user/reveals/tree/main/wrong-key',
-      provider: 'github',
-      registered_at: new Date().toISOString(),
-      signing_key: kp2.did_key,
-    };
-    const payloadBytes = new TextEncoder().encode(JSON.stringify(mirrorPayload));
-    const signature = wasm.signMessage(kp2.private_key_hex, payloadBytes);
-    const mirror = { ...mirrorPayload, signature };
-
-    const res = await req('POST', `/v1/commitments/${commitment.commitment_hash}/mirrors`, mirror);
-    assert.equal(res.status, 403);
-  });
-
-  it('POST mirrors rejects invalid provider', async () => {
-    const kp = wasm.generateKeypair();
-    const itemHash = wasm.hashBytes(new TextEncoder().encode('mirror-badprov-test'));
-    const commitment = makeCommitment(kp, [itemHash]);
-    await req('POST', '/v1/commitments', commitment);
-
-    const mirrorPayload = {
-      spec_version: '0.2.0',
-      commitment_hash: commitment.commitment_hash,
-      url: 'https://example.com/data',
-      provider: 'dropbox',
-      registered_at: new Date().toISOString(),
-      signing_key: kp.did_key,
-    };
-    const payloadBytes = new TextEncoder().encode(JSON.stringify(mirrorPayload));
-    const signature = wasm.signMessage(kp.private_key_hex, payloadBytes);
-    const mirror = { ...mirrorPayload, signature };
-
-    const res = await req('POST', `/v1/commitments/${commitment.commitment_hash}/mirrors`, mirror);
-    assert.equal(res.status, 400);
-    const body = await res.json();
-    assert.ok(body.error.includes('Invalid provider'));
+    // GET mirrors should return the file_urls from the reveal
+    const mirrorsRes = await req('GET', `/v1/commitments/${commitment.commitment_hash}/mirrors`);
+    assert.equal(mirrorsRes.status, 200);
+    const mirrorsList = await mirrorsRes.json();
+    assert.equal(mirrorsList.commitment_hash, commitment.commitment_hash);
+    assert.equal(mirrorsList.mirrors.length, 1);
+    assert.equal(mirrorsList.mirrors[0].item_hash, itemHash);
+    assert.equal(mirrorsList.mirrors[0].url, 'https://example.com/data/result.json');
+    assert.ok(mirrorsList.mirrors[0].revealed_at);
   });
 
   it('tracks signer activity across multiple commitments', { skip: isRemote && 'exact counts unreliable on shared remote server' }, async () => {

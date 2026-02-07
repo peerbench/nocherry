@@ -2,6 +2,8 @@
  * Reveal routes:
  *   POST /v1/commitments/:hash/reveals
  *   GET  /v1/commitments/:hash/reveals
+ *   GET  /v1/commitments/:hash/mirrors    — file_urls from reveals
+ *   POST /v1/commitments/:hash/verify-publication
  */
 
 import { Hono } from 'hono';
@@ -154,6 +156,7 @@ route.post('/:hash/reveals', async (c) => {
     beacon_at_reveal: beaconAtReveal,
     data_verified: dataVerified,
     verification,
+    file_urls_registered: fileUrls && typeof fileUrls === 'object' ? Object.keys(fileUrls).length : 0,
   }), 201);
 });
 
@@ -171,6 +174,104 @@ route.get('/:hash/reveals', async (c) => {
 
   const reveals = await storage.getReveals(hash);
   return c.json({ commitment_hash: hash, reveals });
+});
+
+/**
+ * GET /v1/commitments/:hash/mirrors — file_urls extracted from reveals.
+ * Replaces the old standalone mirrors endpoint.
+ */
+route.get('/:hash/mirrors', async (c) => {
+  const storage = c.get('storage');
+  const hash = c.req.param('hash');
+
+  const record = await storage.getCommitment(hash);
+  if (!record) {
+    return c.json({ error: 'Commitment not found' }, 404);
+  }
+
+  const reveals = await storage.getReveals(hash);
+  const mirrors = [];
+  const seen = new Set();
+  for (const reveal of reveals) {
+    if (reveal.file_urls && typeof reveal.file_urls === 'object') {
+      for (const [itemHash, url] of Object.entries(reveal.file_urls)) {
+        if (!seen.has(url)) {
+          seen.add(url);
+          mirrors.push({ item_hash: itemHash, url, revealed_at: reveal.revealed_at });
+        }
+      }
+    }
+  }
+  return c.json({ commitment_hash: hash, mirrors });
+});
+
+/**
+ * POST /v1/commitments/:hash/verify-publication — fetch published data
+ * from provided URLs, hash each file, verify against committed item hashes,
+ * return a signed attestation.
+ */
+route.post('/:hash/verify-publication', async (c) => {
+  const storage = c.get('storage');
+  const hash = c.req.param('hash');
+
+  let body;
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: 'Invalid JSON body' }, 400);
+  }
+
+  const record = await storage.getCommitment(hash);
+  if (!record) {
+    return c.json({ error: 'Commitment not found' }, 404);
+  }
+
+  const { file_urls } = body;
+  if (!file_urls || typeof file_urls !== 'object' || Object.keys(file_urls).length === 0) {
+    return c.json({ error: 'file_urls must be a non-empty object mapping item hashes to URLs' }, 400);
+  }
+
+  const commitment = record.commitment;
+  const committedItems = new Set(commitment.items);
+  const results = [];
+
+  for (const [itemHash, url] of Object.entries(file_urls)) {
+    if (!committedItems.has(itemHash)) {
+      results.push({ hash: itemHash, url, status: 'not_in_commitment' });
+      continue;
+    }
+    try {
+      const res = await fetch(url, { signal: AbortSignal.timeout(15000) });
+      if (!res.ok) {
+        results.push({ hash: itemHash, url, status: 'fetch_error', detail: `HTTP ${res.status}` });
+        continue;
+      }
+      const data = new Uint8Array(await res.arrayBuffer());
+      const computed = wasm.hashBytes(data);
+      if (computed === itemHash) {
+        results.push({ hash: itemHash, url, status: 'match' });
+      } else {
+        results.push({ hash: itemHash, url, status: 'mismatch', computed_hash: computed });
+      }
+    } catch (e) {
+      results.push({ hash: itemHash, url, status: 'fetch_error', detail: e.message });
+    }
+  }
+
+  const matchCount = results.filter(r => r.status === 'match').length;
+  const allMatch = matchCount === Object.keys(file_urls).length && matchCount > 0;
+
+  const verification = {
+    commitment_hash: hash,
+    verified_items: matchCount,
+    total_items: commitment.items.length,
+    provided_items: Object.keys(file_urls).length,
+    all_match: allMatch,
+    items: results,
+    verified_at: new Date().toISOString(),
+  };
+
+  return c.json(signResponse(verification), 200);
 });
 
 export default route;

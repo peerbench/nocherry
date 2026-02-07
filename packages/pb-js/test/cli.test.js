@@ -98,14 +98,14 @@ describe('JS CLI', () => {
     assert.ok(output.includes('VALID'));
   });
 
-  it('usage includes mirrors commands', () => {
+  it('usage does not include removed mirrors commands', () => {
     try {
       run([]);
       assert.fail('Should have exited');
     } catch (e) {
       const output = e.stdout || e.stderr || '';
-      assert.ok(output.includes('mirrors add'));
-      assert.ok(output.includes('mirrors list'));
+      assert.ok(!output.includes('mirrors add'), 'mirrors add should be removed');
+      assert.ok(!output.includes('mirrors list'), 'mirrors list should be removed');
     }
   });
 

@@ -110,49 +110,6 @@ export class KyselyStorage {
     return rows.map((r) => ({ ...JSON.parse(r.body), registered_at: r.registered_at }));
   }
 
-  // ── Mirrors ──
-
-  async putMirror(id, commitmentHash, mirror, serverRegisteredAt) {
-    await this.db
-      .insertInto('mirrors')
-      .values({
-        id,
-        commitment_hash: commitmentHash,
-        url: mirror.url,
-        provider: mirror.provider,
-        signing_key: mirror.signing_key,
-        body: JSON.stringify(mirror),
-        server_registered_at: serverRegisteredAt,
-      })
-      .execute();
-  }
-
-  async getMirrors(commitmentHash) {
-    const rows = await this.db
-      .selectFrom('mirrors')
-      .select(['id', 'url', 'provider', 'signing_key', 'body', 'server_registered_at'])
-      .where('commitment_hash', '=', commitmentHash)
-      .execute();
-    return rows.map((r) => ({
-      mirror_id: r.id,
-      url: r.url,
-      provider: r.provider,
-      signing_key: r.signing_key,
-      registered_at: JSON.parse(r.body).registered_at,
-      server_registered_at: r.server_registered_at,
-    }));
-  }
-
-  async mirrorExists(commitmentHash, url) {
-    const row = await this.db
-      .selectFrom('mirrors')
-      .select('id')
-      .where('commitment_hash', '=', commitmentHash)
-      .where('url', '=', url)
-      .executeTakeFirst();
-    return !!row;
-  }
-
   // ── Anti-spam / Activity ──
 
   async countCommitmentsByKey(signingKey, since) {
