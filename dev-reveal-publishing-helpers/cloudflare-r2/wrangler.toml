@@ -13,14 +13,18 @@ bucket_name = "reveal-data"
 
 [[d1_databases]]
 binding = "DB"
-database_name = "reveal-store-db"
-database_id = "TODO-create-with-wrangler-d1-create"
+database_name = "commit-reveal-db"
+database_id = "ad020215-1a37-46d7-8bdd-22f7e334a9d4"
 
 [vars]
 MAX_UPLOAD_MB = "50"
 RATE_LIMIT_PER_HOUR = "20"
-TURNSTILE_SITE_KEY = ""
-TURNSTILE_SECRET_KEY = ""
-GOOGLE_OAUTH_CLIENT_ID = ""
-GOOGLE_OAUTH_CLIENT_SECRET = ""
-GOOGLE_OAUTH_REDIRECT_URI = ""
+TURNSTILE_SITE_KEY = "1x00000000000000000000AA"
+TURNSTILE_SECRET_KEY = "1x0000000000000000000000000000000AA"
+GOOGLE_OAUTH_CLIENT_ID = "323104702830-khlg67viemefa9fivtu2s97t9oabco23.apps.googleusercontent.com"
+GOOGLE_OAUTH_CLIENT_SECRET = "REDACTED_GOOGLE_OAUTH_CLIENT_SECRET"
+GOOGLE_OAUTH_REDIRECT_URI = "https://reveal-r2.orgtopus.workers.dev/auth/callback"
+ANON_RATE_LIMIT_PER_HOUR = "50"
+
+[triggers]
+crons = ["0 3 * * 1"]

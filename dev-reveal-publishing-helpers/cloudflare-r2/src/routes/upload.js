@@ -72,18 +72,55 @@ app.post('/upload', requireAuth(), async (c) => {
 
   const { commitmentHash, signingKey } = verified;
 
-  // Link signing key to authenticated user
   const user = c.get('user');
-  await linkSigningKey(db, user.id, signingKey);
+  const isAnon = c.get('isAnon');
 
-  // Rate limit check via D1 (by user_id)
-  const oneHourAgo = new Date(Date.now() - 3600_000).toISOString();
-  const rateResult = await db.prepare(
-    'SELECT COUNT(*) as cnt FROM upload_logs WHERE signing_key IN (SELECT signing_key FROM user_keys WHERE user_id = ?) AND created_at > ?'
-  ).bind(user.id, oneHourAgo).first();
+  if (isAnon) {
+    // FIFO cap: delete oldest anon uploads if at capacity
+    const countResult = await db.prepare(
+      'SELECT COUNT(*) as cnt FROM upload_logs WHERE signing_key = ? AND is_anon = 1'
+    ).bind(signingKey).first();
 
-  if (rateResult.cnt >= config.rateLimitPerHour) {
-    return c.json({ error: 'Rate limit exceeded. Try again later.' }, 429);
+    if (countResult.cnt >= 1000) {
+      const excess = countResult.cnt - 1000 + 1;
+      const oldRows = await db.prepare(
+        'SELECT commitment_hash FROM upload_logs WHERE signing_key = ? AND is_anon = 1 ORDER BY created_at ASC LIMIT ?'
+      ).bind(signingKey, excess).all();
+
+      for (const row of oldRows.results) {
+        // Delete R2 objects for this commitment
+        const listed = await bucket.list({ prefix: `${row.commitment_hash}/` });
+        for (const obj of listed.objects) {
+          await bucket.delete(obj.key);
+        }
+        await db.prepare(
+          'DELETE FROM upload_logs WHERE commitment_hash = ? AND signing_key = ? AND is_anon = 1'
+        ).bind(row.commitment_hash, signingKey).run();
+      }
+    }
+
+    // Anon rate limit (more generous for demo)
+    const oneHourAgo = new Date(Date.now() - 3600_000).toISOString();
+    const rateResult = await db.prepare(
+      'SELECT COUNT(*) as cnt FROM upload_logs WHERE signing_key = ? AND is_anon = 1 AND created_at > ?'
+    ).bind(signingKey, oneHourAgo).first();
+
+    if (rateResult.cnt >= (config.anonRateLimitPerHour || 50)) {
+      return c.json({ error: 'Rate limit exceeded. Try again later.' }, 429);
+    }
+  } else {
+    // Link signing key to authenticated user
+    await linkSigningKey(db, user.id, signingKey);
+
+    // Rate limit check via D1 (by user_id)
+    const oneHourAgo = new Date(Date.now() - 3600_000).toISOString();
+    const rateResult = await db.prepare(
+      'SELECT COUNT(*) as cnt FROM upload_logs WHERE signing_key IN (SELECT signing_key FROM user_keys WHERE user_id = ?) AND created_at > ?'
+    ).bind(user.id, oneHourAgo).first();
+
+    if (rateResult.cnt >= config.rateLimitPerHour) {
+      return c.json({ error: 'Rate limit exceeded. Try again later.' }, 429);
+    }
   }
 
   // Store files to R2
@@ -103,9 +140,16 @@ app.post('/upload', requireAuth(), async (c) => {
   }
 
   // Log upload to D1
-  await db.prepare(
-    'INSERT INTO upload_logs (commitment_hash, signing_key, file_count, total_bytes) VALUES (?, ?, ?, ?)'
-  ).bind(commitmentHash, signingKey, files.length, totalBytes).run();
+  if (isAnon) {
+    const expiresAt = new Date(Date.now() + 7 * 24 * 3600_000).toISOString();
+    await db.prepare(
+      'INSERT INTO upload_logs (commitment_hash, signing_key, file_count, total_bytes, is_anon, expires_at) VALUES (?, ?, ?, ?, 1, ?)'
+    ).bind(commitmentHash, signingKey, files.length, totalBytes, expiresAt).run();
+  } else {
+    await db.prepare(
+      'INSERT INTO upload_logs (commitment_hash, signing_key, file_count, total_bytes) VALUES (?, ?, ?, ?)'
+    ).bind(commitmentHash, signingKey, files.length, totalBytes).run();
+  }
 
   return c.json({
     commitment_hash: commitmentHash,

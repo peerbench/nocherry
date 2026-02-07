@@ -35,6 +35,33 @@ export function createApp(bucket, config, db) {
   app.route('/v1', uploadRoute);
   app.route('/v1/data', dataRoute);
 
+  // Cleanup expired anonymous uploads (called by Cloud Scheduler)
+  app.get('/internal/cleanup', async (c) => {
+    // Only allow from internal callers (Cloud Scheduler sends this header)
+    const callerHeader = c.req.header('X-CloudScheduler') || c.req.header('X-Appengine-Cron');
+    if (!callerHeader) {
+      return c.json({ error: 'Forbidden' }, 403);
+    }
+
+    const expired = db.prepare(
+      "SELECT commitment_hash FROM upload_logs WHERE is_anon = 1 AND expires_at < datetime('now')"
+    ).all();
+
+    let deleted = 0;
+    for (const row of expired) {
+      const [files] = await bucket.getFiles({ prefix: `${row.commitment_hash}/` });
+      for (const file of files) {
+        await file.delete().catch(() => {});
+      }
+      db.prepare(
+        'DELETE FROM upload_logs WHERE commitment_hash = ? AND is_anon = 1'
+      ).run(row.commitment_hash);
+      deleted++;
+    }
+
+    return c.json({ status: 'ok', deleted });
+  });
+
   // 404 fallback
   app.notFound((c) => c.json({ error: 'Not found' }, 404));
 
