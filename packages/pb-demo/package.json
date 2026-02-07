@@ -3,7 +3,11 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
-    "start": "node src/server.js"
+    "start": "node src/server.js",
+    "test": "node --test test/walkthrough.test.js test/publish.test.js",
+    "test:e2e": "npx playwright test",
+    "test:publish:local": "node --test test/publish.test.js",
+    "test:publish:remote": "PUBLISH_URL=https://reveal-r2.orgtopus.workers.dev node --test test/publish.test.js"
   },
   "dependencies": {
     "hono": "^4.0.0",

@@ -71,19 +71,56 @@ app.post('/upload', requireAuth(), async (c) => {
 
   const { commitmentHash, signingKey } = verified;
 
-  // Link signing key to authenticated user
   const db = c.get('db');
   const user = c.get('user');
-  linkSigningKey(db, user.id, signingKey);
+  const isAnon = c.get('isAnon');
 
-  // Rate limit check via SQLite (by user_id)
-  const oneHourAgo = new Date(Date.now() - 3600_000).toISOString();
-  const rateResult = db.prepare(
-    'SELECT COUNT(*) as cnt FROM upload_logs WHERE signing_key IN (SELECT signing_key FROM user_keys WHERE user_id = ?) AND created_at > ?'
-  ).get(user.id, oneHourAgo);
+  if (isAnon) {
+    // FIFO cap: delete oldest anon uploads if at capacity
+    const countResult = db.prepare(
+      'SELECT COUNT(*) as cnt FROM upload_logs WHERE signing_key = ? AND is_anon = 1'
+    ).get(signingKey);
 
-  if (rateResult.cnt >= config.rateLimitPerHour) {
-    return c.json({ error: 'Rate limit exceeded. Try again later.' }, 429);
+    if (countResult.cnt >= 1000) {
+      const excess = countResult.cnt - 1000 + 1;
+      const oldRows = db.prepare(
+        'SELECT commitment_hash FROM upload_logs WHERE signing_key = ? AND is_anon = 1 ORDER BY created_at ASC LIMIT ?'
+      ).all(signingKey, excess);
+
+      for (const row of oldRows) {
+        // Delete GCS objects for this commitment
+        const [files] = await bucket.getFiles({ prefix: `${row.commitment_hash}/` });
+        for (const file of files) {
+          await file.delete().catch(() => {});
+        }
+        db.prepare(
+          'DELETE FROM upload_logs WHERE commitment_hash = ? AND signing_key = ? AND is_anon = 1'
+        ).run(row.commitment_hash, signingKey);
+      }
+    }
+
+    // Anon rate limit (more generous for demo)
+    const oneHourAgo = new Date(Date.now() - 3600_000).toISOString();
+    const rateResult = db.prepare(
+      'SELECT COUNT(*) as cnt FROM upload_logs WHERE signing_key = ? AND is_anon = 1 AND created_at > ?'
+    ).get(signingKey, oneHourAgo);
+
+    if (rateResult.cnt >= (config.anonRateLimitPerHour || 50)) {
+      return c.json({ error: 'Rate limit exceeded. Try again later.' }, 429);
+    }
+  } else {
+    // Link signing key to authenticated user
+    linkSigningKey(db, user.id, signingKey);
+
+    // Rate limit check via SQLite (by user_id)
+    const oneHourAgo = new Date(Date.now() - 3600_000).toISOString();
+    const rateResult = db.prepare(
+      'SELECT COUNT(*) as cnt FROM upload_logs WHERE signing_key IN (SELECT signing_key FROM user_keys WHERE user_id = ?) AND created_at > ?'
+    ).get(user.id, oneHourAgo);
+
+    if (rateResult.cnt >= config.rateLimitPerHour) {
+      return c.json({ error: 'Rate limit exceeded. Try again later.' }, 429);
+    }
   }
 
   // Store files to GCS
@@ -110,9 +147,16 @@ app.post('/upload', requireAuth(), async (c) => {
   }
 
   // Log upload to SQLite
-  db.prepare(
-    'INSERT INTO upload_logs (commitment_hash, signing_key, file_count, total_bytes) VALUES (?, ?, ?, ?)'
-  ).run(commitmentHash, signingKey, files.length, totalBytes);
+  if (isAnon) {
+    const expiresAt = new Date(Date.now() + 7 * 24 * 3600_000).toISOString();
+    db.prepare(
+      'INSERT INTO upload_logs (commitment_hash, signing_key, file_count, total_bytes, is_anon, expires_at) VALUES (?, ?, ?, ?, 1, ?)'
+    ).run(commitmentHash, signingKey, files.length, totalBytes, expiresAt);
+  } else {
+    db.prepare(
+      'INSERT INTO upload_logs (commitment_hash, signing_key, file_count, total_bytes) VALUES (?, ?, ?, ?)'
+    ).run(commitmentHash, signingKey, files.length, totalBytes);
+  }
 
   return c.json({
     commitment_hash: commitmentHash,

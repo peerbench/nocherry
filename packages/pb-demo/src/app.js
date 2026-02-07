@@ -8,6 +8,7 @@ import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { sessionMiddleware } from './session.js';
 import { createRemoteClient } from './remote-client.js';
+import { createEmbeddedPublisher } from './embedded-publisher.js';
 
 // Route handlers
 import homeRoute from './routes/home.js';
@@ -16,8 +17,8 @@ import step2Route from './routes/step2-hash.js';
 import step3Route from './routes/step3-commit.js';
 import step4Route from './routes/step4-submit.js';
 import step5Route from './routes/step5-selection.js';
-import step6Route from './routes/step6-reveal.js';
-import step7Route from './routes/step7-publish.js';
+import step6Route from './routes/step6-publish.js';
+import step7Route from './routes/step7-reveal.js';
 import step8Route from './routes/step8-verify.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -25,9 +26,10 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 function loadServersJson() {
   try {
     const raw = readFileSync(resolve(__dirname, '..', '..', '..', 'servers.json'), 'utf-8');
-    return JSON.parse(raw).servers || [];
+    const parsed = JSON.parse(raw);
+    return { servers: parsed.servers || [], revealPublishers: parsed.reveal_publishers || [] };
   } catch {
-    return [];
+    return { servers: [], revealPublishers: [] };
   }
 }
 
@@ -48,17 +50,33 @@ export async function createDemoApp(options) {
     { name: 'embedded', client: embeddedApp, environment: 'embedded' },
   ];
 
+  // Embedded publish server (in-memory, no auth needed)
+  const embeddedPublisher = createEmbeddedPublisher();
+  app.route('/publish', embeddedPublisher);
+
+  const port = process.env.PORT || 7421;
+  const publishServers = [
+    { name: 'embedded', url: `http://localhost:${port}/publish`, environment: 'embedded' },
+  ];
+
   if (!options?.skipRemote) {
-    const serversConfig = loadServersJson();
+    const { servers: serversConfig, revealPublishers } = loadServersJson();
     for (const srv of serversConfig) {
+      const url = srv.primary_url || srv.url;
       // Skip localhost entries — the embedded server handles local
-      if (srv.url && !srv.url.includes('localhost')) {
+      if (url && !url.includes('localhost')) {
         pbServers.push({
           name: srv.name,
-          client: createRemoteClient(srv.url),
-          url: srv.url,
+          client: createRemoteClient(url),
+          url,
           environment: srv.environment,
         });
+      }
+    }
+    for (const pub of revealPublishers) {
+      const url = pub.primary_url || pub.url;
+      if (url) {
+        publishServers.push({ name: pub.name, url, environment: pub.environment });
       }
     }
   }
@@ -66,9 +84,10 @@ export async function createDemoApp(options) {
   // Session middleware
   app.use('*', sessionMiddleware());
 
-  // Inject server array into every request context
+  // Inject server array + publish servers into every request context
   app.use('*', async (c, next) => {
     c.set('pbServers', pbServers);
+    c.set('publishServers', publishServers);
     await next();
   });
 

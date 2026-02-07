@@ -18,12 +18,16 @@ export function initDatabase(dbPath) {
       signing_key TEXT NOT NULL,
       file_count INTEGER NOT NULL,
       total_bytes INTEGER NOT NULL,
+      is_anon INTEGER NOT NULL DEFAULT 0,
+      expires_at TEXT,
       created_at TEXT DEFAULT CURRENT_TIMESTAMP
     );
 
     CREATE INDEX IF NOT EXISTS idx_upload_logs_signing_key ON upload_logs(signing_key);
     CREATE INDEX IF NOT EXISTS idx_upload_logs_created_at ON upload_logs(created_at);
     CREATE INDEX IF NOT EXISTS idx_upload_logs_key_time ON upload_logs(signing_key, created_at);
+    CREATE INDEX IF NOT EXISTS idx_upload_logs_expires ON upload_logs(expires_at) WHERE expires_at IS NOT NULL;
+    CREATE INDEX IF NOT EXISTS idx_upload_logs_signing_key_anon ON upload_logs(signing_key) WHERE is_anon = 1;
 
     CREATE TABLE IF NOT EXISTS users (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
