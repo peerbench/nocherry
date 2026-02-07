@@ -523,7 +523,7 @@ test.describe('Full walkthrough', () => {
       // Pre-reveal: shows selected items count
       await expect(page.locator('.content-panel', { hasText: 'randomly selected' })).toBeVisible();
 
-      await page.locator('button', { hasText: 'Submit Reveal to Servers' }).click();
+      await page.locator('button', { hasText: 'Get Verification of Publication' }).click();
       await page.waitForURL('**/steps/7');
 
       // Post-reveal: server results (multiple servers = multiple result blocks)
@@ -626,7 +626,7 @@ test.describe('Full walkthrough', () => {
       // Step 7 (Reveal)
       await page.locator('a', { hasText: 'Continue to Step 7' }).click();
       await page.waitForURL('**/steps/7');
-      await page.locator('button', { hasText: 'Submit Reveal to Servers' }).click();
+      await page.locator('button', { hasText: 'Get Verification of Publication' }).click();
       await page.waitForURL('**/steps/7');
       await expect(page.locator('.content-panel .field-label', { hasText: 'Reveal ID' }).first()).toBeVisible();
 
@@ -656,7 +656,7 @@ test.describe('Full walkthrough', () => {
       // Step 7 (Reveal)
       await page.locator('a', { hasText: 'Continue to Step 7' }).click();
       await page.waitForURL('**/steps/7');
-      await page.locator('button', { hasText: 'Submit Reveal to Servers' }).click();
+      await page.locator('button', { hasText: 'Get Verification of Publication' }).click();
       await page.waitForURL('**/steps/7');
 
       // Step 8
