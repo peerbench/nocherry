@@ -131,7 +131,7 @@ app.post('/upload', requireAuth(), async (c) => {
     const key = `${commitmentHash}/${name}`;
     try {
       await bucket.file(key).save(buffer, {
-        contentType: guessContentType(name),
+        contentType: 'application/octet-stream',
       });
     } catch (err) {
       if (err.code === 403 || err.message?.includes('billing')) {
@@ -164,25 +164,5 @@ app.post('/upload', requireAuth(), async (c) => {
     uploaded_at: new Date().toISOString(),
   }, 201);
 });
-
-function guessContentType(filename) {
-  const ext = filename.split('.').pop()?.toLowerCase();
-  const types = {
-    json: 'application/json',
-    txt: 'text/plain',
-    csv: 'text/csv',
-    html: 'text/html',
-    xml: 'application/xml',
-    pdf: 'application/pdf',
-    png: 'image/png',
-    jpg: 'image/jpeg',
-    jpeg: 'image/jpeg',
-    gif: 'image/gif',
-    svg: 'image/svg+xml',
-    zip: 'application/zip',
-    gz: 'application/gzip',
-  };
-  return types[ext] || 'application/octet-stream';
-}
 
 export default app;

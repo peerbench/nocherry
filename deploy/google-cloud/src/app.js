@@ -23,7 +23,7 @@ export function createApp(storage) {
   });
 
   // Health check
-  app.get('/health', (c) => c.json({ status: 'ok' }));
+  app.get('/health', (c) => c.json({ status: 'ok', version: config.version }));
 
   // Routes
   app.route('/v1/server-info', serverInfoRoute);

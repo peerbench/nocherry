@@ -17,6 +17,7 @@ route.get('/', (c) => {
     signer_activity_windows: config.activityWindows,
     beacon_types: config.beaconTypes,
     spec_version: config.specVersion,
+    version: config.version,
   });
 });
 
