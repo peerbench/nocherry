@@ -87,7 +87,7 @@ route.get('/', (c) => {
 
       <h2>Reveal Signing Payload</h2>
       <p>Key order: <code>spec_version, commitment_hash, selected_items, voluntary_items, revealed_at, signing_key</code></p>
-      ${button('Submit Reveal to Servers')}
+      ${button('Get Verification of Publication')}
     `;
   } else {
     const revealResults = session.revealResults || [];

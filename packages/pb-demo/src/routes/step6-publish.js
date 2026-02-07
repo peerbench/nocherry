@@ -99,8 +99,8 @@ function renderUploadBlock(u) {
   } else {
     return `
       <div class="server-result">
-        <h3>${esc(u.serverName)} <span class="cross">FAILED</span></h3>
-        <p style="color:#e63946">${esc(u.error)}</p>
+        <h3>${esc(u.serverName)} <span style="color:#6c757d;font-size:0.85rem">FAILED</span></h3>
+        <p style="color:#6c757d;font-size:0.9rem">${esc(u.error)}</p>
       </div>`;
   }
 }
