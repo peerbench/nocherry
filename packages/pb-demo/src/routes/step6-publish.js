@@ -101,11 +101,15 @@ function renderUploadBlock(u, signingKeyHex) {
     const signupUrl = u.serverUrl
       ? `${u.serverUrl.replace(/\/$/, '')}/auth/signup?signing_key=${encodeURIComponent(signingKeyHex)}`
       : null;
+    const errorDetail = u.error
+      ? `<p style="margin-top:8px;padding:8px 10px;background:#f8f9fa;border:1px solid #dee2e6;border-radius:4px;font-size:0.8rem;color:#666"><strong>Server response:</strong> ${esc(u.error)}</p>`
+      : '';
     return `
       <div class="server-result" style="opacity:0.75">
         <h3>${esc(u.serverName)} <span style="color:#6c757d;font-size:0.85rem">OPTIONAL</span></h3>
-        <p style="color:#666;font-size:0.9rem">This publish server requires linking a Google account for anti-spam verification.
+        <p style="color:#666;font-size:0.9rem">This publish server may require linking a Google account for anti-spam verification.
         This is an optional extra mirror — your data is already published on the servers above.</p>
+        ${errorDetail}
         <div style="display:flex;gap:10px;align-items:center;margin-top:10px;flex-wrap:wrap">
           ${signupUrl ? `<a href="${esc(signupUrl)}" target="_blank" style="display:inline-block;padding:6px 14px;background:var(--accent2);color:#fff;border-radius:6px;font-size:0.85rem;text-decoration:none">Link Google Account &rarr;</a>` : ''}
           <form method="POST" action="/steps/6/retry" style="margin:0">
