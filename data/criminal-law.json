@@ -1,0 +1,26 @@
+[
+  {
+    "id": 1,
+    "topic": "Homicide",
+    "question": "Felony murder applies when a death occurs during the commission of:",
+    "choices": ["Any crime", "An inherently dangerous felony", "A misdemeanor", "A traffic violation"],
+    "answer": "An inherently dangerous felony",
+    "difficulty": "medium"
+  },
+  {
+    "id": 2,
+    "topic": "Defenses",
+    "question": "The M'Naghten rule is used to determine:",
+    "choices": ["Self-defense", "Insanity", "Entrapment", "Duress"],
+    "answer": "Insanity",
+    "difficulty": "medium"
+  },
+  {
+    "id": 3,
+    "topic": "Inchoate Crimes",
+    "question": "Conspiracy requires an agreement and, in most jurisdictions:",
+    "choices": ["A completed crime", "An overt act", "A written plan", "Three or more participants"],
+    "answer": "An overt act",
+    "difficulty": "easy"
+  }
+]

@@ -1,0 +1,71 @@
+{
+  "spec_version": "0.2.0",
+  "commitment_hash": "5f16a6a7fcd7a4c7aae940675ba6616cf1745f267e314f14564755bcf805cda6",
+  "revealed_at": "2026-02-07T17:10:59.772Z",
+  "receipts": [
+    {
+      "server_name": "cloudflare-1",
+      "server_url": "https://commit-reveal-cloudflare-dev.peerbench.ai",
+      "response": {
+        "reveal_id": "f133eeb525484782ad2e26a4500b5869",
+        "registered_at": "2026-02-07T17:11:00.123Z",
+        "beacon_at_reveal": {
+          "type": "drand",
+          "chain_hash": "52db9ba70e0cc0f6eaf7803dd07447a1f5477735fd3f661792ba94600c84e971",
+          "round": 25893632,
+          "randomness": "074066c88ea296d08a7e8274b5f4a3cd5d7013d916e1f64194002a7d56f389ec",
+          "signature": "a13308aceb5785196f4f8c228cb5b56c5f349a8cbdbfb30cc0a255cea43adee94369003345a6e775630ebfa2b4405a07"
+        },
+        "data_verified": true,
+        "verification": {
+          "verified_items": 2,
+          "total_selected": 2,
+          "items": [
+            {
+              "hash": "e4b52ed6687dd3836c30dcacff19f78dcdfd7414c3b3d2176092a54f52b68722",
+              "url": "https://raw.githubusercontent.com/reisepass/peerbench-reveals/main/reveals/2026-02-07-5f16a6a7fcd7/data/criminal-law.json",
+              "status": "match"
+            },
+            {
+              "hash": "165168b5e1456e2e4b054d5a9ebb08d89cfbad0fb3414097153fec3f0f63cc60",
+              "url": "https://raw.githubusercontent.com/reisepass/peerbench-reveals/main/reveals/2026-02-07-5f16a6a7fcd7/data/torts.json",
+              "status": "match"
+            }
+          ]
+        },
+        "server_key": "did:key:z6MkqwzoE3a8Q1WQ1egLu2w5pjDLKDqpmQ9FV67wYXtWnUeK",
+        "server_signature": "0d889f6ab72ea028af0ec30ad522b694b26f5359906527f355a10d759f455c706962cd1e9f8273841a9f99d00d2092b1a0f7ee305e8f0fa10e161b85fdcd3f09"
+      }
+    },
+    {
+      "server_name": "supabase-1",
+      "server_url": "https://zgyneuohwbzufajusohz.supabase.co/functions/v1/commit-reveal",
+      "response": {
+        "reveal_id": "060d2f60bb394c91bf7363bc42657e2a",
+        "registered_at": "2026-02-07T17:11:00.022Z",
+        "beacon_at_reveal": {
+          "type": "drand",
+          "chain_hash": "52db9ba70e0cc0f6eaf7803dd07447a1f5477735fd3f661792ba94600c84e971",
+          "round": 25893632,
+          "randomness": "074066c88ea296d08a7e8274b5f4a3cd5d7013d916e1f64194002a7d56f389ec",
+          "signature": "a13308aceb5785196f4f8c228cb5b56c5f349a8cbdbfb30cc0a255cea43adee94369003345a6e775630ebfa2b4405a07"
+        }
+      }
+    },
+    {
+      "server_name": "google-cloud-1",
+      "server_url": "https://commit-reveal-323104702830.us-central1.run.app",
+      "response": {
+        "reveal_id": "2a57d76b9558428abeeda9803664eb52",
+        "registered_at": "2026-02-07T17:10:59.886Z",
+        "beacon_at_reveal": {
+          "type": "drand",
+          "chain_hash": "52db9ba70e0cc0f6eaf7803dd07447a1f5477735fd3f661792ba94600c84e971",
+          "round": 25893631,
+          "randomness": "b3ee739e534b42bf191a00b8d409380d3dbf555590c09d41dbb57337e36df800",
+          "signature": "82eae642fe4d6b20b9958327625da3ecd422d4b963cada7ed7a2fadab3b762ba4974822a2c290b5e817638c457b72346"
+        }
+      }
+    }
+  ]
+}

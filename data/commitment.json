@@ -1,0 +1,21 @@
+{
+  "spec_version": "0.2.0",
+  "commitment_hash": "5f16a6a7fcd7a4c7aae940675ba6616cf1745f267e314f14564755bcf805cda6",
+  "items": [
+    "9aaad7e5bb69b90a7cfdb2f2d2090d1e9b79b920ee946bcc55a9b985c46a89c4",
+    "4dab45757eacc10a6c11c1cffc3be3a805e790e4d9fd9d650dcb438e0a95c2f5",
+    "e4b52ed6687dd3836c30dcacff19f78dcdfd7414c3b3d2176092a54f52b68722",
+    "56e2f39719eba0fe1b0d2514570e98669de9953f6e952d21d36761f0de812626",
+    "165168b5e1456e2e4b054d5a9ebb08d89cfbad0fb3414097153fec3f0f63cc60"
+  ],
+  "item_count": 5,
+  "reveal_probability": 0.5,
+  "beacon": {
+    "type": "drand",
+    "chain_hash": "52db9ba70e0cc0f6eaf7803dd07447a1f5477735fd3f661792ba94600c84e971"
+  },
+  "metadata": {},
+  "committed_at": "2026-02-07T17:10:47.632Z",
+  "signing_key": "did:key:z6MkhEYPvVgUdYg6rFSQ1aWeXRLHt283RMGodUzsxi5VDwz8",
+  "signature": "373c2a27dcdd57dc7544071a8235a196f3653cc2706e6209667684326f1131ebf1c8eb331f0456b239ec12d58894b48d4e105a41dd03626ac3dae5a65870a708"
+}

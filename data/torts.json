@@ -1,0 +1,26 @@
+[
+  {
+    "id": 1,
+    "topic": "Negligence",
+    "question": "What standard of care applies to a medical professional?",
+    "choices": ["Reasonable person", "Professional standard", "Strict liability", "Absolute care"],
+    "answer": "Professional standard",
+    "difficulty": "easy"
+  },
+  {
+    "id": 2,
+    "topic": "Intentional Torts",
+    "question": "Which tort requires proof of actual malice?",
+    "choices": ["Battery", "Assault", "Defamation of public figure", "Trespass"],
+    "answer": "Defamation of public figure",
+    "difficulty": "hard"
+  },
+  {
+    "id": 3,
+    "topic": "Strict Liability",
+    "question": "Strict liability most commonly applies to:",
+    "choices": ["Slip and fall", "Abnormally dangerous activities", "Professional malpractice", "Breach of contract"],
+    "answer": "Abnormally dangerous activities",
+    "difficulty": "medium"
+  }
+]

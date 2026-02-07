@@ -1,0 +1,26 @@
+[
+  {
+    "id": 1,
+    "topic": "Hearsay",
+    "question": "Which is an exception to the hearsay rule?",
+    "choices": ["Opinion testimony", "Excited utterance", "Character evidence", "Parol evidence"],
+    "answer": "Excited utterance",
+    "difficulty": "easy"
+  },
+  {
+    "id": 2,
+    "topic": "Relevance",
+    "question": "Under FRE 403, relevant evidence may be excluded if its probative value is substantially outweighed by:",
+    "choices": ["Cost of production", "Unfair prejudice", "Witness availability", "Judicial preference"],
+    "answer": "Unfair prejudice",
+    "difficulty": "medium"
+  },
+  {
+    "id": 3,
+    "topic": "Privileges",
+    "question": "Attorney-client privilege belongs to:",
+    "choices": ["The attorney", "The client", "The court", "Both attorney and client equally"],
+    "answer": "The client",
+    "difficulty": "easy"
+  }
+]
