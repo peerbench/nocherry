@@ -27,7 +27,7 @@ import { homedir } from 'node:os';
 import { execSync } from 'node:child_process';
 import { createInterface } from 'node:readline';
 import * as wasm from 'pb-wasm';
-import { getServers, resolveServer } from './registry.js';
+import { getServers, resolveServer, getRevealPublishers } from './registry.js';
 
 const KEY_DIR = join(homedir(), '.peerbench');
 const KEY_FILE = join(KEY_DIR, 'key.json');
@@ -1369,9 +1369,94 @@ async function cmdGo(dirPath, probability = 0.50) {
   console.log(`  ✓ Saved server-receipts.json (${receipts.length} receipt${receipts.length !== 1 ? 's' : ''})`);
   console.log();
 
-  // ── Step 4: Reveal ──
-  console.log('  Step 4 of 5 — Reveal');
-  console.log('  The beacon chose which items to reveal. Sign and submit your reveal.');
+  // ── Step 4: Publish ──
+  console.log('  Step 4 of 5 — Publish');
+  console.log('  Publish your data and protocol evidence to GitHub and a PeerBench publish server.');
+  console.log();
+  await waitForEnter();
+
+  // 4a. GitHub publish (required — error if fails)
+  await cmdPublishGithub(dirPath);
+
+  // 4b. Publish server upload (best-effort — warn if fails)
+  try {
+    const publishers = getRevealPublishers();
+    if (publishers.length > 0) {
+      const publisher = publishers[0];
+      const publishUrl = `${publisher.url.replace(/\/$/, '')}/v1/upload`;
+      console.log(`\n  Uploading to publish server: ${publisher.name}...`);
+
+      // Load receipt
+      const receiptPath = existsSync(join(dir, 'server-receipts.json'))
+        ? join(dir, 'server-receipts.json')
+        : join(dir, 'receipt.json');
+      const receiptJson = readFileSync(receiptPath, 'utf-8');
+
+      // Collect data files (non-protocol files)
+      const dataFiles = walkDir(dir).filter(e => e.type === 'file');
+
+      // Build multipart form
+      const formData = new FormData();
+      formData.append('receipt', receiptJson);
+      for (const entry of dataFiles) {
+        const filePath = join(dir, entry.name);
+        const fileBytes = readFileSync(filePath);
+        formData.append('files[]', new Blob([fileBytes]), entry.name);
+      }
+
+      // Auth: try Ed25519 signature auth using the signing key
+      const authHeaders = {};
+      if (key.private_key_hex && (key.public_key_hex || key.did)) {
+        const ts = Math.floor(Date.now() / 1000).toString();
+        const message = `upload:${ts}`;
+        const msgBytes = new TextEncoder().encode(message);
+        const sig = wasm.signMessage(key.private_key_hex, msgBytes);
+        const pubHex = key.public_key_hex || '';
+        if (pubHex) {
+          authHeaders['Authorization'] = `Ed25519 ${pubHex} ${ts} ${sig}`;
+        }
+      }
+      // Fallback: bearer token from env
+      if (!authHeaders['Authorization'] && process.env.PB_PUBLISH_TOKEN) {
+        authHeaders['Authorization'] = `Bearer ${process.env.PB_PUBLISH_TOKEN}`;
+      }
+
+      if (!authHeaders['Authorization']) {
+        console.log('  ⚠ No publish server auth available (set PB_PUBLISH_TOKEN or link signing key)');
+        console.log('  (continuing — GitHub publish succeeded)');
+      } else {
+        const uploadRes = await fetch(publishUrl, {
+          method: 'POST',
+          headers: authHeaders,
+          body: formData,
+        });
+
+        if (uploadRes.ok) {
+          const uploadResult = await uploadRes.json();
+          console.log(`  ✓ Uploaded ${dataFiles.length} file${dataFiles.length !== 1 ? 's' : ''} to ${publisher.name}`);
+
+          // Register publish server as an additional mirror
+          if (uploadResult.files && uploadResult.files.length > 0) {
+            const mirrorUrl = `${publisher.url.replace(/\/$/, '')}/v1/data/${uploadResult.commitment_hash}`;
+            await registerMirrorWithServers(dir, mirrorUrl, publisher.name);
+          }
+        } else {
+          const errBody = await uploadRes.text();
+          console.log(`  ⚠ Publish server upload failed: ${uploadRes.status} ${errBody}`);
+          console.log('  (continuing — GitHub publish succeeded)');
+        }
+      }
+    }
+  } catch (err) {
+    console.log(`  ⚠ Publish server upload failed: ${err.message}`);
+    console.log('  (continuing — GitHub publish succeeded)');
+  }
+
+  console.log();
+
+  // ── Step 5: Reveal ──
+  console.log('  Step 5 of 5 — Reveal');
+  console.log('  Sign and submit reveal for the randomly selected items.');
   console.log('  → reveal.json, reveal-receipts.json');
   console.log();
   await waitForEnter();
@@ -1383,13 +1468,12 @@ async function cmdGo(dirPath, probability = 0.50) {
     process.exit(1);
   }
   const selectedItems = firstReceipt.receipt.selection.selected_items;
-  const voluntaryItems = commitment.items.filter(h => !selectedItems.includes(h));
 
   const revealPayload = {
     spec_version: '0.2.0',
     commitment_hash: commitment.commitment_hash,
     selected_items: selectedItems,
-    voluntary_items: voluntaryItems,
+    voluntary_items: [],
     revealed_at: new Date().toISOString(),
     signing_key: key.did || key.did_key,
   };
@@ -1400,7 +1484,7 @@ async function cmdGo(dirPath, probability = 0.50) {
 
   writeFileSync(join(dir, 'reveal.json'), JSON.stringify(reveal, null, 2) + '\n');
 
-  console.log(`  ✓ Selected: ${selectedItems.length} item${selectedItems.length !== 1 ? 's' : ''}, Voluntary: ${voluntaryItems.length} item${voluntaryItems.length !== 1 ? 's' : ''}`);
+  console.log(`  ✓ Revealing ${selectedItems.length} selected item${selectedItems.length !== 1 ? 's' : ''}`);
 
   // Submit reveal to servers
   const revealSpinner = startSpinner('Submitting reveal...');
@@ -1450,24 +1534,13 @@ async function cmdGo(dirPath, probability = 0.50) {
   console.log('  ✓ Saved reveal.json + reveal-receipts.json');
   console.log();
 
-  // ── Step 5: Publish (optional) ──
-  console.log('  Step 5 of 5 — Publish (optional)');
-  console.log('  Publish your data and protocol evidence to a public repository.');
-  console.log();
-  const publishAnswer = await prompt('  Publish now? [y/N] ');
-  console.log();
-
-  if (publishAnswer.toLowerCase() === 'y') {
-    await cmdPublishInteractive(dirPath);
-    console.log();
-  }
-
   // ── Summary ──
   console.log('  ─────────────────────────────────');
   console.log(`  Done! Evidence chain in ${dirPath}:`);
   console.log('    manifest.json        file hashes');
   console.log('    commitment.json      signed commitment');
   console.log('    server-receipts.json server timestamps');
+  console.log('    publication.json     publish receipts');
   console.log('    reveal.json          signed reveal');
   console.log('    reveal-receipts.json server confirmations');
   console.log();
