@@ -1572,6 +1572,41 @@ async function cmdGo(dirPath, probability = 0.50) {
   writeFileSync(join(dir, 'reveal-receipts.json'), JSON.stringify(revealReceiptsData, null, 2) + '\n');
 
   console.log('  ✓ Saved reveal.json + reveal-receipts.json');
+
+  // Push reveal files back to GitHub repo
+  if (existsSync(join(dir, 'publication.json'))) {
+    try {
+      const pub = JSON.parse(readFileSync(join(dir, 'publication.json'), 'utf-8'));
+      if (pub.repository && pub.reveal_folder) {
+        const repo = pub.repository;
+        const tmpBase = join(homedir(), '.peerbench', 'publish-tmp');
+        const cloneDir = join(tmpBase, repo.split('/').pop());
+
+        if (existsSync(join(cloneDir, '.git'))) {
+          const destDir = join(cloneDir, pub.reveal_folder);
+
+          // Copy reveal files
+          for (const rf of ['reveal.json', 'reveal-receipts.json']) {
+            if (existsSync(join(dir, rf))) {
+              cpSync(join(dir, rf), join(destDir, rf));
+            }
+          }
+
+          // Git add, commit, push
+          shell('git add -A', { cwd: cloneDir });
+          const diffCheck = shell('git diff --cached --stat', { cwd: cloneDir, allowFail: true });
+          if (diffCheck) {
+            shell(`git commit -m "Add reveal receipts for ${pub.reveal_folder}"`, { cwd: cloneDir });
+            shell('git push', { cwd: cloneDir });
+            console.log('  ✓ Pushed reveal receipts to GitHub');
+          }
+        }
+      }
+    } catch (err) {
+      console.log(`  ⚠ Could not update GitHub repo: ${err.message}`);
+    }
+  }
+
   console.log();
 
   // ── Summary ──
