@@ -97,12 +97,20 @@ route.post("/", async (c: Context) => {
   // Record server-side timestamp
   const registeredAt = new Date().toISOString();
 
-  // Store commitment
-  await storage.putCommitment(
-    body.commitment_hash as string,
-    body,
-    registeredAt,
-  );
+  // Store commitment (catch UNIQUE constraint race between check and insert)
+  try {
+    await storage.putCommitment(
+      body.commitment_hash as string,
+      body,
+      registeredAt,
+    );
+  } catch (e) {
+    const msg = (e as Error).message || "";
+    if (msg.includes("UNIQUE") || msg.includes("unique") || msg.includes("duplicate key") || msg.includes("already exists")) {
+      return c.json({ error: "Commitment already exists" }, 409);
+    }
+    throw e;
+  }
 
   // Fetch arrival beacon
   let arrivalBeacon = null;

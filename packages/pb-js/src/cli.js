@@ -599,6 +599,8 @@ async function registerMirrorWithServers(srcDir, url, provider) {
       if (res.ok) {
         const body = await res.json();
         return { server: server.name, server_url: server.url, status: 'ok', mirror_id: body.mirror_id, server_registered_at: body.server_registered_at };
+      } else if (res.status === 404) {
+        return { server: server.name, server_url: server.url, status: 'unsupported' };
       } else {
         const body = await res.text();
         return { server: server.name, server_url: server.url, status: 'error', error: `${res.status}: ${body}` };
@@ -611,7 +613,11 @@ async function registerMirrorWithServers(srcDir, url, provider) {
     return { server: servers[i].name, server_url: servers[i].url, status: 'error', error: r.reason?.message || 'unknown error' };
   });
 
-  for (const v of mirrorResults) {
+  const supported = mirrorResults.filter(v => v.status !== 'unsupported');
+  if (supported.length === 0) {
+    console.log('  (no servers support mirror registration)');
+  }
+  for (const v of supported) {
     if (v.status === 'ok') {
       console.log(`  ${v.server}: registered (mirror_id: ${v.mirror_id})`);
     } else {
@@ -727,6 +733,8 @@ async function verifyPublicationWithServers(commitmentHash, fileUrls) {
           }
         }
         attestations.push({ server: server.name, server_url: server.url, attestation: body });
+      } else if (res.status === 404) {
+        // Server doesn't support this endpoint — skip silently
       } else {
         const body = await res.text();
         console.log(`  ${server.name}: ${res.status} ${body}`);
@@ -1349,7 +1357,16 @@ async function cmdGo(dirPath, probability = 0.50) {
       });
       if (res.ok) {
         const receipt = await res.json();
-        return { server_name: server.name, server_url: server.url, receipt };
+        return { server_name: server.name, server_url: server.url, receipt, duplicate: false };
+      } else if (res.status === 409) {
+        // Commitment already exists — fetch the existing receipt
+        const getUrl = `${server.url.replace(/\/$/, '')}/v1/commitments/${commitment.commitment_hash}`;
+        const getRes = await fetch(getUrl);
+        if (getRes.ok) {
+          const existing = await getRes.json();
+          return { server_name: server.name, server_url: server.url, receipt: existing, duplicate: true };
+        }
+        return { server_name: server.name, server_url: server.url, receipt: null, duplicate: true };
       } else {
         const body = await res.text();
         throw new Error(`${server.name}: ${res.status} ${body}`);
@@ -1358,13 +1375,16 @@ async function cmdGo(dirPath, probability = 0.50) {
   );
 
   const receipts = [];
+  let duplicateCount = 0;
   let firstFailure = null;
   for (let i = 0; i < settled.length; i++) {
     const r = settled[i];
     if (r.status === 'fulfilled') {
-      if (receipts.length === 0) spinner.stop(`${r.value.server_name}: round ${r.value.receipt.selection?.beacon_output?.round || '?'}`);
-      else console.log(`  ✓ ${r.value.server_name}: round ${r.value.receipt.selection?.beacon_output?.round || '?'}`);
-      receipts.push(r.value);
+      if (r.value.duplicate) duplicateCount++;
+      const label = r.value.duplicate ? '(already committed)' : `round ${r.value.receipt?.selection?.beacon_output?.round || '?'}`;
+      if (receipts.length === 0) spinner.stop(`${r.value.server_name}: ${label}`);
+      else console.log(`  ✓ ${r.value.server_name}: ${label}`);
+      if (r.value.receipt) receipts.push(r.value);
     } else {
       if (!firstFailure) { spinner.fail(`${servers[i].name}: ${r.reason?.message || 'failed'}`); firstFailure = true; }
       else console.log(`  ✗ ${servers[i].name}: ${r.reason?.message || 'failed'}`);
@@ -1374,6 +1394,12 @@ async function cmdGo(dirPath, probability = 0.50) {
   if (receipts.length === 0) {
     console.log('  ✗ All servers failed.');
     process.exit(1);
+  }
+
+  if (duplicateCount > 0) {
+    console.log();
+    console.log(`  ⚠ WARNING: This data has already been committed to ${duplicateCount} server${duplicateCount !== 1 ? 's' : ''}.`);
+    console.log('  Re-running on previously committed data — using existing server receipts.');
   }
 
   const serverReceipts = {

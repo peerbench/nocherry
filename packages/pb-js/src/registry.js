@@ -8,11 +8,24 @@ import { join, dirname } from 'node:path';
 
 let _cache = null;
 
+/** Map primary_url → url for backward compatibility with all downstream code. */
+function normalizeEntry(entry) {
+  if (entry.primary_url && !entry.url) {
+    return { ...entry, url: entry.primary_url };
+  }
+  return entry;
+}
+
 export function loadRegistry() {
   if (_cache) return _cache;
   const here = dirname(fileURLToPath(import.meta.url));
   const filePath = join(here, '..', '..', '..', 'servers.json');
-  _cache = JSON.parse(readFileSync(filePath, 'utf-8'));
+  const raw = JSON.parse(readFileSync(filePath, 'utf-8'));
+  _cache = {
+    ...raw,
+    servers: (raw.servers || []).map(normalizeEntry),
+    reveal_publishers: (raw.reveal_publishers || []).map(normalizeEntry),
+  };
   return _cache;
 }
 
@@ -33,8 +46,10 @@ export function resolveServer(nameOrUrl) {
   const byName = servers.find(s => s.name === nameOrUrl);
   if (byName) return byName;
 
-  // Try matching by URL
-  const byUrl = servers.find(s => s.url === nameOrUrl);
+  // Try matching by primary or alternative URL
+  const byUrl = servers.find(s =>
+    s.url === nameOrUrl || s.primary_url === nameOrUrl || s.alternative_url === nameOrUrl
+  );
   if (byUrl) return byUrl;
 
   // Ad-hoc server from a raw URL
@@ -58,7 +73,9 @@ export function resolveRevealPublisher(nameOrUrl) {
   const byName = publishers.find(p => p.name === nameOrUrl);
   if (byName) return byName;
 
-  const byUrl = publishers.find(p => p.url === nameOrUrl);
+  const byUrl = publishers.find(p =>
+    p.url === nameOrUrl || p.primary_url === nameOrUrl || p.alternative_url === nameOrUrl
+  );
   if (byUrl) return byUrl;
 
   return { name: null, url: nameOrUrl, operator: null, environment: null };

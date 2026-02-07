@@ -107,14 +107,17 @@ route.post("/:hash/reveals", async (c: Context) => {
   let verification: Record<string, unknown> | null = null;
 
   if (verifyEnabled) {
-    if (!fileUrls || typeof fileUrls !== "object" || Object.keys(fileUrls).length === 0) {
+    const selectedItems = (body.selected_items as string[]) || [];
+    if (selectedItems.length === 0) {
+      dataVerified = true;
+      verification = { verified_items: 0, total_selected: 0, items: [] };
+    } else if (!fileUrls || typeof fileUrls !== "object" || Object.keys(fileUrls).length === 0) {
       return c.json(
         { error: "file_urls required when server has data verification enabled. Provide a mapping of item hashes to public URLs." },
         400,
       );
-    }
+    } else {
 
-    const selectedItems = body.selected_items as string[];
     const results: Record<string, unknown>[] = [];
     for (const itemHash of selectedItems) {
       const url = fileUrls[itemHash];
@@ -155,6 +158,7 @@ route.post("/:hash/reveals", async (c: Context) => {
 
     dataVerified = true;
     verification = { verified_items: matchCount, total_selected: selectedItems.length, items: results };
+    } // end else (has file_urls)
   } else {
     verification = { verification_skipped: true };
   }

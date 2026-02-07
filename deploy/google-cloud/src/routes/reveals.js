@@ -87,12 +87,16 @@ route.post('/:hash/reveals', async (c) => {
   let verification = null;
 
   if (verifyEnabled) {
-    if (!fileUrls || typeof fileUrls !== 'object' || Object.keys(fileUrls).length === 0) {
+    const selectedItems = body.selected_items || [];
+    if (selectedItems.length === 0) {
+      dataVerified = true;
+      verification = { verified_items: 0, total_selected: 0, items: [] };
+    } else if (!fileUrls || typeof fileUrls !== 'object' || Object.keys(fileUrls).length === 0) {
       return c.json({ error: 'file_urls required when server has data verification enabled. Provide a mapping of item hashes to public URLs.' }, 400);
-    }
+    } else {
 
     const results = [];
-    for (const itemHash of body.selected_items) {
+    for (const itemHash of selectedItems) {
       const url = fileUrls[itemHash];
       if (!url) {
         results.push({ hash: itemHash, status: 'missing_url' });
@@ -117,17 +121,18 @@ route.post('/:hash/reveals', async (c) => {
     }
 
     const matchCount = results.filter(r => r.status === 'match').length;
-    const allMatch = matchCount === body.selected_items.length && matchCount > 0;
+    const allMatch = matchCount === selectedItems.length && matchCount > 0;
 
     if (!allMatch) {
       return c.json({
         error: 'Data verification failed — not all selected items could be verified',
-        verification: { verified_items: matchCount, total_selected: body.selected_items.length, items: results },
+        verification: { verified_items: matchCount, total_selected: selectedItems.length, items: results },
       }, 422);
     }
 
     dataVerified = true;
-    verification = { verified_items: matchCount, total_selected: body.selected_items.length, items: results };
+    verification = { verified_items: matchCount, total_selected: selectedItems.length, items: results };
+    } // end else (has file_urls)
   } else {
     verification = { verification_skipped: true };
   }
