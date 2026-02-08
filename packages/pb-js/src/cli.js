@@ -366,14 +366,12 @@ async function cmdReveal(dirPath) {
     process.exit(1);
   }
 
-  const voluntaryItems = commitment.items.filter(h => !selectedItems.includes(h));
-
   // Build reveal signing payload (canonical key order from spec)
   const revealPayload = {
     spec_version: '0.2.0',
     commitment_hash: commitment.commitment_hash,
     selected_items: selectedItems,
-    voluntary_items: voluntaryItems,
+    voluntary_items: [],
     revealed_at: new Date().toISOString(),
     signing_key: key.did || key.did_key,
   };

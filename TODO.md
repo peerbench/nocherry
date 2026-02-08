@@ -38,6 +38,17 @@
 
 ## TODO
 
+### Spec Alignment (nochery-commit-reveal-spec-v0.4.md) — Completed 2026-02-08
+
+Issues found during full code audit against the unified spec.
+
+- [x] ~~CLI: Hidden file exclusion~~ — spec updated to match code (exclude all dotfiles)
+- [x] ~~CLI: `cmdReveal` auto-voluntaries all items~~ — fixed, now uses `voluntary_items: []`
+- [x] ~~Proof bundle layout in spec~~ — removed prescriptive directory layout from spec
+- [x] ~~Web demo vs CLI voluntary items mismatch~~ — fixed by #2 above
+
+---
+
 ### Deploy & Test Publishing Helper Auth (DO FIRST)
 
 - [ ] **Deploy auth updates to both publishing helpers**

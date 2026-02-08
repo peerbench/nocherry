@@ -117,7 +117,7 @@ export function computeSelection(commitment, beaconOutput) {
   let selectedItems;
   let selectionMode;
 
-  if (itemCount >= 20) {
+  if (itemCount > 20) {
     // Batch selection via Fisher-Yates
     const count = Math.ceil(p * itemCount);
     selectedItems = wasm.selectBatch(JSON.stringify(items), randomness, count);
