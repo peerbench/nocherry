@@ -134,7 +134,7 @@ export function computeSelection(
   let selectedItems: string[];
   let selectionMode: string;
 
-  if (itemCount >= 20) {
+  if (itemCount > 20) {
     const count = Math.ceil(p * itemCount);
     selectedItems = wasm.selectBatch(
       JSON.stringify(items),

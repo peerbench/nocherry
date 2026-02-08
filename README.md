@@ -1,5 +1,7 @@
 # PeerBench Commit-Reveal
 
+> Hash your data, commit the hashes to a timestamped server, wait for a drand beacon round you couldn't have predicted, and the beacon deterministically picks which items you must reveal. You can't cherry-pick what gets audited.
+
 <p align="center">
   <img src="demo.gif" alt="Terminal demo: key generation, hashing, commitment, verification, and server submission" width="800">
 </p>
@@ -46,8 +48,8 @@ The commitment is recorded *before* the beacon round that determines selection. 
 
 Given a beacon output and a commitment, selection is fully deterministic:
 
-- **Per-item selection** (< 20 items): For each item, compute `HMAC-SHA256(beacon_randomness, commitment_hash || item_hash)`. If the result (as a 64-bit integer) is below `floor(probability * 2^64)`, the item is selected.
-- **Batch selection** (>= 20 items): Seed a PRNG with `HMAC-SHA256(beacon_randomness, commitment_hash)`, then run Fisher-Yates shuffle to pick `floor(count * probability)` items.
+- **Per-item selection** (1-20 items): For each item, compute `HMAC-SHA256(beacon_randomness, commitment_hash || item_hash)`. If the result (as a 64-bit integer) is below `floor(probability * 2^64)`, the item is selected.
+- **Batch selection** (21+ items): Seed a PRNG with beacon randomness, then run Fisher-Yates shuffle to pick `ceil(count * probability)` items.
 
 Both methods are deterministic -- anyone with the beacon output and commitment can recompute the exact same selection.
 
@@ -174,7 +176,7 @@ Server metadata: public key, supported beacon types, version.
 
 Health check.
 
-See the [full specification](docs/commit-reveal-spec.md) for request/response schemas.
+See the [full specification](docs/nochery-commit-reveal-spec-v0.4.md) for request/response schemas.
 
 ## Deployment
 
@@ -190,9 +192,18 @@ The server runs anywhere Hono runs:
 
 | Document | Description |
 |----------|-------------|
-| [Commit-Reveal Spec](docs/commit-reveal-spec.md) | Full protocol specification (v0.2.0-draft) -- commitment format, selection algorithms, beacon interface, verification pipeline, HTTP API, test vectors |
-| [Hashing Spec](docs/peerbench-hashing-spec.md) | Deterministic SHA-256 hashing for files and directories (v0.3.0-draft) -- canonical JSON manifests, streaming, test vectors |
+| [**Unified Spec**](docs/nochery-commit-reveal-spec-v0.4.md) | Complete protocol specification (v0.4) -- hashing, commitment format, selection algorithms, beacon interface, verification pipeline, HTTP API, test vectors |
 | [Reference Implementation](docs/reference-implementation.md) | Architecture document -- monorepo structure, Rust-once philosophy, storage adapters, deployment patterns |
+
+<details>
+<summary>Superseded specs (kept for history)</summary>
+
+| Document | Description |
+|----------|-------------|
+| [Commit-Reveal Spec v0.2](docs/commit-reveal-spec.md) | Original protocol spec (superseded by unified spec) |
+| [Hashing Spec v0.3](docs/peerbench-hashing-spec.md) | Original hashing spec (superseded by unified spec) |
+
+</details>
 
 ## Design priorities
 
