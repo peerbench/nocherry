@@ -13,14 +13,14 @@ The service proves three things:
 2. **Integrity** — revealed data matches committed hashes
 3. **Unbiased selection** — the items chosen for reveal are determined by external randomness, not the committer
 
-The service is domain-agnostic. It deals in opaque SHA-256 hashes. Higher-level systems (e.g. PeerBench) layer meaning on top.
+The service is domain-agnostic. It deals in opaque SHA-256 hashes. Higher-level systems layer meaning on top.
 
 ### 1.1 Design Priorities
 
-1. **Standalone** — runs independently; no dependency on PeerBench nodes, identity systems, or benchmark registries
+1. **Standalone** — runs independently; no dependency on external nodes, identity systems, or benchmark registries
 2. **Verifiable offline** — given the commitment, randomness beacon output, and revealed data, anyone can verify without contacting the service
 3. **Simple** — one hash algorithm (SHA-256), one signature scheme (Ed25519), pluggable randomness sources
-4. **Composable** — can be embedded in PeerBench nodes or run as a separate microservice
+4. **Composable** — can be embedded in other systems or run as a separate microservice
 
 ### 1.2 Terminology
 
@@ -404,7 +404,7 @@ The client maintains a list of known servers. The list comes from two sources:
 
 1. **Hardcoded fallback.** The client ships with a default list of well-known servers, similar to DNS root servers or drand relay endpoints. This list is updated with client releases.
 
-2. **Fetchable list.** A JSON document at a well-known URL (e.g. `https://commit-reveal.peerbench.ai/servers.json`) provides the current server list. The client fetches this on startup and caches it. The document is signed so it can be verified even if served through a CDN.
+2. **Fetchable list.** A JSON document at a well-known URL (e.g. `https://commit-reveal.example.com/servers.json`) provides the current server list. The client fetches this on startup and caches it. The document is signed so it can be verified even if served through a CDN.
 
 ```json
 {
@@ -416,21 +416,21 @@ The client maintains a list of known servers. The list comes from two sources:
       "operator": "ETH Zürich",
       "server_key": "did:key:z6Mkq...",
       "retention": "30d",
-      "contact": "peerbench@ethz.ch"
+      "contact": "admin@ethz.ch"
     },
     {
       "url": "https://cr.cloudflare.com",
       "operator": "Cloudflare",
       "server_key": "did:key:z6Mkr...",
       "retention": "30d",
-      "contact": "peerbench@cloudflare.com"
+      "contact": "admin@cloudflare.com"
     },
     {
-      "url": "https://commit-reveal.peerbench.ai",
-      "operator": "PeerBench",
+      "url": "https://commit-reveal.example.com",
+      "operator": "Example Org",
       "server_key": "did:key:z6Mks...",
       "retention": "forever",
-      "contact": "ops@peerbench.ai"
+      "contact": "ops@example.com"
     }
   ],
   "signature": "..."
@@ -561,7 +561,7 @@ my-benchmark-reveal/
 │   ├── receipts/
 │   │   ├── cr.ethz.ch.json      # server receipt (commitment + selection + beacon)
 │   │   ├── cr.cloudflare.json   # server receipt (commitment + selection + beacon)
-│   │   └── peerbench.ai.json    # server receipt (commitment + selection + beacon)
+│   │   └── example.com.json     # server receipt (commitment + selection + beacon)
 │   └── reveal.json              # user's signed reveal object
 ├── item_001.json                # revealed data
 ├── item_002.json
@@ -619,7 +619,7 @@ Commit-reveal servers are lightweight receipt printers. Verification requires do
 
 ### 9.2 Who Runs It
 
-Anyone can run a verification service. PeerBench will operate one at `https://verify.peerbench.ai` as a convenience, but this is not guaranteed to remain available and should not be treated as authoritative. Users who care about verification should run it themselves or use the CLI tooling (Section 9.4).
+Anyone can run a verification service. Users who care about verification should run it themselves or use the CLI tooling (Section 9.4).
 
 ### 9.3 Verification API
 

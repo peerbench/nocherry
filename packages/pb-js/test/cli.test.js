@@ -39,7 +39,7 @@ describe('JS CLI', () => {
   });
 
   it('key generate creates a key', () => {
-    const keyDir = join(tempDir, 'home1', '.peerbench');
+    const keyDir = join(tempDir, 'home1', '.nocherry');
     const output = run(['key', 'generate'], { env: { HOME: join(tempDir, 'home1') } });
     assert.ok(output.startsWith('did:key:z'));
     // Key file should exist

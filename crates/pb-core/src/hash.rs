@@ -1,4 +1,4 @@
-//! SHA-256 file and directory hashing (PeerBench Hashing Spec v0.3.0).
+//! SHA-256 file and directory hashing (Hashing Spec v0.3.0).
 //!
 //! Files are hashed as raw bytes streamed through SHA-256.
 //! Directories are hashed via a canonical JSON manifest.

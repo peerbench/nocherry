@@ -15,7 +15,7 @@ use serde::{Deserialize, Serialize};
 // ---------------------------------------------------------------------------
 
 #[derive(Parser)]
-#[command(name = "pb", about = "PeerBench commit-reveal CLI")]
+#[command(name = "pb", about = "commit-reveal CLI")]
 struct Cli {
     #[command(subcommand)]
     command: Commands,
@@ -92,7 +92,7 @@ struct StoredKey {
 
 fn key_file_path() -> Result<PathBuf, String> {
     let home = dirs::home_dir().ok_or("could not determine home directory")?;
-    Ok(home.join(".peerbench").join("key.json"))
+    Ok(home.join(".nocherry").join("key.json"))
 }
 
 fn save_key(kp: &KeyPair) -> Result<PathBuf, String> {

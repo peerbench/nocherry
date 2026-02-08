@@ -112,8 +112,8 @@ async function interactiveConfig(prereqs) {
   ]);
 
   const operator = await menu('Operator name:', [
-    { label: 'PeerBench', value: 'PeerBench', default: true },
-    { label: 'Custom (edit env vars after deploy)', value: 'PeerBench' },
+    { label: 'Commit-Reveal', value: 'Commit-Reveal', default: true },
+    { label: 'Custom (edit env vars after deploy)', value: 'Commit-Reveal' },
   ]);
 
   const retention = await menu('Data retention:', [

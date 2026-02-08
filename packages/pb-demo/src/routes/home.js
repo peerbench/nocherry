@@ -10,7 +10,7 @@ route.get('/', (c) => {
       <div class="hero">
         <h1>Commit-Reveal Protocol</h1>
         <p>
-          An interactive walkthrough of the PeerBench commit-reveal protocol.
+          An interactive walkthrough of the commit-reveal protocol.
           You'll generate a key, hash data, create a commitment, submit it to a server,
           see how random selection works, and verify everything — with source code references at every step.
         </p>
@@ -39,7 +39,7 @@ route.get('/', (c) => {
           <form method="POST" action="/steps/1" style="margin:0">
             <input type="hidden" name="mode" value="live">
             <button type="submit" class="btn" style="padding:12px 28px;font-size:1rem;background:var(--accent2)">Live Demo</button>
-            <div style="font-size:0.8rem;color:#666;margin-top:6px;text-align:center">Remote servers on peerbench.ai<br>Real multi-server experience</div>
+            <div style="font-size:0.8rem;color:#666;margin-top:6px;text-align:center">Remote servers on nocherry.ai<br>Real multi-server experience</div>
           </form>
         </div>
       </div>

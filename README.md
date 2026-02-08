@@ -1,4 +1,4 @@
-# PeerBench Commit-Reveal
+# Commit-Reveal Protocol
 
 > Hash your data, commit the hashes to a timestamped server, wait for a drand beacon round you couldn't have predicted, and the beacon deterministically picks which items you must reveal. You can't cherry-pick what gets audited.
 
@@ -12,7 +12,7 @@ A standalone commit-reveal protocol that proves three things about data:
 2. **Integrity** -- revealed data matches committed hashes
 3. **Unbiased selection** -- which items are chosen for reveal is determined by external randomness, not the committer
 
-The protocol is domain-agnostic. It deals in opaque SHA-256 hashes. Higher-level systems (like PeerBench benchmark verification) layer meaning on top.
+The protocol is domain-agnostic. It deals in opaque SHA-256 hashes. Higher-level systems (like benchmark verification) layer meaning on top.
 
 ## How the protocol works
 
@@ -93,11 +93,11 @@ The beacon interface is pluggable -- the spec also defines support for the NIST 
 │   ├── pb-core/              # Rust: all crypto primitives (zero network I/O)
 │   └── pb-cli/               # Rust: native CLI (future)
 ├── packages/
-│   ├── pb-wasm/              # WASM bindings for pb-core (@peerbench/core)
-│   ├── pb-js/                # JavaScript SDK wrapping WASM (@peerbench/sdk)
-│   ├── pb-node/              # HTTP server - Hono, portable (@peerbench/server)
+│   ├── pb-wasm/              # WASM bindings for pb-core (@nocherry/core)
+│   ├── pb-js/                # JavaScript SDK wrapping WASM (@nocherry/sdk)
+│   ├── pb-node/              # HTTP server - Hono, portable (@nocherry/server)
 │   ├── pb-storage/           # Storage adapters - SQLite & Postgres via Kysely
-│   └── pb-demo/              # Interactive 7-step demo web app (@peerbench/demo)
+│   └── pb-demo/              # Interactive 7-step demo web app (@nocherry/demo)
 ├── deploy/
 │   ├── cloudflare/           # Cloudflare Workers + D1 deployment
 │   └── supabase/             # Supabase Edge Functions + Postgres
@@ -201,13 +201,13 @@ The server runs anywhere Hono runs:
 | Document | Description |
 |----------|-------------|
 | [Commit-Reveal Spec v0.2](docs/commit-reveal-spec.md) | Original protocol spec (superseded by unified spec) |
-| [Hashing Spec v0.3](docs/peerbench-hashing-spec.md) | Original hashing spec (superseded by unified spec) |
+| [Hashing Spec v0.3](docs/hashing-spec.md) | Original hashing spec (superseded by unified spec) |
 
 </details>
 
 ## Design priorities
 
-1. **Standalone** -- runs independently; no dependency on PeerBench nodes, identity systems, or benchmark registries
+1. **Standalone** -- runs independently; no dependency on external nodes, identity systems, or benchmark registries
 2. **Verifiable offline** -- given the commitment, beacon output, and revealed data, anyone can verify without contacting the service
 3. **Simple** -- one hash algorithm (SHA-256), one signature scheme (Ed25519), pluggable randomness sources
 4. **Composable** -- can be embedded in other systems or run as a separate microservice

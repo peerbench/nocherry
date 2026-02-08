@@ -1,5 +1,5 @@
 /**
- * @peerbench/sdk — JS convenience wrapper over pb-wasm.
+ * Commit-Reveal SDK — JS convenience wrapper over pb-wasm.
  *
  * Re-exports all WASM functions with JS-friendly signatures
  * and adds higher-level helpers (multi-server submit, etc).

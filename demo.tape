@@ -1,4 +1,4 @@
-# PeerBench Commit-Reveal Protocol Demo
+# Commit-Reveal Protocol Demo
 # Run: vhs demo.tape
 
 Output demo.gif

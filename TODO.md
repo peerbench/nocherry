@@ -98,11 +98,11 @@ Issues found during full code audit against the unified spec.
 
 ### CLI Data Upload Commands
 
-- [ ] **Move Hugging Face integrations to peerbench repo** — HuggingFace is too AI-specific for this general-purpose commit-reveal repo. Move `pb publish huggingface`, HF auth detection, and HF dataset creation to the peerbench repo. Keep only GitHub and generic providers here.
+- [ ] **Move Hugging Face integrations to nocherry repo** — HuggingFace is too AI-specific for this general-purpose commit-reveal repo. Move `pb publish huggingface`, HF auth detection, and HF dataset creation to the nocherry repo. Keep only GitHub and generic providers here.
 
 - [x] **`pb publish github <dir>`** — Upload revealed data to GitHub
   - Check if user has `gh` CLI authenticated
-  - Create a default repo (e.g., `peerbench-reveals`) if none specified
+  - Create a default repo (e.g., `nocherry-reveals`) if none specified
   - Push revealed data into a timestamped folder (e.g., `reveals/2026-02-06-<hash>/`)
   - If user doesn't specify a dataset, all future reveals go into this one repo
   - Link the reveal back to the commitment hash
@@ -111,7 +111,7 @@ Issues found during full code audit against the unified spec.
 - [x] **`pb publish huggingface <dir>`** — Upload revealed data to Hugging Face
   - Detect if user has HF SSH key configured (`~/.ssh` key linked to HF account)
   - Or check for `huggingface-cli` / `HF_TOKEN` env var
-  - Create a dataset repo on HF (e.g., `<username>/peerbench-reveals`)
+  - Create a dataset repo on HF (e.g., `<username>/nocherry-reveals`)
   - Push data as a HF dataset with proper README/metadata card
   - Same default-repo behavior as GitHub
 
@@ -213,16 +213,16 @@ Issues found during full code audit against the unified spec.
 ### Developer Experience
 
 - [ ] **`npx pb-js`** — Make the CLI installable and runnable without cloning the repo
-  - Publish `@peerbench/sdk` to npm
+  - Publish `@nocherry/sdk` to npm
   - Ensure WASM binary is bundled correctly in the npm package
 
 - [ ] **Python SDK** — PyO3 bindings for pb-core
   - Spec mentions this, Rust crate is ready
-  - `pip install peerbench` → same API as JS SDK
+  - `pip install nocherry` → same API as JS SDK
   - Important for ML/data science users who work in Python
 
 - [ ] **Programmatic JS API** — `packages/pb-js/src/index.js` exists but may be incomplete
-  - `import { commit, verify, hash } from '@peerbench/sdk'`
+  - `import { commit, verify, hash } from '@nocherry/sdk'`
   - Should be usable from Node.js scripts without the CLI
 
 ### Production Readiness
@@ -283,7 +283,7 @@ The CLI wizard (`pb go <dir>`) and the web demo (`pb-demo`) implement the same c
 
 **Key differences:**
 - CLI: 5 steps. Demo: 8 steps. Demo splits selection into its own visible step and adds verification.
-- CLI generates key automatically or loads from `~/.peerbench/key.json`. Demo generates per-session ephemeral key as an explicit step.
+- CLI generates key automatically or loads from `~/.nocherry/key.json`. Demo generates per-session ephemeral key as an explicit step.
 - CLI publishes *before* reveal (GitHub is required, publish server is best-effort). Demo also publishes before reveal but only to embedded/publish servers (no GitHub).
 - CLI has no offline verification step in the wizard — it saves files for later `pb verify`.
 
@@ -348,7 +348,7 @@ The CLI wizard (`pb go <dir>`) and the web demo (`pb-demo`) implement the same c
 
 2. **Offline-first or server-first?** — The CLI currently requires a server for submission. Should there be a fully offline mode where you commit locally and submit later? The spec supports this (commitment is signed client-side, server just timestamps it).
 
-3. **Key management** — Currently one key per machine in `~/.peerbench/key.json`. Should there be support for multiple keys, key rotation, or hardware key storage (e.g., YubiKey)?
+3. **Key management** — Currently one key per machine in `~/.nocherry/key.json`. Should there be support for multiple keys, key rotation, or hardware key storage (e.g., YubiKey)?
 
 4. **Reveal granularity** — The spec supports partial reveals (only selected items). The CLI's `pb publish` should respect this — only upload selected items, not the full dataset. But the user might want to voluntarily reveal everything. Need a `--all` flag?
 
@@ -356,29 +356,29 @@ The CLI wizard (`pb go <dir>`) and the web demo (`pb-demo`) implement the same c
 
 ---
 
-## Out of Scope (belongs in peerbench repo, not here)
+## Out of Scope (belongs in nocherry repo, not here)
 
-> The nocherry commit-reveal system is a **general-purpose** protocol for provable commitments with unbiased selection. It is not AI-specific. The peerbench CLI will use nocherry as a dependency and extend it with domain-specific integrations. These items belong there, not here.
+> The nocherry commit-reveal system is a **general-purpose** protocol for provable commitments with unbiased selection. It is not AI-specific. The nocherry CLI will use this as a dependency and extend it with domain-specific integrations. These items belong there, not here.
 
 ### HuggingFace Integration
 - **`pb publish huggingface <dir>`** — Too AI/ML-specific for this repo
   - Detect if user has HF SSH key configured or `huggingface-cli` / `HF_TOKEN`
-  - Create dataset repo on HF (`<username>/peerbench-reveals`)
+  - Create dataset repo on HF (`<username>/nocherry-reveals`)
   - Push data as HF dataset with README/metadata card
-  - This makes sense in peerbench where users are committing benchmark results, not in a generic commit-reveal protocol
+  - This makes sense in a benchmark-specific repo where users are committing benchmark results, not in a generic commit-reveal protocol
 
-### `pb publish peerbench-shared-huggingface`
-- **PeerBench-hosted reveal storage backed by HuggingFace** — AI-specific infrastructure
-  - Our HF account (`peerbench/reveals`) as the storage backend
+### `pb publish shared-huggingface`
+- **Hosted reveal storage backed by HuggingFace** — AI-specific infrastructure
+  - Our HF account (`nocherry/reveals`) as the storage backend
   - Users send data + receipt, we re-verify and store in HF dataset repo
   - Organized by commitment hash, one folder per reveal
   - Auto-generate dataset card with commitment metadata
-  - This is a peerbench service, not a nocherry service
+  - This is a domain-specific service, not a core nocherry service
 
 ### Python SDK
 - **PyO3 bindings for pb-core** — Important for ML/data science users
-  - `pip install peerbench` → same API as JS SDK
-  - The Rust crate is ready for bindings, but the Python audience is peerbench's, not nocherry's
+  - `pip install nocherry` → same API as JS SDK
+  - The Rust crate is ready for bindings, but the Python audience is domain-specific, not core nocherry's
 
 ---
 
