@@ -1,7 +1,7 @@
 # Reference Implementation
 
 **Status:** Architecture document
-**Repo:** `github.com/nocherry/commit-reveal` (monorepo)
+**Repo:** `github.com/peerbench/nocherry` (monorepo)
 
 ## 1. Overview
 
@@ -510,7 +510,7 @@ docker run -p 3000:3000 \
   -e RETENTION=30d \
   -e BEACON=drand \
   -v ./data:/data \
-  ghcr.io/nocherry/commit-reveal-server
+  ghcr.io/peerbench/commit-reveal-server
 ```
 
 Uses SQLite by default (`/data/commit-reveal.db`). Set `DATABASE_URL=postgres://...` for Postgres.

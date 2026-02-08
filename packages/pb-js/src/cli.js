@@ -752,7 +752,7 @@ async function cmdPublishGithub(dir, repoName) {
   if (!existsSync(repoReadme)) {
     writeFileSync(repoReadme, `# Reveals
 
-Cryptographically committed benchmark data, published via the [Commit-Reveal Protocol](https://github.com/nocherry/commit-reveal).
+Cryptographically committed benchmark data, published via the [Commit-Reveal Protocol](https://github.com/peerbench/nocherry).
 
 Each folder in \`reveals/\` contains data that was committed before evaluation, timestamped by an independent server, and can be independently verified.
 `);
@@ -965,7 +965,7 @@ pretty_name: Reveals
 
 # Reveals
 
-Cryptographically committed benchmark data, published via the [Commit-Reveal Protocol](https://github.com/nocherry/commit-reveal).
+Cryptographically committed benchmark data, published via the [Commit-Reveal Protocol](https://github.com/peerbench/nocherry).
 
 Each folder in \`reveals/\` contains data that was committed before evaluation,
 timestamped by an independent server, and can be independently verified.
