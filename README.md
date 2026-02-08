@@ -12,7 +12,13 @@ A standalone commit-reveal protocol that proves three things about data:
 2. **Integrity** -- revealed data matches committed hashes
 3. **Unbiased selection** -- which items are chosen for reveal is determined by external randomness, not the committer
 
-The protocol is domain-agnostic. It deals in opaque SHA-256 hashes. Higher-level systems (like benchmark verification) layer meaning on top.
+The protocol is domain-agnostic. It deals in opaque SHA-256 hashes. Higher-level systems layer meaning on top.
+
+## Why this exists
+
+When someone holds a private dataset and must reveal a subset to prove something about the whole, they'll cherry-pick the best-looking slice. This protocol makes that impossible — an external beacon nobody controls picks what gets revealed, after the data is already committed.
+
+This matters for [AI benchmarks, standardized test fairness, training data provenance, compliance audits, and more](docs/use-cases.md).
 
 ## How the protocol works
 
@@ -44,7 +50,14 @@ The protocol is domain-agnostic. It deals in opaque SHA-256 hashes. Higher-level
 
 The commitment is recorded *before* the beacon round that determines selection. The beacon randomness is unpredictable (BLS threshold signatures from a distributed network). This means the committer cannot know which items will be selected when they commit, preventing cherry-picking.
 
-### Selection algorithm
+### Verification is offline
+
+A receipt is self-contained. Anyone can verify the entire chain — commitment signature, beacon timing, selection correctness, data integrity — without contacting the server.
+
+<details>
+<summary>Selection algorithm and verification details</summary>
+
+#### Selection algorithm
 
 Given a beacon output and a commitment, selection is fully deterministic:
 
@@ -53,9 +66,7 @@ Given a beacon output and a commitment, selection is fully deterministic:
 
 Both methods are deterministic -- anyone with the beacon output and commitment can recompute the exact same selection.
 
-### Verification (offline)
-
-A receipt is self-contained. Verification requires no network access and runs six checks:
+#### Verification checks
 
 1. **Commitment signature** -- Ed25519 verify the commitment using the signer's public key
 2. **Beacon temporal ordering** -- the drand round timestamp is after `registered_at`
@@ -64,7 +75,7 @@ A receipt is self-contained. Verification requires no network access and runs si
 5. **Data integrity** -- SHA-256 hash revealed data, confirm it matches committed hashes
 6. **Completeness** -- all randomly-selected items are actually revealed
 
-## Cryptographic primitives
+#### Cryptographic primitives
 
 | Primitive | Usage |
 |-----------|-------|
@@ -73,6 +84,8 @@ A receipt is self-contained. Verification requires no network access and runs si
 | HMAC-SHA256 | Selection PRNG, seeded with beacon randomness |
 | BLS12-381 | drand beacon signature verification |
 | Canonical JSON | Deterministic serialization for signing payloads |
+
+</details>
 
 All cryptographic operations are implemented once in Rust (`crates/pb-core`) and compiled to WebAssembly for use in browsers and Node.js.
 
@@ -84,7 +97,7 @@ The protocol uses [drand](https://drand.love) quicknet as its randomness source:
 - **Period**: 3 seconds
 - **Scheme**: BLS-unchained-g1-rfc9380 (BLS12-381, group G1)
 
-The beacon interface is pluggable -- the spec also defines support for the NIST Randomness Beacon v2.0.
+The beacon interface is pluggable -- other randomness sources can be added.
 
 ## Repository structure
 
@@ -192,6 +205,7 @@ The server runs anywhere Hono runs:
 
 | Document | Description |
 |----------|-------------|
+| [**Use Cases**](docs/use-cases.md) | Why this exists -- AI benchmarks, test fairness, training data provenance, compliance audits |
 | [**Unified Spec**](docs/nochery-commit-reveal-spec-v0.4.md) | Complete protocol specification (v0.4) -- hashing, commitment format, selection algorithms, beacon interface, verification pipeline, HTTP API, test vectors |
 | [Reference Implementation](docs/reference-implementation.md) | Architecture document -- monorepo structure, Rust-once philosophy, storage adapters, deployment patterns |
 
