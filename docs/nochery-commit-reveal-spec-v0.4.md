@@ -29,7 +29,7 @@ The service is domain-agnostic. It deals in opaque SHA-256 hashes. Higher-level 
 
 - **Item** — an opaque unit identified by a SHA-256 hash. Could be a file, a test case, a JSON object — the service doesn't care.
 - **Commitment** — a signed declaration that one or more item hashes exist.
-- **Beacon** — an external randomness source (drand, NIST Randomness Beacon, etc.).
+- **Beacon** — an external randomness source (currently drand).
 - **Selection** — the deterministic process of deciding which items must be revealed, seeded by beacon randomness.
 - **Reveal probability** — the probability (0, 1] that any given item is selected for reveal.
 - **Voluntary reveal** — revealing items beyond the random selection, at the committer's discretion.
@@ -449,7 +449,7 @@ Given: commitment, selection record, reveal object, and actual data for each rev
 
 1. **Verify commitment signature.** Ed25519 verify against signing payload (Section 7.2).
 
-2. **Verify beacon.** Confirm the beacon output in the selection record is authentic (BLS verify for drand, RSA verify for NIST, etc.) and that its timestamp/round is after `commitment.registered_at`.
+2. **Verify beacon.** Confirm the beacon output in the selection record is authentic (BLS verify for drand) and that its timestamp/round is after `commitment.registered_at`.
 
 3. **Verify selection.** Re-run the selection algorithm (Section 8) with the commitment's items and the beacon's randomness. Confirm the selection record's `selected_items` matches.
 
@@ -487,60 +487,13 @@ A commitment recorded on server A is exactly as valid as one on server B. Server
 
 ### 11.3 Server Discovery
 
-The client maintains a list of known servers. The list comes from two sources:
+The client maintains a list of known servers. The client ships with a default list of well-known servers, similar to DNS root servers or drand relay endpoints. This list is updated with client releases.
 
-1. **Hardcoded fallback.** The client ships with a default list of well-known servers, similar to DNS root servers or drand relay endpoints. This list is updated with client releases.
-
-2. **Fetchable list.** A JSON document at a well-known URL (e.g. `https://cr.example.com/servers.json`) provides the current server list. The client fetches this on startup and caches it. The document is signed so it can be verified even if served through a CDN.
-
-```json
-{
-  "version": 1,
-  "updated_at": "2026-02-01T00:00:00Z",
-  "servers": [
-    {
-      "url": "https://cr.ethz.ch",
-      "operator": "ETH Zürich",
-      "server_key": "did:key:z6Mkq...",
-      "retention": "30d",
-      "contact": "ops@ethz.ch"
-    },
-    {
-      "url": "https://cr.cloudflare.com",
-      "operator": "Cloudflare",
-      "server_key": "did:key:z6Mkr...",
-      "retention": "30d",
-      "contact": "ops@cloudflare.com"
-    },
-    {
-      "url": "https://cr.example.com",
-      "operator": "Example Operator",
-      "server_key": "did:key:z6Mks...",
-      "retention": "forever",
-      "contact": "ops@example.com"
-    }
-  ],
-  "signature": "..."
-}
-```
-
-Each server has its own Ed25519 signing key, used to sign responses (including `signer_activity` counts and `registered_at` timestamps). The server's public key is published in the server list and at `GET /v1/server-info` on the server itself.
+Each server has its own Ed25519 signing key, used to sign responses (including `signer_activity` counts and `registered_at` timestamps). The server's public key is available at `GET /v1/server-info` on the server itself.
 
 ### 11.4 Multi-Submit
 
-The client submits every commitment to **all known servers in parallel**. Every server receives the same `commitment_hash`. Each server independently records `registered_at`.
-
-```
-Client                    Server A          Server B          Server C
-  |---POST /v1/commit--->|                  |                  |
-  |---POST /v1/commit--->|----------------->|                  |
-  |---POST /v1/commit--->|----------------->|----------------->|
-  |<--201 {hash, reg_a}--|                  |                  |
-  |<--201 {hash, reg_b}--|------------------|                  |
-  |<--201 {hash, reg_c}--|------------------|------------------|
-```
-
-Same `commitment_hash` in every receipt. The client stores all receipts. For later operations (get selection, submit reveal), the client can use any server. If a server goes down, the commitment is still recorded elsewhere.
+The client submits every commitment to **all known servers in parallel**. Every server receives the same `commitment_hash`. Each server independently records `registered_at`. Same `commitment_hash` in every receipt. The client stores all receipts. For later operations (get selection, submit reveal), the client can use any server. If a server goes down, the commitment is still recorded elsewhere.
 
 A commitment is considered successfully registered if at least one server accepts it. The client SHOULD warn if fewer than 2 servers respond.
 
@@ -552,7 +505,7 @@ No server-assigned IDs. No cross-referencing by signature. One hash, derived fro
 
 ## 12. Service API
 
-The API is designed for single-call operation. The client submits a commitment and receives a complete receipt — including the selection result — in one response. The server holds the connection until the next beacon fires (max ~3s for drand, ~60s for NIST), then returns everything.
+The API is designed for single-call operation. The client submits a commitment and receives a complete receipt — including the selection result — in one response. The server holds the connection until the next beacon fires (max ~3s for drand), then returns everything.
 
 ### 12.1 Health Check
 
@@ -644,27 +597,7 @@ This is not rate limiting — the server never rejects a commitment based on act
 
 By default, servers retain commitment data for **1 month** and then delete it. This keeps operating costs minimal — a commit-reveal server should fit comfortably within free-tier cloud resources.
 
-Servers MAY configure longer retention. The `GET /v1/server-info` endpoint advertises the server's retention policy:
-
-```json
-{
-  "operator": "ETH Zürich",
-  "server_key": "did:key:z6Mkq...",
-  "retention": "30d",
-  "signer_activity_windows": ["1h", "30d"],
-  "beacon_types": ["drand"],
-  "spec_version": "0.2.0",
-  "version": "0.2.0"
-}
-```
-
-- **`retention`**: a duration string (`30d`, `90d`, `forever`).
-- **`signer_activity_windows`**: which time windows appear in `signer_activity` — servers with longer retention may include additional windows like `365d`.
-- **`beacon_types`**: which beacon types the server supports. Currently `["drand"]`.
-- **`spec_version`**: the spec version the server implements.
-- **`version`**: the server software version.
-
-Retention only affects the server's ability to answer API queries. It does **not** affect the validity of receipts the user already holds — those are self-contained proofs that work forever.
+Servers MAY configure longer retention. The `GET /v1/server-info` endpoint advertises the server's retention policy. Retention only affects the server's ability to answer API queries. It does **not** affect the validity of receipts the user already holds — those are self-contained proofs that work forever.
 
 ### 12.2.2 Receipt-Based Proof
 
@@ -678,7 +611,7 @@ The resulting repo is a **self-contained proof bundle** — the commitment, serv
 
 1. Verify commitment signature (user's `did:key`)
 2. Verify receipt signatures (server `did:key`s — embedded in the receipt)
-3. Verify beacon output (BLS/RSA — no network needed)
+3. Verify beacon output (BLS verify — no network needed)
 4. Re-run selection algorithm, confirm it matches
 5. Hash revealed files, confirm they match committed hashes
 
@@ -741,7 +674,7 @@ This is a convenience lookup — returns the stored receipt. Not required for th
 ```
 GET /v1/commitments/{commitment_hash}/selection
 
-Response: Selection record (Section 8.6)
+Response: Selection record (Section 8.5)
 ```
 
 ### 12.6 Get Reveals
@@ -795,128 +728,11 @@ Response (200):
 
 Fetches data from the provided URLs, hashes each file, and compares against committed item hashes. This endpoint provides a server-signed attestation that the published data matches the commitment. The signed response can be stored as evidence.
 
-## 13. Verification Service (Optional, Separate)
-
-Full end-to-end verification of revealed data — downloading it, hashing it, re-running selection, checking signatures — is **not** required of the commit-reveal server. It is a separate, optional service with its own API.
-
-### 13.1 Why Separate
-
-Commit-reveal servers are lightweight receipt printers. Full verification requires downloading potentially large datasets, hashing every file, and confirming matches. These are fundamentally different workloads with different resource profiles and different trust implications. Bundling them would make it harder to run a commit-reveal server (higher bandwidth/compute requirements) and would conflate two roles: "I recorded when this commitment was made" vs. "I checked that the revealed data is legit."
-
-Note: the `verify-publication` endpoint (Section 12.8) provides limited server-side verification of data at specific URLs. Full verification — including commitment signature, beacon authenticity, selection correctness, and data integrity — is the domain of the verification service or CLI tooling.
-
-### 13.2 Who Runs It
-
-Anyone can run a verification service. An operator may choose to host one at a well-known URL (e.g. `https://verify.example.com`) as a convenience, but this is not guaranteed to remain available and should not be treated as authoritative. Users who care about verification should run it themselves or use the CLI tooling (Section 13.4).
-
-### 13.3 Verification API
-
-The verification service is a separate HTTP endpoint, potentially on a different domain.
-
-```
-POST /v1/verify
-
-Request body:
-{
-  "commitment_server": "https://cr.ethz.ch",
-  "commitment_hash": "a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4",
-  "data_url": "https://github.com/myorg/benchmark-reveal"
-}
-
-Response (200):
-{
-  "status": "verified",
-  "checks": {
-    "commitment_signature": "pass",
-    "beacon_authentic": "pass",
-    "selection_correct": "pass",
-    "reveal_signature": "pass",
-    "data_downloaded": true,
-    "items_checked": 5,
-    "items_passed": 5,
-    "items_failed": 0
-  },
-  "verified_at": "2026-02-08T12:00:00Z"
-}
-```
-
-The service:
-1. Fetches the commitment and selection record from the commit-reveal server
-2. Verifies signatures and beacon output
-3. Re-runs the selection algorithm
-4. Downloads data from `data_url`
-5. Hashes each revealed item and checks against committed hashes
-6. Returns a report
-
-### 13.4 CLI Verification
-
-The reference client includes offline verification that does the same thing locally:
-
-```bash
-# Verify from a local directory of revealed files
-commit-reveal verify \
-  --commitment https://cr.ethz.ch/v1/commitments/a1b2c3d4... \
-  --data ./my-reveal/
-
-# Verify from a remote data URL
-commit-reveal verify \
-  --commitment https://cr.ethz.ch/v1/commitments/a1b2c3d4... \
-  --data https://github.com/myorg/benchmark-reveal
-```
-
-This requires no trust in any verification service — the user runs it themselves.
-
-## 14. Hashing Reference Implementations
-
-### 14.1 JavaScript (Node.js)
-
-```javascript
-const crypto = require('crypto');
-const fs = require('fs');
-
-async function hashFile(filePath) {
-  return new Promise((resolve, reject) => {
-    const hash = crypto.createHash('sha256');
-    const stream = fs.createReadStream(filePath, { highWaterMark: 64 * 1024 });
-    stream.on('data', chunk => hash.update(chunk));
-    stream.on('end', () => resolve(hash.digest('hex')));
-    stream.on('error', reject);
-  });
-}
-
-function canonicalJson(obj) {
-  return JSON.stringify(obj);
-  // Keys must be inserted in correct order before serialization
-}
-```
-
-### 14.2 Python
-
-```python
-import hashlib
-import json
-
-def hash_file(file_path: str) -> str:
-    h = hashlib.sha256()
-    with open(file_path, 'rb') as f:
-        while chunk := f.read(65536):
-            h.update(chunk)
-    return h.hexdigest()
-
-def canonical_json(obj) -> bytes:
-    return json.dumps(obj, separators=(',', ':'), ensure_ascii=False).encode('utf-8')
-    # Dicts must have keys in correct order: name, type, hash
-```
-
-### 14.3 Canonical JSON Cross-Language Notes
-
-Both implementations MUST produce identical JSON bytes. In JavaScript, `JSON.stringify` preserves insertion order. In Python, `json.dumps` with `separators=(',',':')` and `ensure_ascii=False` does the same (dicts are insertion-ordered since Python 3.7). Keys must be constructed in the specified order before serialization.
-
-## 15. Test Vectors
+## 13. Test Vectors
 
 Implementations MUST produce identical outputs for these inputs.
 
-### 15.1 File Hashes
+### 13.1 File Hashes
 
 | Input | Expected Hash |
 |-------|--------------|
@@ -924,7 +740,7 @@ Implementations MUST produce identical outputs for these inputs.
 | `hello\n` (6 bytes) | `5891b5b522d5df086d0ff0b110fbd9d21bb4fc7163af34d08286a2e846f6be03` |
 | `hello` (5 bytes, no newline) | `2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824` |
 
-### 15.2 Directory Hashes
+### 13.2 Directory Hashes
 
 **Single file directory:**
 
@@ -956,7 +772,7 @@ Step 3: `readme.txt` hash = `711a6108ba2ce6ca93dd47d6817f2361db10d8ab6eec89460b2
 Step 4: `testdir/` manifest = `[{"name":"data","type":"dir","hash":"3d1fc26917bf08adb34bad524c64b224d66ad1eaef790be4a6ea0c9746b97b80"},{"name":"readme.txt","type":"file","hash":"711a6108ba2ce6ca93dd47d6817f2361db10d8ab6eec89460b2dfc2c325efabe"}]`
 `testdir/` hash = `28a24ba7d3a308be24a324ae90b720bd4498f3ecb1418ad34b520e9e0a68cd94`
 
-### 15.3 PRNG
+### 13.3 PRNG
 
 ```
 seed (hex): e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
@@ -974,7 +790,7 @@ index 2:
   uint64_le(first 8 bytes) = 772158504366922665
 ```
 
-### 15.4 Per-Item Selection
+### 13.4 Per-Item Selection
 
 ```
 beacon_randomness (hex): f26a953dc50e6bf7608f7fc5c9cc3e382a9da0e3b6e3aa4fc8579fe13e08fbf6
@@ -1001,7 +817,7 @@ value = le_uint64(first 8 bytes) = 11537435175544671205
 11537435175544671205 < 1844674407370955264 → selected = false
 ```
 
-### 15.5 Batch Selection (Fisher-Yates)
+### 13.5 Batch Selection (Fisher-Yates)
 
 ```
 items (5 hashes):
@@ -1030,15 +846,15 @@ selected = [
 ]
 ```
 
-## 16. Security Properties
+## 14. Security Properties
 
-### 16.1 What This Proves
+### 14.1 What This Proves
 
 - **Pre-commitment:** The committer declared specific hashes before the randomness existed. They cannot retroactively change item contents.
 - **Unbiased selection:** Selected items are determined by beacon randomness that postdates the commitment. The committer cannot influence which items are chosen.
 - **Integrity:** Revealed data must hash-match committed hashes.
 
-### 16.2 What This Does NOT Prove
+### 14.2 What This Does NOT Prove
 
 - **Data existence:** The committer could commit hashes of data they haven't created yet.
 - **Data quality:** The service says nothing about whether committed items are good or useful.
@@ -1046,20 +862,20 @@ selected = [
 - **Completeness of the item set:** The committer could commit only a cherry-picked subset of their full data. The service proves integrity of what was committed, not that the committed set is representative.
 - **Reveal compliance:** The service cannot force reveals. It can only make the selection public so that non-compliance is visible.
 
-### 16.3 Threat Model
+### 14.3 Threat Model
 
 | Threat | Mitigation |
 |--------|------------|
 | Committer cherry-picks which items to reveal | Beacon-seeded selection; committer cannot choose |
 | Committer modifies items after commitment | SHA-256 integrity check on reveal |
 | Committer creates commitment after seeing beacon | Temporal ordering: beacon must postdate server-recorded `registered_at` |
-| Committer predicts beacon output | drand: requires compromising t-of-n League of Entropy nodes. NIST: requires compromising NIST infrastructure. |
+| Committer predicts beacon output | drand: requires compromising t-of-n League of Entropy nodes |
 | Service operator tampers with commitments | Commitments are signed by the committer; tampering breaks the signature |
 | Service operator backdates a commitment | `registered_at` is server-side; additionally, beacon round must postdate it |
 | Committer reveals only easy/favorable items voluntarily | Voluntary vs. selected reveals are distinguished in the reveal object; reviewers can weight accordingly |
 | SSRF via file_urls verification | Servers SHOULD restrict `file_urls` fetches to HTTPS with public IPs, rejecting private/internal network ranges |
 
-## 17. Canonical JSON
+## 15. Canonical JSON
 
 1. No whitespace
 2. Object keys in the order specified per object type
@@ -1077,27 +893,3 @@ Key order per object type:
 **Beacon object:** `type`, then type-specific fields in alphabetical order
 
 **Reveal signing payload:** `spec_version`, `commitment_hash`, `selected_items`, `voluntary_items`, `revealed_at`, `signing_key`
-
-## 18. CLI Command Reference
-
-```bash
-# Hash a directory or file
-commit-reveal hash .
-commit-reveal hash dataset.parquet
-
-# Hash and list all items (for commit-reveal)
-commit-reveal hash --items .
-# Output: sorted list of (path, hash) pairs
-```
-
-## 19. Future Considerations
-
-- **Timelock encryption:** drand quicknet supports timelock encryption. Items could be encrypted such that they automatically become readable when the beacon round occurs — eliminating the need for active participation in reveals.
-- **CID wrapping:** raw SHA-256 hashes can be wrapped in CIDv1 without changing the underlying computation.
-- **Hash algorithm migration:** a `spec_version` bump would indicate the new algorithm; old hashes remain valid under their version.
-- **Chunked Merkle hashing:** for partial verification of individual large files (>1GB), a chunked scheme can be added in a future version.
-- **Merkle commitments:** for very large item sets (>100k), a Merkle root over sorted hashes could replace the full list, with Merkle proofs for individual items.
-- **Witness cosigning:** third parties cosign commitments for independent timestamps.
-- **Commitment chaining:** linking a new commitment to a previous one (dataset versioning) via a `supersedes` field.
-- **Selection receipts:** beacon nodes or third-party witnesses could sign selection records for additional non-repudiation.
-- **NIST beacon implementation:** the NIST Randomness Beacon v2.0 is specified (Section 9.3) but not yet implemented in the reference codebase.
