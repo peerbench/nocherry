@@ -1,11 +1,11 @@
-# PeerBench Hashing Specification
+# Hashing Specification
 
 **Version:** 0.3.0-draft
 **Status:** Draft for review
 
 ## 1. Overview
 
-This specification defines how PeerBench benchmark datasets are hashed — the deterministic process of turning files and directories into SHA-256 hashes. These hashes serve as inputs to the Commit-Reveal Service (see separate specification), which handles temporal ordering, randomized selection, and verification.
+This specification defines how benchmark datasets are hashed — the deterministic process of turning files and directories into SHA-256 hashes. These hashes serve as inputs to the Commit-Reveal Service (see separate specification), which handles temporal ordering, randomized selection, and verification.
 
 This spec covers the **hashing layer only**: files → hashes. Everything about commitments, reveals, drand, and verification lives in the Commit-Reveal Service Specification.
 
@@ -21,7 +21,7 @@ This spec covers the **hashing layer only**: files → hashes. Everything about 
 
 This spec covers the **canonical layer** -- the files, hashes, commitments, and reveals that are cryptographically verified. Two other layers exist but are out of scope:
 
-- **Index layer** (peerbench.ai): Ingests committed/revealed files into Postgres with full-text search, parsed/structured views for browsing and comparison. Derived from the canonical layer; can always be regenerated.
+- **Index layer**: Ingests committed/revealed files into Postgres with full-text search, parsed/structured views for browsing and comparison. Derived from the canonical layer; can always be regenerated.
 - **Raw archive**: The original files, always accessible via link from the index layer. When a reviewer sees a nicely parsed SWE-bench log in the web UI, they can click through to the actual raw file.
 
 The index layer never participates in hashing or verification.
@@ -68,7 +68,7 @@ CID wraps the hash with multibase + multicodec + multihash metadata. In a closed
 
 ### 2.2 Why Not Git Hashing?
 
-Git blob hashes include a `blob <size>\0` header, so `SHA-256(file_bytes)` ≠ `git hash-object file`. Git tree hashes encode Unix file modes (100644/40000/120000), so the same file with different executable bits produces different tree hashes. Git is currently transitioning from SHA-1 to SHA-256, with limited SHA-256 repo support on major hosts. PeerBench uses raw SHA-256 of file bytes so that `sha256sum myfile.json` matches the hash in the manifest -- no git-specific tooling required.
+Git blob hashes include a `blob <size>\0` header, so `SHA-256(file_bytes)` ≠ `git hash-object file`. Git tree hashes encode Unix file modes (100644/40000/120000), so the same file with different executable bits produces different tree hashes. Git is currently transitioning from SHA-1 to SHA-256, with limited SHA-256 repo support on major hosts. This protocol uses raw SHA-256 of file bytes so that `sha256sum myfile.json` matches the hash in the manifest -- no git-specific tooling required.
 
 ### 2.3 String Encoding
 
@@ -148,7 +148,7 @@ The following MUST be excluded from the manifest:
 - Entries named `.` or `..`
 - Entries named `.DS_Store` or `Thumbs.db`
 - Entries named `.git` (directories)
-- Entries starting with `.peerbench` (reserved for PeerBench metadata)
+- Entries starting with `.commit-reveal` (reserved for protocol metadata)
 
 Hidden files (other dotfiles) ARE included by default. Implementations MAY accept an additional exclusion list.
 
@@ -278,11 +278,11 @@ Step 4: `testdir/` manifest = `[{"name":"data","type":"dir","hash":"3d1fc26917bf
 
 ```bash
 # Hash a directory or file
-peerbench hash .
-peerbench hash dataset.parquet
+cr hash .
+cr hash dataset.parquet
 
 # Hash and list all items (for commit-reveal)
-peerbench hash --items .
+cr hash --items .
 # Output: sorted list of (path, hash) pairs
 ```
 

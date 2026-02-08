@@ -13,5 +13,5 @@ database_name = "commit-reveal-db"
 database_id = "ad020215-1a37-46d7-8bdd-22f7e334a9d4"
 
 [vars]
-OPERATOR = "PeerBench"
+OPERATOR = "Commit-Reveal"
 RETENTION = "30d"

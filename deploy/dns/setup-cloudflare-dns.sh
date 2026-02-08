@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# Create DNS CNAME records for peerbench.ai subdomains on Cloudflare.
+# Create DNS CNAME records for subdomains on Cloudflare.
 #
 # Prerequisites:
 #   1. Create a Cloudflare API token at:

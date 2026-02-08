@@ -28,7 +28,7 @@ export function page({ title, stepNumber, content, codeRefs = [], rightPanel, se
 </head>
 <body>
   <header>
-    <a href="/" class="logo">PeerBench Commit-Reveal</a>
+    <a href="/" class="logo">Commit-Reveal Protocol</a>
     <span class="badge">${esc(badgeText)}</span>
   </header>
 
@@ -43,7 +43,7 @@ export function page({ title, stepNumber, content, codeRefs = [], rightPanel, se
   </main>
 
   <footer>
-    <p>PeerBench Commit-Reveal Protocol v0.2.0</p>
+    <p>Commit-Reveal Protocol v0.2.0</p>
   </footer>
   ${stepNumber ? FAB_SCRIPT : ''}
 </body>

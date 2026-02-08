@@ -5,7 +5,7 @@
 export function getConfig(env) {
   return {
     retention: env.RETENTION || '30d',
-    operator: env.OPERATOR || 'PeerBench',
+    operator: env.OPERATOR || 'Commit-Reveal',
     beaconTypes: ['drand'],
     specVersion: '0.2.0',
     version: '0.2.0',

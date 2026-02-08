@@ -1,5 +1,5 @@
 {
-  "name": "@peerbench/google-cloud-run",
+  "name": "@nocherry/google-cloud-run",
   "version": "0.2.0",
   "private": true,
   "type": "module",

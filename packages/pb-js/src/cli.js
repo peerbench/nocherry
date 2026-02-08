@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 /**
- * PeerBench CLI — JS implementation using pb-wasm.
+ * Commit-Reveal CLI — JS implementation using pb-wasm.
  *
  * Usage:
  *   pb-js go <dir> [-p <prob>]              Guided wizard (just hit Enter)
@@ -29,7 +29,7 @@ import { randomBytes, randomInt } from 'node:crypto';
 import * as wasm from 'pb-wasm';
 import { getServers, resolveServer, getRevealPublishers } from './registry.js';
 
-const KEY_DIR = join(homedir(), '.peerbench');
+const KEY_DIR = join(homedir(), '.nocherry');
 const KEY_FILE = join(KEY_DIR, 'key.json');
 const DRAND_CHAIN_HASH = '52db9ba70e0cc0f6eaf7803dd07447a1f5477735fd3f661792ba94600c84e971';
 
@@ -534,7 +534,7 @@ function buildRevealFolder(srcDir) {
 
 function generateVerifyScript(commitmentHash) {
   return `#!/usr/bin/env bash
-# Verify this reveal against the PeerBench commitment
+# Verify this reveal against the commitment
 # Commitment hash: ${commitmentHash || 'unknown'}
 #
 # Requirements: npm (for npx)
@@ -544,12 +544,12 @@ function generateVerifyScript(commitmentHash) {
 set -euo pipefail
 DIR="$(cd "$(dirname "\${BASH_SOURCE[0]}")" && pwd)"
 
-echo "Verifying PeerBench reveal..."
+echo "Verifying commit-reveal..."
 echo "  Commitment: ${commitmentHash || 'unknown'}"
 echo ""
 
 if [ -f "$DIR/commitment.json" ]; then
-  npx @peerbench/sdk verify "$DIR/commitment.json"
+  npx cr verify "$DIR/commitment.json"
 else
   echo "No commitment.json found in reveal folder."
   echo "Download it from the server or the original committer."
@@ -686,7 +686,7 @@ async function cmdPublishGithub(dir, repoName) {
 
   // Get GitHub username
   const ghUser = shell('gh api user -q .login');
-  const repo = repoName || 'peerbench-reveals';
+  const repo = repoName || 'nocherry-reveals';
   const fullRepo = repo.includes('/') ? repo : `${ghUser}/${repo}`;
 
   console.log(`Publishing to GitHub: ${fullRepo}`);
@@ -695,12 +695,12 @@ async function cmdPublishGithub(dir, repoName) {
   const repoExists = shell(`gh repo view ${fullRepo} --json name 2>&1`, { allowFail: true });
   if (!repoExists || repoExists.includes('not found') || repoExists.includes('Could not')) {
     console.log(`Creating repository ${fullRepo} ...`);
-    shell(`gh repo create ${fullRepo} --public --description "PeerBench reveals — cryptographic benchmark commitments" --clone=false`);
+    shell(`gh repo create ${fullRepo} --public --description "Reveals — cryptographic benchmark commitments" --clone=false`);
     console.log(`  Created: https://github.com/${fullRepo}`);
   }
 
   // Clone (or pull) into temp dir
-  const tmpBase = join(homedir(), '.peerbench', 'publish-tmp');
+  const tmpBase = join(homedir(), '.nocherry', 'publish-tmp');
   mkdirSync(tmpBase, { recursive: true });
   const cloneDir = join(tmpBase, repo.replace('/', '-'));
 
@@ -750,9 +750,9 @@ async function cmdPublishGithub(dir, repoName) {
   // Ensure repo-level README exists
   const repoReadme = join(cloneDir, 'README.md');
   if (!existsSync(repoReadme)) {
-    writeFileSync(repoReadme, `# PeerBench Reveals
+    writeFileSync(repoReadme, `# Reveals
 
-Cryptographically committed benchmark data, published via [PeerBench](https://github.com/peerBench/commit-reveal).
+Cryptographically committed benchmark data, published via the [Commit-Reveal Protocol](https://github.com/nocherry/commit-reveal).
 
 Each folder in \`reveals/\` contains data that was committed before evaluation, timestamped by an independent server, and can be independently verified.
 `);
@@ -853,7 +853,7 @@ async function cmdPublishHuggingface(dir, repoName) {
     process.exit(1);
   }
 
-  const repo = repoName || 'peerbench-reveals';
+  const repo = repoName || 'nocherry-reveals';
   const fullRepo = repo.includes('/') ? repo : `${hfUser}/${repo}`;
 
   console.log(`Publishing to Hugging Face: ${fullRepo}`);
@@ -904,7 +904,7 @@ async function cmdPublishHuggingface(dir, repoName) {
   }
 
   // Clone into temp dir
-  const tmpBase = join(homedir(), '.peerbench', 'publish-tmp');
+  const tmpBase = join(homedir(), '.nocherry', 'publish-tmp');
   mkdirSync(tmpBase, { recursive: true });
   const cloneDir = join(tmpBase, `hf-${repo.replace('/', '-')}`);
 
@@ -958,15 +958,14 @@ license: mit
 task_categories:
   - other
 tags:
-  - peerbench
   - benchmark
   - commit-reveal
-pretty_name: PeerBench Reveals
+pretty_name: Reveals
 ---
 
-# PeerBench Reveals
+# Reveals
 
-Cryptographically committed benchmark data, published via [PeerBench](https://github.com/peerBench/commit-reveal).
+Cryptographically committed benchmark data, published via the [Commit-Reveal Protocol](https://github.com/nocherry/commit-reveal).
 
 Each folder in \`reveals/\` contains data that was committed before evaluation,
 timestamped by an independent server, and can be independently verified.
@@ -974,7 +973,7 @@ timestamped by an independent server, and can be independently verified.
 ## Verification
 
 \`\`\`bash
-npx @peerbench/sdk verify reveals/<folder>/commitment.json
+npx cr verify reveals/<folder>/commitment.json
 \`\`\`
 `);
   }
@@ -984,7 +983,7 @@ npx @peerbench/sdk verify reveals/<folder>/commitment.json
 
 - **Commitment Hash**: \`${commitHash}\`
 - **Date**: ${new Date().toISOString()}
-- **Verification**: \`npx @peerbench/sdk verify commitment.json\`
+- **Verification**: \`npx cr verify commitment.json\`
 `);
 
   // Git add, commit, push
@@ -1127,8 +1126,8 @@ async function cmdGo(dirPath, probability = 0.50) {
   }
 
   console.log();
-  console.log('  PeerBench Commit-Reveal Protocol');
-  console.log('  ─────────────────────────────────');
+  console.log('  Commit-Reveal Protocol');
+  console.log('  ──────────────────────');
   console.log(`  Directory: ${dirPath} (${fileCount} file${fileCount !== 1 ? 's' : ''})`);
   console.log();
 
@@ -1467,7 +1466,7 @@ async function cmdGo(dirPath, probability = 0.50) {
       const pub = JSON.parse(readFileSync(join(dir, 'publication.json'), 'utf-8'));
       if (pub.repository && pub.reveal_folder) {
         const repo = pub.repository;
-        const tmpBase = join(homedir(), '.peerbench', 'publish-tmp');
+        const tmpBase = join(homedir(), '.nocherry', 'publish-tmp');
         const cloneDir = join(tmpBase, repo.split('/').pop());
 
         if (existsSync(join(cloneDir, '.git'))) {

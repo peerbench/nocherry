@@ -3,7 +3,7 @@
  *
  * These are the same test vectors from:
  *   - Commit-Reveal Spec Section 10 (PRNG, per-item selection, batch selection)
- *   - PeerBench Hashing Spec Section 7 (file hashes, directory hashes)
+ *   - Hashing Spec Section 7 (file hashes, directory hashes)
  */
 
 import { describe, it } from 'node:test';

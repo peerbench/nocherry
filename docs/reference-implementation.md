@@ -1,18 +1,18 @@
-# PeerBench Reference Implementation
+# Reference Implementation
 
 **Status:** Architecture document
-**Repo:** `github.com/peerbench/peerbench` (monorepo)
+**Repo:** `github.com/nocherry/commit-reveal` (monorepo)
 
 ## 1. Overview
 
-This document describes the reference implementation architecture for the PeerBench hashing specification and the commit-reveal service specification. Both live in a single monorepo.
+This document describes the reference implementation architecture for the hashing specification and the commit-reveal service specification. Both live in a single monorepo.
 
 The guiding principle: **cryptographic correctness is implemented once in Rust**, then exposed everywhere via WASM and native FFI. HTTP servers, CLI tools, and storage adapters are thin wrappers in the language most natural for each deployment target.
 
 ## 2. Monorepo Structure
 
 ```
-peerbench/
+nocherry/
 ├── crates/
 │   ├── pb-core/                  # Rust: all cryptographic primitives
 │   │   ├── src/
@@ -42,7 +42,7 @@ peerbench/
 │   │   ├── src/
 │   │   │   └── lib.rs            # wasm-bindgen exports
 │   │   ├── Cargo.toml
-│   │   ├── package.json          # npm package: @peerbench/core
+│   │   ├── package.json          # npm package: @nocherry/core
 │   │   └── build.sh              # wasm-pack build
 │   │
 │   ├── pb-node/                  # Node.js commit-reveal server (Hono)
@@ -64,7 +64,7 @@ peerbench/
 │   │
 │   ├── pb-python/                # Python bindings
 │   │   ├── src/
-│   │   │   └── peerbench/
+│   │   │   └── nocherry/
 │   │   │       ├── __init__.py
 │   │   │       ├── _core.pyd     # PyO3 native extension from pb-core
 │   │   │       ├── hash.py       # Pythonic API over _core
@@ -80,7 +80,7 @@ peerbench/
 │       │   ├── commit.ts         # create & sign commitments
 │       │   ├── verify.ts         # offline verification
 │       │   └── client.ts         # multi-server submit client
-│       ├── package.json          # npm package: @peerbench/sdk
+│       ├── package.json          # npm package: @nocherry/sdk
 │       └── tsconfig.json
 │
 ├── deploy/
@@ -210,7 +210,7 @@ pub fn verify_reveal(
 
 ## 4. WASM Package (`pb-wasm`)
 
-Built with `wasm-pack`. Published as `@peerbench/core` on npm.
+Built with `wasm-pack`. Published as `@nocherry/core` on npm.
 
 ```rust
 // src/lib.rs — wasm-bindgen exports
@@ -237,18 +237,18 @@ Target size: <500 KiB gzipped. The `blst` BLS library is the largest dependency 
 
 ## 5. Python Bindings (`pb-python`)
 
-Built with PyO3 + maturin. Published as `peerbench` on PyPI.
+Built with PyO3 + maturin. Published as `nocherry` on PyPI.
 
 ```python
-import peerbench
+import nocherry
 
 # Hashing
-h = peerbench.hash_file("case_001.json")
-manifest = peerbench.hash_directory("my-benchmark/")
+h = nocherry.hash_file("case_001.json")
+manifest = nocherry.hash_directory("my-benchmark/")
 
 # Commitment
-key = peerbench.generate_keypair()
-commitment = peerbench.create_commitment(
+key = nocherry.generate_keypair()
+commitment = nocherry.create_commitment(
     items=[h1, h2, h3],
     reveal_probability=0.10,
     beacon={"type": "drand", "chain_hash": "52db9ba..."},
@@ -256,10 +256,10 @@ commitment = peerbench.create_commitment(
 )
 
 # Multi-server submit
-receipts = peerbench.submit(commitment)  # submits to all known servers
+receipts = nocherry.submit(commitment)  # submits to all known servers
 
 # Verification
-result = peerbench.verify_directory("my-reveal/")
+result = nocherry.verify_directory("my-reveal/")
 ```
 
 The Python package wraps PyO3-compiled `pb-core`. All crypto happens in Rust. The Python layer adds filesystem access (walking directories, reading files) and the HTTP client for server submission.
@@ -270,7 +270,7 @@ Native Rust binary. Installed via `cargo install pb-cli` or prebuilt binaries.
 
 ### 6.1 Key Management
 
-Private keys are stored as plaintext JSON at `~/.peerbench/key.json`:
+Private keys are stored as plaintext JSON at `~/.nocherry/key.json`:
 
 ```json
 {
@@ -283,7 +283,7 @@ Private keys are stored as plaintext JSON at `~/.peerbench/key.json`:
 
 Key resolution order:
 1. `PB_SIGNING_KEY` environment variable (hex-encoded private key) — for CI/scripts
-2. `~/.peerbench/key.json` — for interactive use
+2. `~/.nocherry/key.json` — for interactive use
 
 This is not a wallet. The key proves authorship of commitments, not control of funds. Plaintext is fine.
 
@@ -295,7 +295,7 @@ pb hash file case_001.json
 pb hash dir my-benchmark/
 
 # ── Key management ──
-pb key generate                     # prints did:key + saves to ~/.peerbench/key
+pb key generate                     # prints did:key + saves to ~/.nocherry/key
 pb key show                         # prints did:key
 
 # ── Commit ──
@@ -328,7 +328,7 @@ pb servers add https://my-server.example.com
 
 ## 7. Node.js Server (`pb-node`)
 
-The commit-reveal HTTP server. Built with **Hono** — runs natively on Cloudflare Workers, Deno, and Node.js without adapters. Calls `@peerbench/core` (WASM) for all crypto. Delegates storage to a pluggable adapter.
+The commit-reveal HTTP server. Built with **Hono** — runs natively on Cloudflare Workers, Deno, and Node.js without adapters. Calls `@nocherry/core` (WASM) for all crypto. Delegates storage to a pluggable adapter.
 
 ### 7.1 Full-Echo Receipts
 
@@ -510,10 +510,10 @@ docker run -p 3000:3000 \
   -e RETENTION=30d \
   -e BEACON=drand \
   -v ./data:/data \
-  ghcr.io/peerbench/commit-reveal-server
+  ghcr.io/nocherry/commit-reveal-server
 ```
 
-Uses SQLite by default (`/data/peerbench.db`). Set `DATABASE_URL=postgres://...` for Postgres.
+Uses SQLite by default (`/data/commit-reveal.db`). Set `DATABASE_URL=postgres://...` for Postgres.
 
 ## 9. Package Matrix
 
@@ -521,10 +521,10 @@ Uses SQLite by default (`/data/peerbench.db`). Set `DATABASE_URL=postgres://...`
 |---------|----------|-------------|----------|
 | `pb-core` | Rust | crates.io | All crypto, hashing, selection, verification |
 | `pb-cli` | Rust | crates.io + GitHub releases | CLI binary |
-| `@peerbench/core` | WASM | npm | pb-core compiled to WASM |
-| `@peerbench/sdk` | TypeScript | npm | JS wrapper: hashing, commit, verify, multi-server client |
-| `peerbench` | Python | PyPI | PyO3 wrapper: hashing, commit, verify |
-| `@peerbench/server` | TypeScript | npm | Commit-reveal HTTP server |
+| `@nocherry/core` | WASM | npm | pb-core compiled to WASM |
+| `@nocherry/sdk` | TypeScript | npm | JS wrapper: hashing, commit, verify, multi-server client |
+| `nocherry` | Python | PyPI | PyO3 wrapper: hashing, commit, verify |
+| `@nocherry/server` | TypeScript | npm | Commit-reveal HTTP server |
 
 ## 10. Build & Test
 
@@ -582,7 +582,7 @@ echo "=== All implementations agree ==="
 
 ### Phase 3: Bindings + Deployment
 7. `pb-python` — PyO3 bindings
-8. `@peerbench/sdk` — JS convenience wrapper
+8. `@nocherry/sdk` — JS convenience wrapper
 9. Cloudflare Workers deployment adapter
 10. Supabase deployment adapter
 

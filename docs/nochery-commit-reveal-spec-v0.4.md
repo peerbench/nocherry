@@ -1,12 +1,12 @@
-# PeerBench Commit-Reveal Specification
+# Commit-Reveal Protocol Specification
 
 **Version:** 0.4.0-draft
 **Status:** Draft for review
-**Supersedes:** commit-reveal-spec.md v0.2.0-draft, peerbench-hashing-spec.md v0.3.0-draft
+**Supersedes:** commit-reveal-spec.md v0.2.0-draft, hashing-spec.md v0.3.0-draft
 
 ## 1. Overview
 
-This specification defines the PeerBench commit-reveal system end-to-end: how files and directories are hashed into deterministic SHA-256 identifiers, how those hashes are committed to a timestamped service, how an external randomness beacon selects items for reveal, and how reveals are verified.
+This specification defines the commit-reveal system end-to-end: how files and directories are hashed into deterministic SHA-256 identifiers, how those hashes are committed to a timestamped service, how an external randomness beacon selects items for reveal, and how reveals are verified.
 
 The system proves three things:
 
@@ -14,18 +14,16 @@ The system proves three things:
 2. **Integrity** — revealed data matches committed hashes
 3. **Unbiased selection** — the items chosen for reveal are determined by external randomness, not the committer
 
-The service is domain-agnostic. It deals in opaque SHA-256 hashes. Higher-level systems (e.g. PeerBench) layer meaning on top.
+The service is domain-agnostic. It deals in opaque SHA-256 hashes. Higher-level systems layer meaning on top.
 
 ### 1.1 Design Priorities
 
 1. **Determinism** — identical inputs always produce identical hashes and selections, regardless of implementation language, OS, or filesystem
-2. **Standalone** — runs independently; no dependency on PeerBench nodes, identity systems, or benchmark registries
+2. **Standalone** — runs independently; no dependency on external nodes, identity systems, or benchmark registries
 3. **Verifiable offline** — given the commitment, randomness beacon output, and revealed data, anyone can verify without contacting the service
 4. **Simple** — one hash algorithm (SHA-256), one signature scheme (Ed25519), pluggable randomness sources
-5. **Composable** — can be embedded in PeerBench nodes or run as a separate microservice
-6. **File-native** — all committed data is files in directories; binary formats like Parquet are acceptable only when partial reveal is not required
-7. **Git-compatible distribution** — revealed data can be published as a git repo on GitHub or HuggingFace, but git is a delivery mechanism, not part of the verification layer
-8. **Minimal dependencies** — hashing requires only SHA-256 and JSON; no IPFS, no CID encoding, no multiformat overhead
+5. **Composable** — can be embedded in higher-level systems or run as a separate microservice
+6. **Minimal dependencies** — hashing requires only SHA-256 and JSON; no IPFS, no CID encoding, no multiformat overhead
 
 ### 1.2 Terminology
 
@@ -37,15 +35,6 @@ The service is domain-agnostic. It deals in opaque SHA-256 hashes. Higher-level 
 - **Voluntary reveal** — revealing items beyond the random selection, at the committer's discretion.
 - **Manifest** — a canonical JSON representation of a directory's contents, used to compute directory hashes.
 
-### 1.3 Architecture Layers
-
-This spec covers the **canonical layer** — the files, hashes, commitments, and reveals that are cryptographically verified. Two other layers exist but are out of scope:
-
-- **Index layer** (peerbench.ai): Ingests committed/revealed files into Postgres with full-text search, parsed/structured views for browsing and comparison. Derived from the canonical layer; can always be regenerated.
-- **Raw archive**: The original files, always accessible via link from the index layer. When a reviewer sees a nicely parsed SWE-bench log in the web UI, they can click through to the actual raw file.
-
-The index layer never participates in hashing or verification.
-
 ## 2. Hash Algorithm
 
 - **Algorithm:** SHA-256 (always, no alternatives)
@@ -53,18 +42,6 @@ The index layer never participates in hashing or verification.
 - **String encoding:** lowercase hex (64 characters) for display, storage, and JSON serialization
 
 Example: `a1b2c3d4e5f6...` (64 hex chars)
-
-### 2.1 Why Not CID?
-
-CID wraps the hash with multibase + multicodec + multihash metadata. In a closed system with a single hash algorithm and encoding, these bytes are constant overhead that encodes a choice we already made. If future interop with IPFS/IPLD is needed, a CID envelope can be added as a compatibility layer without changing the underlying hash.
-
-### 2.2 Why Not Git Hashing?
-
-Git blob hashes include a `blob <size>\0` header, so `SHA-256(file_bytes)` ≠ `git hash-object file`. Git tree hashes encode Unix file modes (100644/40000/120000), so the same file with different executable bits produces different tree hashes. Git is currently transitioning from SHA-1 to SHA-256, with limited SHA-256 repo support on major hosts. PeerBench uses raw SHA-256 of file bytes so that `sha256sum myfile.json` matches the hash in the manifest — no git-specific tooling required.
-
-### 2.3 String Encoding
-
-Hex is universally supported, unambiguous, and easy to debug. The cost is length (64 chars vs ~44 for base64), but these hashes are machine-consumed identifiers, not URLs or DNS labels where brevity matters.
 
 ## 3. File Hashing
 
@@ -153,57 +130,7 @@ Subdirectories are hashed depth-first. Implementations SHOULD warn on depths exc
 
 ## 5. Producing Item Hashes for Commit-Reveal
 
-When preparing a benchmark dataset for the commit-reveal service, each leaf file becomes one "item" with a SHA-256 hash. The hashes from this spec become the `items` array in a commitment object (Section 7).
-
-### 5.1 Data Structure Requirement
-
-Benchmark datasets intended for partial reveal MUST be structured as one file per logical unit (test case, question, code sample, etc.):
-
-```
-my-benchmark/
-  case_001.json
-  case_002.json
-  ...
-  case_500.json
-```
-
-Or with subdirectories for organizational clarity:
-
-```
-my-benchmark/
-  easy/
-    case_001.json
-    case_002.json
-  hard/
-    case_101.json
-    case_102.json
-```
-
-Per-file hashing is trivial — each file has its own SHA-256. Reveal by publishing selected files. Verification is `sha256sum` on each file, checked against the manifest. No serialization ambiguity.
-
-Monolithic formats (Parquet, JSONL) are acceptable for fully-public data or result submissions where partial reveal is not needed, but they cannot support per-item reveal. A single Parquet file with a SHA-256 hash and a signed commitment is valid for full-dataset publication.
-
-### 5.2 Item Hash Ordering
-
-For a flat benchmark directory:
-```
-my-benchmark/
-  case_001.json   →  SHA-256 → hash_001
-  case_002.json   →  SHA-256 → hash_002
-  ...
-  case_500.json   →  SHA-256 → hash_500
-```
-
-The commitment's `items` array is `[hash_001, hash_002, ..., hash_500]`, sorted in the same lexicographic order as the filenames.
-
-For nested directories, items are the leaf files with paths flattened using `/` as separator, sorted lexicographically:
-```
-easy/case_001.json  →  hash
-easy/case_002.json  →  hash
-hard/case_101.json  →  hash
-```
-
-The directory hashing (Section 4) can additionally be used to produce a single root hash for the entire dataset, which higher-level systems may use for integrity checking of the complete tree.
+When preparing data for the commit-reveal service, each leaf file becomes one "item" with a SHA-256 hash. The hashes from this spec become the `items` array in a commitment object (Section 7).
 
 ## 6. Mode of Operation
 
@@ -219,7 +146,6 @@ Use case: a benchmark author has 500 test cases ready and commits them all at on
 {
   "spec_version": "0.2.0",
   "commitment_hash": "e4d7f1b2...",
-  "stream_id": "s_benchmark-2026-q1",
   "items": [
     "a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2"
   ],
@@ -240,7 +166,6 @@ Fields:
 
 - **`spec_version`** (string): version of this specification.
 - **`commitment_hash`** (string): `SHA-256(signing_payload)`, lowercase hex (64 chars). Computed by the client before submission. Deterministic: the same commitment always produces the same hash, on every server, on every machine. This is the canonical identifier for the commitment across all servers. Not part of the signed payload (it is derived from it).
-- **`stream_id`** (string, optional): an opaque identifier for grouping related commitments (e.g., `s_benchmark-2026-q1`). Not part of the signed payload. Useful for organizing commitments into logical series.
 - **`items`** (array of strings): SHA-256 hashes (lowercase hex, 64 chars). At least 1 item. No duplicates. For single-item commits, this is a one-element array.
 - **`item_count`** (integer): length of `items`.
 - **`reveal_probability`** (number): the probability that any given item is selected for reveal. Range: (0.0, 1.0]. For example, 0.10 means ~10% of items will be selected. See Section 8 for how this is applied.
@@ -254,7 +179,7 @@ Fields:
 
 The signature covers the **signing payload** — canonical JSON of the commitment with these fields only: `spec_version`, `items`, `item_count`, `reveal_probability`, `beacon`, `committed_at`, `signing_key`.
 
-Fields excluded from signing: `commitment_hash` (derived from the payload), `stream_id`, `metadata`, `signature`.
+Fields excluded from signing: `commitment_hash` (derived from the payload), `metadata`, `signature`.
 
 ```
 signing_payload = canonical_json({
@@ -282,7 +207,7 @@ Canonical JSON rules:
 
 ### 7.3 Commitment Immutability
 
-Once submitted, a commitment is immutable. All signed fields are frozen. The `metadata` field can be updated (since it is not signed). Items cannot be added to or removed from an existing commitment — create a new commitment instead.
+Once submitted, a commitment is immutable. Items cannot be added to or removed from an existing commitment — create a new commitment instead.
 
 ## 8. Selection Algorithm
 
@@ -296,15 +221,7 @@ The service waits for the **first beacon output whose timestamp is strictly afte
 beacon_output = first beacon where beacon.timestamp > commitment.registered_at
 ```
 
-### 8.2 Why HMAC-SHA256 instead of a standard library?
-
-Built-in PRNGs (`Math.random()` in JS, `random.shuffle()` in Python) use different algorithms internally (xorshift128+ vs. Mersenne Twister) and cannot produce identical outputs across languages from the same seed.
-
-The closest standard is **HMAC_DRBG** from NIST SP 800-90A — a standardized CSPRNG built on HMAC. Our construction is a simplified variant of its generate phase: `HMAC-SHA256(seed, counter)` is the core operation, but we skip the instantiation ceremony (deriving initial K/V state), reseeding, and prediction resistance tracking that HMAC_DRBG requires for long-lived generators. We don't need any of that — we seed once with a beacon output and draw a small number of values.
-
-The result is 5 lines of code per language, uses only HMAC-SHA256 (which every crypto library provides), and is fully specified with no hidden implementation details. The Python and JavaScript reference implementations produce bit-identical outputs for all test vectors.
-
-### 8.3 Per-Item Selection (Single Item or Small Batches)
+### 8.2 Per-Item Selection (Single Item or Small Batches)
 
 For a commitment with `reveal_probability` p and a single item:
 
@@ -332,7 +249,7 @@ for each item_hash in commitment.items:
     item is selected
 ```
 
-### 8.4 Batch Selection (Exact Count)
+### 8.3 Batch Selection (Exact Count)
 
 When a user commits a large batch and wants **exactly** N items selected (rather than a probabilistic number), the service uses a seeded Fisher-Yates shuffle:
 
@@ -366,17 +283,17 @@ prng_next(seed, index):
   return le_uint64(mac[0..7])
 ```
 
-### 8.5 Which Mode to Use
+### 8.4 Which Mode to Use
 
 | Scenario | Selection mode | Rationale |
 |----------|---------------|-----------|
-| Single item commit | Per-item (8.3) | Bernoulli trial: selected or not |
-| Batch of 2–20 items | Per-item (8.3) | Probabilistic count is fine for small sets |
-| Batch of 21+ items | Batch (8.4) | Exact count via shuffle is more predictable |
+| Single item commit | Per-item (8.2) | Bernoulli trial: selected or not |
+| Batch of 2–20 items | Per-item (8.2) | Probabilistic count is fine for small sets |
+| Batch of 21+ items | Batch (8.3) | Exact count via shuffle is more predictable |
 
-The boundary is at 20 items: commitments with 20 or fewer items use per-item selection; commitments with more than 20 items use batch selection (`item_count > 20`). The `selection_mode` is recorded in the selection record (Section 8.6) so verifiers know which algorithm was used. The threshold of 20 is a default that can be configured per-deployment.
+The boundary is at 20 items: commitments with 20 or fewer items use per-item selection; commitments with more than 20 items use batch selection (`item_count > 20`). The `selection_mode` is recorded in the selection record (Section 8.5) so verifiers know which algorithm was used. The threshold of 20 is a default that can be configured per-deployment.
 
-### 8.6 Selection Record
+### 8.5 Selection Record
 
 After the beacon fires and selection runs, the service produces:
 
@@ -461,41 +378,9 @@ randomness = SHA-256(beacon_signature)
 
 **Latency:** 3 seconds. A single-item commit waits at most 3 seconds for selection.
 
-### 9.3 NIST Randomness Beacon
-
-```json
-{
-  "type": "nist",
-  "version": "2.0"
-}
-```
-
-**NIST Interoperable Randomness Beacon (IRB), Version 2.0**
-
-| Parameter | Value |
-|-----------|-------|
-| Period | 60 seconds |
-| Output | 512-bit random value |
-| Signature | RSA / PKI-signed pulse records |
-| API | `https://beacon.nist.gov/beacon/2.0/pulse/last` |
-
-For this service, use first 32 bytes of the `outputValue` as the randomness seed.
-
-Verification: verify the pulse's RSA signature against the NIST beacon's published certificate chain.
-
-**Latency:** 60 seconds. Suitable for batch commits where a minute wait is acceptable.
-
-**Status:** Specified but not yet implemented. Current implementations support drand only.
-
-### 9.4 Adding New Beacon Types
-
-New beacon types can be added by implementing the beacon interface (Section 9.1). The `beacon.type` string must be registered in the service configuration. Commitments are permanently bound to their beacon type — the same commitment cannot be evaluated against a different beacon.
-
-### 9.5 Beacon Liveness
+### 9.3 Beacon Liveness
 
 If a beacon experiences downtime, selection is deferred until it resumes. The protocol is correct regardless of beacon latency — the invariant is only that the beacon output postdates the commitment.
-
-If a beacon is permanently retired, existing commitments bound to it remain valid as long as historical outputs are archived. The service SHOULD maintain a cache of beacon outputs for all commitments it has processed.
 
 ## 10. Reveal
 
@@ -574,7 +459,7 @@ Given: commitment, selection record, reveal object, and actual data for each rev
 
 6. **Check completeness.** Note which items from the selection record are present in the reveal's `selected_items` vs. missing. Missing items weaken trust.
 
-Steps 1-5 can be performed entirely offline. Commit-reveal servers do **not** perform full verification — they store reveal metadata and optionally verify data integrity via `file_urls` (see Section 12.3). Full verification is done by the end user via CLI tooling, or optionally by a separate verification service (see Section 13).
+Steps 1-5 can be performed entirely offline. Commit-reveal servers do **not** perform full verification — they store reveal metadata and optionally verify data integrity via `file_urls` (see Section 12.3). Full verification is done by the end user via CLI tooling.
 
 ### 10.6 Where Reveal Data Lives
 
@@ -606,7 +491,7 @@ The client maintains a list of known servers. The list comes from two sources:
 
 1. **Hardcoded fallback.** The client ships with a default list of well-known servers, similar to DNS root servers or drand relay endpoints. This list is updated with client releases.
 
-2. **Fetchable list.** A JSON document at a well-known URL (e.g. `https://commit-reveal.peerbench.ai/servers.json`) provides the current server list. The client fetches this on startup and caches it. The document is signed so it can be verified even if served through a CDN.
+2. **Fetchable list.** A JSON document at a well-known URL (e.g. `https://cr.example.com/servers.json`) provides the current server list. The client fetches this on startup and caches it. The document is signed so it can be verified even if served through a CDN.
 
 ```json
 {
@@ -618,21 +503,21 @@ The client maintains a list of known servers. The list comes from two sources:
       "operator": "ETH Zürich",
       "server_key": "did:key:z6Mkq...",
       "retention": "30d",
-      "contact": "peerbench@ethz.ch"
+      "contact": "ops@ethz.ch"
     },
     {
       "url": "https://cr.cloudflare.com",
       "operator": "Cloudflare",
       "server_key": "did:key:z6Mkr...",
       "retention": "30d",
-      "contact": "peerbench@cloudflare.com"
+      "contact": "ops@cloudflare.com"
     },
     {
-      "url": "https://commit-reveal.peerbench.ai",
-      "operator": "PeerBench",
+      "url": "https://cr.example.com",
+      "operator": "Example Operator",
       "server_key": "did:key:z6Mks...",
       "retention": "forever",
-      "contact": "ops@peerbench.ai"
+      "contact": "ops@example.com"
     }
   ],
   "signature": "..."
@@ -922,7 +807,7 @@ Note: the `verify-publication` endpoint (Section 12.8) provides limited server-s
 
 ### 13.2 Who Runs It
 
-Anyone can run a verification service. PeerBench will operate one at `https://verify.peerbench.ai` as a convenience, but this is not guaranteed to remain available and should not be treated as authoritative. Users who care about verification should run it themselves or use the CLI tooling (Section 13.4).
+Anyone can run a verification service. An operator may choose to host one at a well-known URL (e.g. `https://verify.example.com`) as a convenience, but this is not guaranteed to remain available and should not be treated as authoritative. Users who care about verification should run it themselves or use the CLI tooling (Section 13.4).
 
 ### 13.3 Verification API
 
@@ -1197,11 +1082,11 @@ Key order per object type:
 
 ```bash
 # Hash a directory or file
-peerbench hash .
-peerbench hash dataset.parquet
+commit-reveal hash .
+commit-reveal hash dataset.parquet
 
 # Hash and list all items (for commit-reveal)
-peerbench hash --items .
+commit-reveal hash --items .
 # Output: sorted list of (path, hash) pairs
 ```
 

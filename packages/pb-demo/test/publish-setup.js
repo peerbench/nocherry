@@ -14,7 +14,7 @@ import { createEmbeddedPublisher } from '../src/embedded-publisher.js';
 import * as wasm from 'pb-wasm';
 
 const PUBLISH_URL = process.env.PUBLISH_URL;
-const COMMIT_SERVER_URL = process.env.COMMIT_SERVER_URL || 'https://commit-reveal-cloudflare-dev.peerbench.ai';
+const COMMIT_SERVER_URL = process.env.COMMIT_SERVER_URL || 'https://commit-reveal-cloudflare-dev.nocherry.ai';
 
 export const isRemote = !!PUBLISH_URL;
 // Local embedded publisher routes are at the root (no /publish prefix)

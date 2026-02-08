@@ -2,7 +2,7 @@
 name = "pb-core"
 version = "0.1.0"
 edition = "2021"
-description = "PeerBench commit-reveal core: hashing, signing, selection, verification"
+description = "commit-reveal core: hashing, signing, selection, verification"
 
 [dependencies]
 sha2 = "0.10"

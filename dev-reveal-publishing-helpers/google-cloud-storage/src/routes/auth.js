@@ -23,7 +23,7 @@ app.get('/signup', async (c) => {
     <head>
       <meta charset="utf-8">
       <meta name="viewport" content="width=device-width, initial-scale=1">
-      <title>PeerBench Publisher — Sign Up</title>
+      <title>Reveal Publisher — Sign Up</title>
       <script src="https://www.google.com/recaptcha/api.js?render=${config.recaptchaSiteKey}"></script>
       <style>
         body { font-family: system-ui, sans-serif; max-width: 480px; margin: 80px auto; padding: 0 20px; color: #1a1a1a; }
@@ -35,7 +35,7 @@ app.get('/signup', async (c) => {
       </style>
     </head>
     <body>
-      <h1>PeerBench Publisher</h1>
+      <h1>Reveal Publisher</h1>
       <p>Sign in with your Google account to get a publish token.</p>
 
       <form id="authForm" action="/auth/begin" method="GET">
@@ -183,7 +183,7 @@ app.get('/callback', async (c) => {
     <head>
       <meta charset="utf-8">
       <meta name="viewport" content="width=device-width, initial-scale=1">
-      <title>PeerBench Publisher — Token Issued</title>
+      <title>Reveal Publisher — Token Issued</title>
       <style>
         body { font-family: system-ui, sans-serif; max-width: 560px; margin: 80px auto; padding: 0 20px; color: #1a1a1a; }
         h1 { font-size: 1.5rem; }
@@ -202,13 +202,13 @@ app.get('/callback', async (c) => {
       <button class="copy-btn" onclick="navigator.clipboard.writeText(document.getElementById('tokenValue').textContent)">Copy to clipboard</button>
 
       <h3>Save your token</h3>
-      <p>Add it to <code>~/.peerbench/publisher-tokens.json</code>:</p>
+      <p>Add it to <code>~/.nocherry/publisher-tokens.json</code>:</p>
       <pre>{
   "${origin}": "${bearerToken}"
 }</pre>
 
       <p>Or set it as an environment variable:</p>
-      <pre>export PEERBENCH_PUBLISHER_TOKEN=${bearerToken}</pre>
+      <pre>export PUBLISHER_TOKEN=${bearerToken}</pre>
 
       <p style="margin-top:24px; font-size:0.85rem; color:#666;">
         Keep this token secret. You can revoke it by signing in again.

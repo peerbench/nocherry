@@ -1,6 +1,6 @@
-//! PeerBench commit-reveal core library.
+//! commit-reveal core library.
 //!
-//! All cryptographic primitives for the PeerBench Hashing Specification
+//! All cryptographic primitives for the Hashing Specification
 //! and the Commit-Reveal Service Specification. Zero network dependencies —
 //! pure computation only.
 

@@ -37,7 +37,7 @@ if (publishAnswer.toLowerCase() === 'y') {
 Change to always publish (no prompt). The step description should say:
 ```
 Step 4 of 5 — Publish
-Publish your data and protocol evidence to GitHub and a PeerBench publish server.
+Publish your data and protocol evidence to GitHub and a publish server.
 ```
 
 #### Change 3: Publish to GitHub AND try one publish server
@@ -58,7 +58,7 @@ Pseudocode for the new publish step:
 ```js
 // ── Step 4: Publish ──
 console.log('  Step 4 of 5 — Publish');
-console.log('  Publish your data and protocol evidence to GitHub and a PeerBench publish server.');
+console.log('  Publish your data and protocol evidence to GitHub and a publish server.');
 await waitForEnter();
 
 // 4a. GitHub publish (required — error if fails)
@@ -112,7 +112,7 @@ console.log(`  ✓ Revealing ${selectedItems.length} selected item${selectedItem
 
 #### Change 5: Update step descriptions
 
-- Step 4 text: `"Publish your data and protocol evidence to GitHub and a PeerBench publish server."`
+- Step 4 text: `"Publish your data and protocol evidence to GitHub and a publish server."`
 - Step 5 text: `"Sign and submit reveal for the randomly selected items."`
 - Step 5 outputs: `"→ reveal.json, reveal-receipts.json"`
 

@@ -9,7 +9,7 @@ export function getConfig() {
     projectId: process.env.GOOGLE_CLOUD_PROJECT || '',
     firestoreDatabase: process.env.FIRESTORE_DATABASE || '',
     retention: process.env.RETENTION || '30d',
-    operator: process.env.OPERATOR || 'PeerBench',
+    operator: process.env.OPERATOR || 'Commit-Reveal',
     beaconTypes: ['drand'],
     specVersion: '0.2.0',
     version: '0.2.0',

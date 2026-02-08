@@ -1,5 +1,5 @@
 {
-  "name": "peerbench-commit-reveal",
+  "name": "nocherry-commit-reveal",
   "private": true,
   "workspaces": [
     "packages/*"

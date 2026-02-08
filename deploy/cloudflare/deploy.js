@@ -91,8 +91,8 @@ async function interactiveConfig() {
   ]);
 
   const operator = await menu('Operator name:', [
-    { label: 'PeerBench', value: 'PeerBench', default: true },
-    { label: 'Custom (edit wrangler.toml after deploy)', value: 'PeerBench' },
+    { label: 'Commit-Reveal', value: 'Commit-Reveal', default: true },
+    { label: 'Custom (edit wrangler.toml after deploy)', value: 'Commit-Reveal' },
   ]);
 
   const retention = await menu('Data retention:', [
@@ -173,7 +173,7 @@ function patchWranglerToml(config, db) {
   toml = toml.replace(/^name = "PLACEHOLDER"/m, `name = "${config.workerName}"`);
   toml = toml.replace(/^database_name = "PLACEHOLDER"/m, `database_name = "${db.dbName}"`);
   toml = toml.replace(/^database_id = "PLACEHOLDER"/m, `database_id = "${db.dbId}"`);
-  toml = toml.replace(/^OPERATOR = "PeerBench"/m, `OPERATOR = "${config.operator}"`);
+  toml = toml.replace(/^OPERATOR = "Commit-Reveal"/m, `OPERATOR = "${config.operator}"`);
   toml = toml.replace(/^RETENTION = "30d"/m, `RETENTION = "${config.retention}"`);
 
   writeFileSync(tomlPath, toml);
