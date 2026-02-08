@@ -1,6 +1,6 @@
 # PeerBench Commit-Reveal Specification
 
-**Version:** 0.3.0-draft
+**Version:** 0.4.0-draft
 **Status:** Draft for review
 **Supersedes:** commit-reveal-spec.md v0.2.0-draft, peerbench-hashing-spec.md v0.3.0-draft
 
@@ -107,7 +107,7 @@ Each entry is an object with exactly these fields, in this order:
 
 Fields:
 
-- **`name`** (string): the entry name. For top-level entries, this is the basename (no path separators). For entries within subdirectories, this is the relative path using `/` as separator (e.g., `data/log.txt`). Must be valid UTF-8.
+- **`name`** (string): the basename of the file or directory (no path separators). Must be valid UTF-8. Subdirectories are represented as separate entries with `type: "dir"` whose `hash` is computed recursively (Section 4.6).
 - **`type`** (string): either `"file"` or `"dir"`. No other values.
 - **`hash`** (string): the lowercase hex SHA-256 hash. For files, the file hash (Section 3). For directories, the directory hash (this section, applied recursively).
 
@@ -722,7 +722,7 @@ Response (201 Created):
     "selection_mode": "per_item",
     "reveal_probability": 0.10,
     "selected_items": ["a1b2c3d4..."],
-    "selected_count": 0,
+    "selected_count": 1,
     "total_count": 1,
     "computed_at": "2026-02-06T14:30:03Z"
   },
@@ -830,6 +830,8 @@ Response (201):
   "server_signature": "..."
 }
 ```
+
+The `reveal_id` is a server-assigned random UUID (hex, no hyphens) used for deduplication and lookup — it has no cryptographic significance.
 
 The server stores the reveal metadata (which items are claimed as revealed, where the data lives) and optionally verifies data integrity if `file_urls` are provided:
 
@@ -1170,6 +1172,7 @@ selected = [
 | Service operator tampers with commitments | Commitments are signed by the committer; tampering breaks the signature |
 | Service operator backdates a commitment | `registered_at` is server-side; additionally, beacon round must postdate it |
 | Committer reveals only easy/favorable items voluntarily | Voluntary vs. selected reveals are distinguished in the reveal object; reviewers can weight accordingly |
+| SSRF via file_urls verification | Servers SHOULD restrict `file_urls` fetches to HTTPS with public IPs, rejecting private/internal network ranges |
 
 ## 17. Canonical JSON
 
