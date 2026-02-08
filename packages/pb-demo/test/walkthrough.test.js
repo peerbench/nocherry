@@ -46,7 +46,7 @@ describe('Demo walkthrough', () => {
     assert.equal(res.status, 200);
     const html = await res.text();
     assert.ok(html.includes('Commit-Reveal Protocol'));
-    assert.ok(html.includes('Start Demo'));
+    assert.ok(html.includes('Local Demo'));
   });
 
   it('Step 1: generate keypair', async () => {
