@@ -8,21 +8,16 @@
 import { Kysely, PostgresDialect } from 'kysely';
 import pg from 'pg';
 import { KyselyStorage } from './storage.js';
+import type { Database } from './types.js';
 
-/**
- * Create a KyselyStorage backed by Postgres.
- * @param {string} connectionString - Postgres connection URL.
- * @param {object} [poolOptions] - Additional pg.Pool options.
- * @returns {KyselyStorage}
- */
-export function createPostgresStorage(connectionString, poolOptions = {}) {
+export function createPostgresStorage(connectionString: string, poolOptions: pg.PoolConfig = {}): KyselyStorage {
   const pool = new pg.Pool({
     connectionString,
     max: 5,
     ...poolOptions,
   });
 
-  const db = new Kysely({
+  const db = new Kysely<Database>({
     dialect: new PostgresDialect({ pool }),
   });
 

@@ -11,11 +11,11 @@ import assert from 'node:assert/strict';
 import * as wasm from 'pb-wasm';
 import { getApp, cleanup, isRemote } from './_setup.js';
 
-let app;
+let app: { request(url: string, init?: RequestInit): Promise<Response> };
 
 const DRAND_CHAIN_HASH = '52db9ba70e0cc0f6eaf7803dd07447a1f5477735fd3f661792ba94600c84e971';
 
-function makeCommitment(kp, items, opts = {}) {
+function makeCommitment(kp: any, items: string[], opts: any = {}) {
   const params = {
     items,
     reveal_probability: opts.reveal_probability || 0.10,
@@ -25,8 +25,8 @@ function makeCommitment(kp, items, opts = {}) {
   return wasm.createCommitment(JSON.stringify(params), kp.private_key_hex);
 }
 
-async function req(method, path, body) {
-  const init = {
+async function req(method: string, path: string, body?: any) {
+  const init: RequestInit = {
     method,
     headers: { 'Content-Type': 'application/json' },
   };
@@ -186,7 +186,7 @@ describe('Server API', () => {
       spec_version: '0.2.0',
       commitment_hash: commitment.commitment_hash,
       selected_items: selectedItems,
-      voluntary_items: commitment.items.filter(h => !selectedItems.includes(h)),
+      voluntary_items: commitment.items.filter((h: string) => !selectedItems.includes(h)),
       revealed_at: new Date().toISOString(),
       signing_key: kp.did_key,
     };

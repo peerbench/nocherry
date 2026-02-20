@@ -3,6 +3,7 @@
  * Currently supports drand quicknet.
  */
 
+import type { KyselyStorage } from 'pb-storage';
 import * as wasm from 'pb-wasm';
 
 const DRAND_QUICKNET_CHAIN = '52db9ba70e0cc0f6eaf7803dd07447a1f5477735fd3f661792ba94600c84e971';
@@ -14,8 +15,8 @@ const DRAND_RELAYS = [
 /**
  * Fetch a drand round from a relay. Tries each relay in order.
  */
-async function fetchDrandRound(round) {
-  let lastErr;
+async function fetchDrandRound(round: number) {
+  let lastErr: unknown;
   for (const baseUrl of DRAND_RELAYS) {
     try {
       const url = `${baseUrl}/${round}`;
@@ -24,13 +25,13 @@ async function fetchDrandRound(round) {
         lastErr = new Error(`drand relay ${resp.status}: ${resp.statusText}`);
         continue;
       }
-      const data = await resp.json();
+      const data: any = await resp.json();
       return {
         type: 'drand',
         chain_hash: DRAND_QUICKNET_CHAIN,
-        round: data.round,
-        randomness: data.randomness,
-        signature: data.signature,
+        round: data.round as number,
+        randomness: data.randomness as string,
+        signature: data.signature as string,
       };
     } catch (e) {
       lastErr = e;
@@ -44,7 +45,7 @@ async function fetchDrandRound(round) {
  * Computes the needed round, checks cache, fetches if needed.
  * Will retry for up to `maxWaitMs` if the round hasn't been emitted yet.
  */
-export async function getBeaconOutput(storage, beacon, registeredAt, maxWaitMs = 15000) {
+export async function getBeaconOutput(storage: KyselyStorage, beacon: { type: string }, registeredAt: string, maxWaitMs: number = 15000) {
   if (beacon.type !== 'drand') {
     throw new Error(`Unsupported beacon type: ${beacon.type}`);
   }
@@ -65,7 +66,7 @@ export async function getBeaconOutput(storage, beacon, registeredAt, maxWaitMs =
       const output = await fetchDrandRound(neededRound);
       await storage.cacheBeacon('drand', neededRound, output);
       return output;
-    } catch (e) {
+    } catch (e: any) {
       if (Date.now() + delay > deadline) {
         throw new Error(`Beacon round ${neededRound} not available: ${e.message}`);
       }
@@ -79,7 +80,7 @@ export async function getBeaconOutput(storage, beacon, registeredAt, maxWaitMs =
  * Get the most recent beacon round at a given timestamp (the "arrival" beacon).
  * This is the round whose randomness was already public when the event occurred.
  */
-export async function getArrivalBeacon(storage, beacon, timestamp) {
+export async function getArrivalBeacon(storage: KyselyStorage, beacon: { type: string }, timestamp: string) {
   if (beacon.type !== 'drand') {
     throw new Error(`Unsupported beacon type: ${beacon.type}`);
   }
@@ -107,15 +108,15 @@ export async function getArrivalBeacon(storage, beacon, timestamp) {
 /**
  * Compute selection for a commitment given a beacon output.
  */
-export function computeSelection(commitment, beaconOutput) {
-  const items = commitment.items;
-  const randomness = beaconOutput.randomness;
-  const commitHash = commitment.commitment_hash;
-  const p = commitment.reveal_probability;
+export function computeSelection(commitment: any, beaconOutput: any) {
+  const items: string[] = commitment.items;
+  const randomness: string = beaconOutput.randomness;
+  const commitHash: string = commitment.commitment_hash;
+  const p: number = commitment.reveal_probability;
   const itemCount = items.length;
 
-  let selectedItems;
-  let selectionMode;
+  let selectedItems: string[];
+  let selectionMode: string;
 
   if (itemCount > 20) {
     // Batch selection via Fisher-Yates
@@ -124,7 +125,7 @@ export function computeSelection(commitment, beaconOutput) {
     selectionMode = 'batch';
   } else {
     // Per-item selection
-    selectedItems = items.filter(itemHash =>
+    selectedItems = items.filter((itemHash: string) =>
       wasm.selectPerItem(randomness, commitHash, itemHash, p)
     );
     selectionMode = 'per_item';

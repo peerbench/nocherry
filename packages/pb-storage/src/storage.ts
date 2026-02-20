@@ -5,9 +5,13 @@
  * All methods are async (returns Promises).
  */
 
+import type { Kysely } from 'kysely';
+import type { Database } from './types.js';
+
 export class KyselyStorage {
-  /** @param {import('kysely').Kysely<import('./types.js').Database>} db */
-  constructor(db) {
+  db: Kysely<Database>;
+
+  constructor(db: Kysely<Database>) {
     this.db = db;
   }
 
@@ -22,7 +26,7 @@ export class KyselyStorage {
     return row ? JSON.parse(row.value) : null;
   }
 
-  async setServerIdentity(keypair) {
+  async setServerIdentity(keypair: { did_key: string; private_key_hex: string; public_key_hex: string }) {
     await this.db
       .insertInto('server_identity')
       .values({ key: 'keypair', value: JSON.stringify(keypair) })
@@ -32,7 +36,7 @@ export class KyselyStorage {
 
   // ── Commitments ──
 
-  async putCommitment(id, commitment, registeredAt) {
+  async putCommitment(id: string, commitment: { signing_key: string; [key: string]: unknown }, registeredAt: string) {
     await this.db
       .insertInto('commitments')
       .values({
@@ -44,7 +48,7 @@ export class KyselyStorage {
       .execute();
   }
 
-  async getCommitment(id) {
+  async getCommitment(id: string) {
     const row = await this.db
       .selectFrom('commitments')
       .select(['body', 'registered_at'])
@@ -59,7 +63,7 @@ export class KyselyStorage {
 
   // ── Selections ──
 
-  async putSelection(commitmentHash, selection, beaconRound) {
+  async putSelection(commitmentHash: string, selection: unknown, beaconRound: number) {
     await this.db
       .insertInto('selections')
       .values({
@@ -78,7 +82,7 @@ export class KyselyStorage {
       .execute();
   }
 
-  async getSelection(commitmentHash) {
+  async getSelection(commitmentHash: string) {
     const row = await this.db
       .selectFrom('selections')
       .select('body')
@@ -89,7 +93,7 @@ export class KyselyStorage {
 
   // ── Reveals ──
 
-  async putReveal(id, commitmentHash, reveal, registeredAt) {
+  async putReveal(id: string, commitmentHash: string, reveal: unknown, registeredAt: string) {
     await this.db
       .insertInto('reveals')
       .values({
@@ -101,7 +105,7 @@ export class KyselyStorage {
       .execute();
   }
 
-  async getReveals(commitmentHash) {
+  async getReveals(commitmentHash: string) {
     const rows = await this.db
       .selectFrom('reveals')
       .select(['body', 'registered_at'])
@@ -112,7 +116,7 @@ export class KyselyStorage {
 
   // ── Anti-spam / Activity ──
 
-  async countCommitmentsByKey(signingKey, since) {
+  async countCommitmentsByKey(signingKey: string, since: string) {
     const result = await this.db
       .selectFrom('commitments')
       .select((eb) => eb.fn.countAll().as('count'))
@@ -122,10 +126,10 @@ export class KyselyStorage {
     return Number(result?.count ?? 0);
   }
 
-  async getSignerActivity(signingKey) {
+  async getSignerActivity(signingKey: string) {
     const now = new Date();
-    const oneHourAgo = new Date(now - 3600 * 1000).toISOString();
-    const thirtyDaysAgo = new Date(now - 30 * 24 * 3600 * 1000).toISOString();
+    const oneHourAgo = new Date(now.getTime() - 3600 * 1000).toISOString();
+    const thirtyDaysAgo = new Date(now.getTime() - 30 * 24 * 3600 * 1000).toISOString();
 
     const [pastHour, pastMonth] = await Promise.all([
       this.countCommitmentsByKey(signingKey, oneHourAgo),
@@ -140,7 +144,7 @@ export class KyselyStorage {
 
   // ── Beacon cache ──
 
-  async getCachedBeacon(beaconType, round) {
+  async getCachedBeacon(beaconType: string, round: number) {
     const row = await this.db
       .selectFrom('beacon_cache')
       .select('body')
@@ -150,7 +154,7 @@ export class KyselyStorage {
     return row ? JSON.parse(row.body) : null;
   }
 
-  async cacheBeacon(beaconType, round, output) {
+  async cacheBeacon(beaconType: string, round: number, output: unknown) {
     await this.db
       .insertInto('beacon_cache')
       .values({
@@ -170,7 +174,7 @@ export class KyselyStorage {
 
   // ── Retention ──
 
-  async deleteOlderThan(cutoff) {
+  async deleteOlderThan(cutoff: Date) {
     const cutoffStr = cutoff.toISOString();
     const result = await this.db
       .deleteFrom('commitments')

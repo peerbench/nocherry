@@ -27,7 +27,7 @@ export const drandNextRoundAfter = wasm.drandNextRoundAfter;
 /**
  * Hash a string (UTF-8 encoded).
  */
-export function hashString(s) {
+export function hashString(s: string): string {
   return wasm.hashBytes(new TextEncoder().encode(s));
 }
 

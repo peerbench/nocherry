@@ -15,3 +15,5 @@ deploy/cloudflare/src/wasm/pb_wasm_bg.wasm
 deployments.log
 deploy/supabase/supabase/.temp/
 secrets/
+dist/
+*.tsbuildinfo

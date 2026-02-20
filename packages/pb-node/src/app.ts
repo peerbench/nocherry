@@ -3,6 +3,7 @@
  */
 
 import { Hono } from 'hono';
+import type { KyselyStorage } from 'pb-storage';
 import { createSqliteStorage } from 'pb-storage/sqlite';
 import { initServerKey } from './signing.js';
 import { config } from './config.js';
@@ -10,12 +11,15 @@ import { config } from './config.js';
 import serverInfoRoute from './routes/server-info.js';
 import commitmentsRoute from './routes/commitments.js';
 import revealsRoute from './routes/reveals.js';
+
+type Env = { Variables: { storage: KyselyStorage } };
+
 /**
  * Create a Hono app with the given storage backend.
  * Storage must already have server key initialized.
  */
-export function createApp(storage) {
-  const app = new Hono();
+export function createApp(storage: KyselyStorage) {
+  const app = new Hono<Env>();
 
   // Inject storage into every request context
   app.use('*', async (c, next) => {

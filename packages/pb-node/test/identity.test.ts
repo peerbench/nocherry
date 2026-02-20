@@ -7,15 +7,16 @@
 import { describe, it, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
+import type { Server } from 'node:http';
 import * as wasm from 'pb-wasm';
 import { getApp, cleanup } from './_setup.js';
 
-let app;
+let app: { request(url: string, init?: RequestInit): Promise<Response> };
 
 const DRAND_CHAIN_HASH = '52db9ba70e0cc0f6eaf7803dd07447a1f5477735fd3f661792ba94600c84e971';
 
-function makeCommitment(kp, items, opts = {}) {
-  const params = {
+function makeCommitment(kp: any, items: string[], opts: any = {}) {
+  const params: any = {
     items,
     reveal_probability: opts.reveal_probability || 0.10,
     beacon: opts.beacon || { type: 'drand', chain_hash: DRAND_CHAIN_HASH },
@@ -25,8 +26,8 @@ function makeCommitment(kp, items, opts = {}) {
   return wasm.createCommitment(JSON.stringify(params), kp.private_key_hex);
 }
 
-async function req(method, path, body) {
-  const init = {
+async function req(method: string, path: string, body?: any) {
+  const init: RequestInit = {
     method,
     headers: { 'Content-Type': 'application/json' },
   };
@@ -39,38 +40,38 @@ async function req(method, path, body) {
  * Routes are registered dynamically via addDocument().
  */
 function createMockDidServer() {
-  const documents = new Map();
-  const server = http.createServer((req, res) => {
-    const doc = documents.get(req.url);
+  const documents = new Map<string, any>();
+  const server = http.createServer((request, response) => {
+    const doc = documents.get(request.url!);
     if (doc) {
-      res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify(doc));
+      response.writeHead(200, { 'Content-Type': 'application/json' });
+      response.end(JSON.stringify(doc));
     } else {
-      res.writeHead(404);
-      res.end('Not Found');
+      response.writeHead(404);
+      response.end('Not Found');
     }
   });
 
   return {
     server,
     documents,
-    addDocument(path, doc) {
+    addDocument(path: string, doc: any) {
       documents.set(path, doc);
     },
-    start() {
+    start(): Promise<{ port: number }> {
       return new Promise((resolve) => {
         server.listen(0, '127.0.0.1', () => {
-          resolve(server.address());
+          resolve(server.address() as { port: number });
         });
       });
     },
-    stop() {
-      return new Promise((resolve) => server.close(resolve));
+    stop(): Promise<void> {
+      return new Promise((resolve) => server.close(() => resolve()));
     },
   };
 }
 
-function makeDIDDocument(did, publicKeyMultibase) {
+function makeDIDDocument(did: string, publicKeyMultibase: string) {
   return {
     '@context': ['https://www.w3.org/ns/did/v1'],
     id: did,
@@ -85,8 +86,8 @@ function makeDIDDocument(did, publicKeyMultibase) {
 }
 
 describe('Identity Verification', () => {
-  let mockServer;
-  let mockAddr;
+  let mockServer: ReturnType<typeof createMockDidServer>;
+  let mockAddr: { port: number };
 
   before(async () => {
     app = await getApp();

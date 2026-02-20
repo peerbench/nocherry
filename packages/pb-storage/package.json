@@ -2,12 +2,30 @@
   "name": "pb-storage",
   "version": "0.1.0",
   "type": "module",
-  "main": "src/index.js",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
   "exports": {
-    ".": "./src/index.js",
-    "./sqlite": "./src/sqlite.js",
-    "./postgres": "./src/postgres.js",
-    "./types": "./src/types.js"
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./sqlite": {
+      "types": "./dist/sqlite.d.ts",
+      "import": "./dist/sqlite.js"
+    },
+    "./postgres": {
+      "types": "./dist/postgres.d.ts",
+      "import": "./dist/postgres.js"
+    },
+    "./types": {
+      "types": "./dist/types.d.ts",
+      "import": "./dist/types.js"
+    }
+  },
+  "files": ["dist"],
+  "scripts": {
+    "build": "tsup",
+    "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "kysely": "^0.27.0"
@@ -17,7 +35,15 @@
     "pg": ">=8.0.0"
   },
   "peerDependenciesMeta": {
-    "better-sqlite3": { "optional": true },
-    "pg": { "optional": true }
+    "better-sqlite3": {
+      "optional": true
+    },
+    "pg": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/pg": "^8.16.0"
   }
 }
