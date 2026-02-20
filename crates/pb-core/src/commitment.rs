@@ -9,7 +9,7 @@ use crate::sign;
 pub const SPEC_VERSION: &str = "0.2.0";
 
 /// Signing payload — canonical JSON of commitment with specific fields in order.
-/// Key order: spec_version, items, item_count, reveal_probability, beacon, committed_at, signing_key
+/// Key order: spec_version, items, item_count, reveal_probability, beacon, committed_at, signing_key, identity
 #[derive(Serialize)]
 struct SigningPayload<'a> {
     spec_version: &'a str,
@@ -19,6 +19,8 @@ struct SigningPayload<'a> {
     beacon: &'a BeaconRef,
     committed_at: &'a str,
     signing_key: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    identity: Option<&'a str>,
 }
 
 /// Full commitment object.
@@ -36,6 +38,8 @@ pub struct Commitment {
     pub metadata: serde_json::Value,
     pub committed_at: String,
     pub signing_key: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub identity: Option<String>,
     pub signature: String,
 }
 
@@ -49,6 +53,7 @@ pub fn signing_payload(c: &Commitment) -> Vec<u8> {
         beacon: &c.beacon,
         committed_at: &c.committed_at,
         signing_key: &c.signing_key,
+        identity: c.identity.as_deref(),
     };
     canonical::to_bytes(&payload).expect("signing payload serialization should not fail")
 }
@@ -66,6 +71,7 @@ pub struct CreateParams {
     pub metadata: Option<serde_json::Value>,
     pub stream_id: Option<String>,
     pub committed_at: String,
+    pub identity: Option<String>,
 }
 
 /// Create a signed commitment.
@@ -101,6 +107,7 @@ pub fn create(params: CreateParams, kp: &sign::KeyPair) -> Result<Commitment, St
         metadata,
         committed_at: params.committed_at,
         signing_key: kp.did_key.clone(),
+        identity: params.identity,
         signature: String::new(),
     };
     c.item_count = c.items.len();
@@ -148,6 +155,7 @@ mod tests {
             metadata: None,
             stream_id: None,
             committed_at: "2026-02-06T14:30:00Z".into(),
+            identity: None,
         }, kp).unwrap()
     }
 
@@ -203,6 +211,7 @@ mod tests {
             metadata: None,
             stream_id: None,
             committed_at: "2026-02-06T14:30:00Z".into(),
+            identity: None,
         }, &kp);
         assert!(result.is_err());
     }
@@ -218,6 +227,7 @@ mod tests {
             metadata: None,
             stream_id: None,
             committed_at: "2026-02-06T14:30:00Z".into(),
+            identity: None,
         }, &kp);
         assert!(result.is_err());
     }
@@ -231,6 +241,7 @@ mod tests {
             beacon: BeaconRef::drand_quicknet(),
             metadata: None, stream_id: None,
             committed_at: "2026-02-06T14:30:00Z".into(),
+            identity: None,
         }, &kp).is_err());
 
         assert!(create(CreateParams {
@@ -239,6 +250,7 @@ mod tests {
             beacon: BeaconRef::drand_quicknet(),
             metadata: None, stream_id: None,
             committed_at: "2026-02-06T14:30:00Z".into(),
+            identity: None,
         }, &kp).is_err());
     }
 
@@ -251,6 +263,7 @@ mod tests {
             beacon: BeaconRef::drand_quicknet(),
             metadata: None, stream_id: None,
             committed_at: "2026-02-06T14:30:00Z".into(),
+            identity: None,
         }, &kp);
         assert!(c.is_ok());
     }
@@ -303,6 +316,7 @@ mod tests {
             metadata: None,
             stream_id: Some("s_test123".into()),
             committed_at: "2026-02-06T14:30:00Z".into(),
+            identity: None,
         }, &kp).unwrap();
         assert_eq!(c.stream_id, Some("s_test123".into()));
         // stream_id should NOT be in signing payload
@@ -318,5 +332,67 @@ mod tests {
         let type_pos = payload.find("\"type\"").unwrap();
         let chain_pos = payload.find("\"chain_hash\"").unwrap();
         assert!(type_pos < chain_pos);
+    }
+
+    #[test]
+    fn without_identity_same_payload() {
+        let kp = test_kp();
+        let c = test_create(&kp);
+        let payload = String::from_utf8(signing_payload(&c)).unwrap();
+        assert!(!payload.contains("identity"), "identity should be omitted when None");
+        // Key order should remain the same as before
+        let keys = ["spec_version", "items", "item_count", "reveal_probability", "beacon", "committed_at", "signing_key"];
+        let mut last = 0;
+        for key in &keys {
+            let pos = payload.find(&format!("\"{}\"", key)).unwrap();
+            assert!(pos > last || *key == "spec_version", "key {} out of order", key);
+            last = pos;
+        }
+    }
+
+    #[test]
+    fn with_identity_included_in_payload() {
+        let kp = test_kp();
+        let c = create(CreateParams {
+            items: vec![test_item()],
+            reveal_probability: 0.10,
+            beacon: BeaconRef::drand_quicknet(),
+            metadata: None,
+            stream_id: None,
+            committed_at: "2026-02-06T14:30:00Z".into(),
+            identity: Some("did:web:alice.example.com".into()),
+        }, &kp).unwrap();
+
+        assert_eq!(c.identity, Some("did:web:alice.example.com".into()));
+
+        let payload = String::from_utf8(signing_payload(&c)).unwrap();
+        assert!(payload.contains("\"identity\""), "identity should be in signing payload");
+        assert!(payload.contains("did:web:alice.example.com"));
+
+        // identity should come after signing_key
+        let sk_pos = payload.find("\"signing_key\"").unwrap();
+        let id_pos = payload.find("\"identity\"").unwrap();
+        assert!(id_pos > sk_pos, "identity should come after signing_key");
+
+        // Verify signature still works
+        assert!(verify_signature(&c).is_ok());
+    }
+
+    #[test]
+    fn identity_is_tamper_proof() {
+        let kp = test_kp();
+        let mut c = create(CreateParams {
+            items: vec![test_item()],
+            reveal_probability: 0.10,
+            beacon: BeaconRef::drand_quicknet(),
+            metadata: None,
+            stream_id: None,
+            committed_at: "2026-02-06T14:30:00Z".into(),
+            identity: Some("did:web:alice.example.com".into()),
+        }, &kp).unwrap();
+
+        // Tamper with identity
+        c.identity = Some("did:web:evil.example.com".into());
+        assert!(verify_signature(&c).is_err(), "tampered identity should fail verification");
     }
 }

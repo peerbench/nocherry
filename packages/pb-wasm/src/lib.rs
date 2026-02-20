@@ -143,6 +143,8 @@ pub fn create_commitment(params_json: &str, private_key_hex: &str) -> Result<JsV
         did_key: sign::encode_did_key(&verifying_key),
     };
 
+    let identity = params.get("identity").and_then(|v| v.as_str()).map(|s| s.to_string());
+
     let c = commitment::create(commitment::CreateParams {
         items,
         reveal_probability,
@@ -150,6 +152,7 @@ pub fn create_commitment(params_json: &str, private_key_hex: &str) -> Result<JsV
         metadata: params.get("metadata").cloned(),
         stream_id: params.get("stream_id").and_then(|v| v.as_str()).map(|s| s.to_string()),
         committed_at: committed_at.to_string(),
+        identity,
     }, &kp).map_err(|e| JsError::new(&e))?;
 
     let serializer = serde_wasm_bindgen::Serializer::new().serialize_maps_as_objects(true);

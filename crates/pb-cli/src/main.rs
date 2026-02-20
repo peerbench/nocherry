@@ -303,6 +303,7 @@ fn cmd_commit(dir: &Path, probability: f64, beacon: &str) -> Result<(), String> 
         metadata: None,
         stream_id: None,
         committed_at: chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
+        identity: None,
     };
 
     let c = commitment::create(params, &kp)?;
