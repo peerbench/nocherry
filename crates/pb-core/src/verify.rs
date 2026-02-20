@@ -242,6 +242,7 @@ mod tests {
             metadata: None,
             stream_id: None,
             committed_at: "2026-02-06T14:30:00Z".into(),
+            identity: None,
         }, kp).unwrap()
     }
 

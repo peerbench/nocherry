@@ -29,6 +29,7 @@ fn make_commitment(kp: &sign::KeyPair, items: Vec<String>, prob: f64) -> Commitm
         metadata: None,
         stream_id: None,
         committed_at: "2026-02-06T14:30:00Z".into(),
+        identity: None,
     }, kp).unwrap()
 }
 
@@ -159,6 +160,7 @@ fn attack_probability_near_zero() {
         metadata: None,
         stream_id: None,
         committed_at: "2026-02-06T14:30:00Z".into(),
+        identity: None,
     }, &kp);
 
     // The protocol allows any p in (0, 1] — this is technically valid.
@@ -178,6 +180,7 @@ fn attack_probability_nan() {
         metadata: None,
         stream_id: None,
         committed_at: "2026-02-06T14:30:00Z".into(),
+        identity: None,
     }, &kp);
     assert!(result.is_err(), "NaN probability must be rejected");
 }
@@ -192,6 +195,7 @@ fn attack_probability_infinity() {
         metadata: None,
         stream_id: None,
         committed_at: "2026-02-06T14:30:00Z".into(),
+        identity: None,
     }, &kp);
     assert!(result.is_err(), "Infinity probability must be rejected");
 }
@@ -206,6 +210,7 @@ fn attack_probability_negative() {
         metadata: None,
         stream_id: None,
         committed_at: "2026-02-06T14:30:00Z".into(),
+        identity: None,
     }, &kp);
     assert!(result.is_err(), "Negative probability must be rejected");
 }
@@ -255,6 +260,7 @@ fn attack_selection_depends_on_commitment_hash() {
         metadata: None,
         stream_id: None,
         committed_at: "2026-02-06T14:31:00Z".into(), // Different timestamp
+        identity: None,
     }, &kp).unwrap();
 
     assert_ne!(c1.commitment_hash, c2.commitment_hash);
@@ -521,6 +527,7 @@ fn attack_duplicate_items() {
         metadata: None,
         stream_id: None,
         committed_at: "2026-02-06T14:30:00Z".into(),
+        identity: None,
     }, &kp);
     assert!(result.is_err(), "Duplicate items must be rejected");
 }
@@ -535,6 +542,7 @@ fn attack_non_hex_item_hash() {
         metadata: None,
         stream_id: None,
         committed_at: "2026-02-06T14:30:00Z".into(),
+        identity: None,
     }, &kp);
     assert!(result.is_err(), "Non-hex item hash must be rejected");
 }
@@ -549,6 +557,7 @@ fn attack_short_item_hash() {
         metadata: None,
         stream_id: None,
         committed_at: "2026-02-06T14:30:00Z".into(),
+        identity: None,
     }, &kp);
     assert!(result.is_err(), "Short item hash must be rejected");
 }
@@ -564,6 +573,7 @@ fn attack_uppercase_hex_item_hash() {
         metadata: None,
         stream_id: None,
         committed_at: "2026-02-06T14:30:00Z".into(),
+        identity: None,
     }, &kp);
     // Current validation only checks length == 64, not hex validity.
     // This test documents the current behavior. Uppercase hex is accepted.
@@ -618,6 +628,7 @@ fn attack_future_timestamp() {
         metadata: None,
         stream_id: None,
         committed_at: "2099-12-31T23:59:59Z".into(),
+        identity: None,
     }, &kp);
     // The protocol does NOT validate timestamps at the commitment level.
     // Timestamp validation is the server's responsibility.
