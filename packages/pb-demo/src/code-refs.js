@@ -31,7 +31,7 @@ export function codeRef(relPath, startLine, endLine, title) {
   const lines = readFile(relPath);
   const snippet = lines.slice(startLine - 1, endLine).join('\n');
   const ext = relPath.split('.').pop();
-  const lang = ext === 'rs' ? 'rust' : ext === 'js' ? 'javascript' : ext;
+  const lang = ext === 'rs' ? 'rust' : ext === 'js' || ext === 'ts' ? 'typescript' : ext;
   return {
     path: relPath,
     startLine,

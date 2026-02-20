@@ -9,14 +9,14 @@ import { mkdtempSync, writeFileSync, mkdirSync, readFileSync, rmSync, existsSync
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-const CLI = join(import.meta.dirname, '..', 'src', 'cli.js');
-let tempDir;
+const CLI = join(import.meta.dirname, '..', 'src', 'cli.ts');
+let tempDir: string;
 
-function run(args, opts = {}) {
-  return execFileSync('node', [CLI, ...args], {
+function run(args: string[], opts: { env?: Record<string, string> } = {}): string {
+  return execFileSync('npx', ['tsx', CLI, ...args], {
     encoding: 'utf-8',
     env: { ...process.env, ...opts.env },
-    timeout: 10000,
+    timeout: 30000,
   }).trim();
 }
 
@@ -33,8 +33,9 @@ describe('JS CLI', () => {
     try {
       run([]);
       assert.fail('Should have exited');
-    } catch (e) {
-      assert.ok(e.stdout.includes('Usage') || e.stderr.includes('Usage'));
+    } catch (e: unknown) {
+      const err = e as { stdout?: string; stderr?: string };
+      assert.ok((err.stdout || '').includes('Usage') || (err.stderr || '').includes('Usage'));
     }
   });
 
@@ -102,8 +103,9 @@ describe('JS CLI', () => {
     try {
       run([]);
       assert.fail('Should have exited');
-    } catch (e) {
-      const output = e.stdout || e.stderr || '';
+    } catch (e: unknown) {
+      const err = e as { stdout?: string; stderr?: string };
+      const output = err.stdout || err.stderr || '';
       assert.ok(!output.includes('mirrors add'), 'mirrors add should be removed');
       assert.ok(!output.includes('mirrors list'), 'mirrors list should be removed');
     }
@@ -119,8 +121,9 @@ describe('JS CLI', () => {
     try {
       run(['verify', tamperedPath]);
       assert.fail('Should have failed');
-    } catch (e) {
-      assert.ok(e.stdout.includes('INVALID') || e.stderr.includes('INVALID') || e.status !== 0);
+    } catch (e: unknown) {
+      const err = e as { stdout?: string; stderr?: string; status?: number };
+      assert.ok((err.stdout || '').includes('INVALID') || (err.stderr || '').includes('INVALID') || err.status !== 0);
     }
   });
 
@@ -217,8 +220,9 @@ describe('JS CLI', () => {
     try {
       run([]);
       assert.fail('Should have exited');
-    } catch (e) {
-      const output = e.stdout || e.stderr || '';
+    } catch (e: unknown) {
+      const err = e as { stdout?: string; stderr?: string };
+      const output = err.stdout || err.stderr || '';
       assert.ok(output.includes('reveal'));
     }
   });

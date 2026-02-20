@@ -10,7 +10,7 @@ import * as pure from '../src/pure-crypto.js';
 
 const ITERATIONS = 10000;
 
-function bench(label, fn) {
+function bench(label: string, fn: () => void): number {
   // Warmup
   for (let i = 0; i < 100; i++) fn();
   // Measure
@@ -18,7 +18,7 @@ function bench(label, fn) {
   for (let i = 0; i < ITERATIONS; i++) fn();
   const elapsed = performance.now() - start;
   const perOp = (elapsed / ITERATIONS * 1000).toFixed(2);
-  console.log(`  ${label}: ${elapsed.toFixed(1)}ms total, ${perOp}μs/op (${ITERATIONS} iterations)`);
+  console.log(`  ${label}: ${elapsed.toFixed(1)}ms total, ${perOp}\u03BCs/op (${ITERATIONS} iterations)`);
   return elapsed;
 }
 

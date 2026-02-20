@@ -6,6 +6,7 @@
 import { Kysely, SqliteDialect } from 'kysely';
 import Database from 'better-sqlite3';
 import { KyselyStorage } from './storage.js';
+import type { Database as DB } from './types.js';
 
 const SCHEMA_SQL = `
 CREATE TABLE IF NOT EXISTS commitments (
@@ -50,18 +51,13 @@ CREATE TABLE IF NOT EXISTS beacon_cache (
 
 `;
 
-/**
- * Create a KyselyStorage backed by SQLite.
- * @param {string} dbPath - Path to SQLite file, or ':memory:' for in-memory.
- * @returns {KyselyStorage}
- */
-export function createSqliteStorage(dbPath = ':memory:') {
+export function createSqliteStorage(dbPath: string = ':memory:'): KyselyStorage {
   const sqliteDb = new Database(dbPath);
   sqliteDb.pragma('journal_mode = WAL');
   sqliteDb.pragma('foreign_keys = ON');
   sqliteDb.exec(SCHEMA_SQL);
 
-  const db = new Kysely({
+  const db = new Kysely<DB>({
     dialect: new SqliteDialect({ database: sqliteDb }),
   });
 

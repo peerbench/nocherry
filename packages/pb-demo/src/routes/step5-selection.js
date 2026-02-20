@@ -6,9 +6,9 @@ import { codeRef } from '../code-refs.js';
 const route = new Hono();
 
 const refs = [
-  codeRef('packages/pb-node/src/beacon.js', 81, 114, 'Server: computeSelection'),
+  codeRef('packages/pb-node/src/beacon.ts', 111, 144, 'Server: computeSelection'),
   codeRef('crates/pb-core/src/select.rs', 1, 40, 'Rust: PRNG + per-item selection'),
-  codeRef('packages/pb-node/src/beacon.js', 17, 40, 'Server: fetchDrandRound'),
+  codeRef('packages/pb-node/src/beacon.ts', 18, 41, 'Server: fetchDrandRound'),
 ];
 
 route.get('/', (c) => {

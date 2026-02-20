@@ -2,11 +2,15 @@
   "name": "@nocherry/server",
   "version": "0.2.0",
   "type": "module",
-  "main": "src/app.js",
+  "main": "dist/app.js",
+  "types": "dist/app.d.ts",
   "scripts": {
-    "start": "node src/server.js",
-    "test": "node --test 'test/*.test.js'",
-    "test:remote": "SERVER_URL=https://commit-reveal.orgtopus.workers.dev node --test 'test/*.test.js'"
+    "start": "node dist/server.js",
+    "dev": "tsx src/server.ts",
+    "build": "tsup",
+    "test": "tsx --test test/*.test.ts",
+    "test:remote": "SERVER_URL=https://commit-reveal.orgtopus.workers.dev tsx --test test/*.test.ts",
+    "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "@hono/node-server": "^1.13.0",
