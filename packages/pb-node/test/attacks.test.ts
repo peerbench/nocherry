@@ -14,11 +14,11 @@ import assert from 'node:assert/strict';
 import * as wasm from 'pb-wasm';
 import { getApp, cleanup, isRemote } from './_setup.js';
 
-let app;
+let app: { request(url: string, init?: RequestInit): Promise<Response> };
 
 const DRAND_CHAIN_HASH = '52db9ba70e0cc0f6eaf7803dd07447a1f5477735fd3f661792ba94600c84e971';
 
-function makeCommitment(kp, items, opts = {}) {
+function makeCommitment(kp: any, items: string[], opts: any = {}) {
   const params = {
     items,
     reveal_probability: opts.reveal_probability || 0.10,
@@ -28,8 +28,8 @@ function makeCommitment(kp, items, opts = {}) {
   return wasm.createCommitment(JSON.stringify(params), kp.private_key_hex);
 }
 
-async function req(method, path, body, headers = {}) {
-  const init = {
+async function req(method: string, path: string, body?: any, headers: Record<string, string> = {}) {
+  const init: RequestInit = {
     method,
     headers: { 'Content-Type': 'application/json', ...headers },
   };
@@ -85,7 +85,7 @@ describe('Attack Tests — Server API', () => {
   it('rejects commitment missing each required field individually', async () => {
     const kp = wasm.generateKeypair();
     const itemHash = wasm.hashBytes(new TextEncoder().encode('missing-field-test'));
-    const valid = makeCommitment(kp, [itemHash]);
+    const valid: any = makeCommitment(kp, [itemHash]);
 
     const requiredFields = [
       'spec_version', 'commitment_hash', 'items', 'item_count',
@@ -459,7 +459,7 @@ describe('Attack Tests — Server API', () => {
   it('handles commitment with many items', async () => {
     // 100 items is reasonable, server should handle it
     const kp = wasm.generateKeypair();
-    const items = [];
+    const items: string[] = [];
     for (let i = 0; i < 100; i++) {
       items.push(wasm.hashBytes(new TextEncoder().encode(`large-payload-${i}`)));
     }
@@ -494,7 +494,7 @@ describe('Attack Tests — Server API', () => {
     const commitment = makeCommitment(kp, [itemHash]);
     await req('POST', '/v1/commitments', commitment);
 
-    const baseReveal = {
+    const baseReveal: any = {
       spec_version: '0.2.0',
       commitment_hash: commitment.commitment_hash,
       selected_items: [],

@@ -1,5 +1,3 @@
-#!/usr/bin/env node
-
 /**
  * Commit-Reveal CLI — JS implementation using pb-wasm.
  *
@@ -33,7 +31,8 @@ const KEY_DIR = join(homedir(), '.nocherry');
 const KEY_FILE = join(KEY_DIR, 'key.json');
 const DRAND_CHAIN_HASH = '52db9ba70e0cc0f6eaf7803dd07447a1f5477735fd3f661792ba94600c84e971';
 
-function loadKey() {
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function loadKey(): Record<string, any> {
   // Check env var first
   const envKey = process.env.PB_SIGNING_KEY;
   if (envKey) {
@@ -42,9 +41,6 @@ function loadKey() {
       console.error('PB_SIGNING_KEY must be 32 bytes (64 hex chars)');
       process.exit(1);
     }
-    const pubHex = wasm.encodeDIDKey ? null : null; // We need to derive pub from priv
-    // Re-derive public key by creating commitment with a dummy — actually we need a helper
-    // For now, just store what we have
     return { private_key_hex: envKey };
   }
 
@@ -55,7 +51,7 @@ function loadKey() {
   return JSON.parse(readFileSync(KEY_FILE, 'utf-8'));
 }
 
-function saveKey(kp) {
+function saveKey(kp: { did_key: string; private_key_hex: string; public_key_hex: string }) {
   mkdirSync(KEY_DIR, { recursive: true });
   const data = {
     did: kp.did_key,
@@ -68,7 +64,7 @@ function saveKey(kp) {
   return data;
 }
 
-function hashFile(filePath) {
+function hashFile(filePath: string): string {
   const data = readFileSync(filePath);
   return wasm.hashBytes(new Uint8Array(data));
 }
@@ -79,9 +75,9 @@ const PROTOCOL_FILES = new Set([
   'receipt.json', 'verify.sh', 'README.md',
 ]);
 
-function walkDir(dirPath, prefix = '') {
+function walkDir(dirPath: string, prefix = ''): { name: string; type: string; hash: string }[] {
   const entries = readdirSync(dirPath).sort();
-  const manifest = [];
+  const manifest: { name: string; type: string; hash: string }[] = [];
   for (const name of entries) {
     if (name.startsWith('.')) continue;
     if (prefix === '' && PROTOCOL_FILES.has(name)) continue;
@@ -100,7 +96,7 @@ function walkDir(dirPath, prefix = '') {
   return manifest;
 }
 
-function hashDir(dirPath) {
+function hashDir(dirPath: string) {
   const manifest = walkDir(dirPath);
   return {
     manifest,
@@ -110,23 +106,23 @@ function hashDir(dirPath) {
 
 // ── Command handlers ──
 
-function cmdKeyGenerate() {
+function cmdKeyGenerate(): void {
   const kp = wasm.generateKeypair();
   const saved = saveKey(kp);
   console.log(saved.did);
 }
 
-function cmdKeyShow() {
+function cmdKeyShow(): void {
   const key = loadKey();
   console.log(key.did || key.did_key || 'unknown');
 }
 
-function cmdHashFile(filePath) {
+function cmdHashFile(filePath: string): void {
   const hash = hashFile(resolve(filePath));
   console.log(hash);
 }
 
-function cmdHashDir(dirPath) {
+function cmdHashDir(dirPath: string): void {
   const dir = resolve(dirPath);
   const result = hashDir(dir);
 
@@ -144,7 +140,7 @@ function cmdHashDir(dirPath) {
   console.log(JSON.stringify({ hash: result.hash, items: result.manifest.length }, null, 2));
 }
 
-function cmdCommit(dirPath, probability, beacon) {
+function cmdCommit(dirPath: string, probability: number, beacon: string): void {
   const key = loadKey();
   const dir = resolve(dirPath);
 
@@ -181,7 +177,7 @@ function cmdCommit(dirPath, probability, beacon) {
   console.log(JSON.stringify(commitment, null, 2));
 }
 
-function cmdVerify(commitmentPath) {
+function cmdVerify(commitmentPath: string): void {
   const raw = readFileSync(resolve(commitmentPath), 'utf-8');
   const commitment = JSON.parse(raw);
 
@@ -198,13 +194,14 @@ function cmdVerify(commitmentPath) {
       console.error('Commitment signature: INVALID');
       process.exit(1);
     }
-  } catch (e) {
-    console.error(`Verification failed: ${e.message}`);
+  } catch (e: unknown) {
+    const msg = e instanceof Error ? e.message : String(e);
+    console.error(`Verification failed: ${msg}`);
     process.exit(1);
   }
 }
 
-function cmdServers() {
+function cmdServers(): void {
   const servers = getServers();
   if (servers.length === 0) {
     console.log('No servers in registry.');
@@ -219,7 +216,7 @@ function cmdServers() {
   }
 }
 
-async function cmdSubmit(target, serverNameOrUrl) {
+async function cmdSubmit(target: string, serverNameOrUrl?: string): Promise<void> {
   const resolved = resolve(target);
   const isDir = existsSync(resolved) && statSync(resolved).isDirectory();
 
@@ -230,7 +227,7 @@ async function cmdSubmit(target, serverNameOrUrl) {
   }
 }
 
-async function cmdSubmitFile(commitmentPath, serverNameOrUrl) {
+async function cmdSubmitFile(commitmentPath: string, serverNameOrUrl?: string): Promise<void> {
   const raw = readFileSync(commitmentPath, 'utf-8');
   const commitment = JSON.parse(raw);
 
@@ -246,7 +243,7 @@ async function cmdSubmitFile(commitmentPath, serverNameOrUrl) {
   });
 
   if (res.ok) {
-    const receipt = await res.json();
+    const receipt = await res.json() as any;
     console.log(`201 Created`);
     console.log(`  Server:       ${receipt.server_key}`);
     console.log(`  Registered:   ${receipt.registered_at}`);
@@ -261,7 +258,7 @@ async function cmdSubmitFile(commitmentPath, serverNameOrUrl) {
   }
 }
 
-async function cmdSubmitDir(dir) {
+async function cmdSubmitDir(dir: string): Promise<void> {
   const commitmentPath = join(dir, 'commitment.json');
   if (!existsSync(commitmentPath)) {
     console.error('No commitment.json found in directory. Run: pb-js commit <dir>');
@@ -286,7 +283,7 @@ async function cmdSubmitDir(dir) {
         body: JSON.stringify(commitment),
       });
       if (res.ok) {
-        const receipt = await res.json();
+        const receipt = await res.json() as any;
         return { server_name: server.name, server_url: server.url, receipt };
       } else {
         const body = await res.text();
@@ -295,7 +292,8 @@ async function cmdSubmitDir(dir) {
     })
   );
 
-  const receipts = [];
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const receipts: { server_name: string | null; server_url: string; receipt: any }[] = [];
   for (let i = 0; i < settled.length; i++) {
     const result = settled[i];
     if (result.status === 'fulfilled') {
@@ -330,7 +328,7 @@ async function cmdSubmitDir(dir) {
 
 // ── Reveal ──
 
-async function cmdReveal(dirPath) {
+async function cmdReveal(dirPath: string): Promise<void> {
   const dir = resolve(dirPath);
   const key = loadKey();
 
@@ -345,13 +343,14 @@ async function cmdReveal(dirPath) {
   }
 
   // Load selection from server-receipts.json or receipt.json
-  let selectedItems;
+  let selectedItems: string[] | undefined;
   const serverReceiptsPath = join(dir, 'server-receipts.json');
   const receiptPath = join(dir, 'receipt.json');
 
   if (existsSync(serverReceiptsPath)) {
     const sr = JSON.parse(readFileSync(serverReceiptsPath, 'utf-8'));
-    const firstReceipt = sr.receipts.find(r => r.receipt?.selection?.selected_items);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const firstReceipt = sr.receipts.find((r: any) => r.receipt?.selection?.selected_items);
     if (firstReceipt) {
       selectedItems = firstReceipt.receipt.selection.selected_items;
     }
@@ -371,7 +370,7 @@ async function cmdReveal(dirPath) {
     spec_version: '0.2.0',
     commitment_hash: commitment.commitment_hash,
     selected_items: selectedItems,
-    voluntary_items: [],
+    voluntary_items: [] as string[],
     revealed_at: new Date().toISOString(),
     signing_key: key.did || key.did_key,
   };
@@ -385,7 +384,7 @@ async function cmdReveal(dirPath) {
   console.error('Saved reveal.json');
 
   // Load file_urls from publication.json for server-side data verification
-  let selectedFileUrls = {};
+  const selectedFileUrls: Record<string, string> = {};
   const pubPath = join(dir, 'publication.json');
   if (existsSync(pubPath)) {
     try {
@@ -395,7 +394,7 @@ async function cmdReveal(dirPath) {
           if (pub.file_urls[hash]) selectedFileUrls[hash] = pub.file_urls[hash];
         }
       }
-    } catch {}
+    } catch { /* ignore */ }
   }
   if (Object.keys(selectedFileUrls).length === 0) {
     console.error('Warning: No publication.json found — servers may reject reveal without file_urls');
@@ -420,7 +419,7 @@ async function cmdReveal(dirPath) {
         body: JSON.stringify({ ...reveal, file_urls: selectedFileUrls }),
       });
       if (res.ok) {
-        const body = await res.json();
+        const body = await res.json() as any;
         return {
           server_name: server.name,
           server_url: server.url,
@@ -433,7 +432,8 @@ async function cmdReveal(dirPath) {
     })
   );
 
-  const revealReceipts = [];
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const revealReceipts: { server_name: string | null; server_url: string; response: any }[] = [];
   for (let i = 0; i < settled.length; i++) {
     const result = settled[i];
     if (result.status === 'fulfilled') {
@@ -463,7 +463,7 @@ async function cmdReveal(dirPath) {
 
 // ── Publish helpers ──
 
-function shell(cmd, opts = {}) {
+function shell(cmd: string, opts: { allowFail?: boolean; cwd?: string } = {}): string | null {
   try {
     return execSync(cmd, { encoding: 'utf-8', stdio: ['pipe', 'pipe', 'pipe'], ...opts }).trim();
   } catch (e) {
@@ -472,43 +472,45 @@ function shell(cmd, opts = {}) {
   }
 }
 
-function hasCommand(name) {
+function hasCommand(name: string): boolean {
   try {
     execSync(`which ${name}`, { stdio: 'pipe' });
     return true;
   } catch { return false; }
 }
 
-function prompt(question) {
+function prompt(question: string): Promise<string> {
   const rl = createInterface({ input: process.stdin, output: process.stdout });
-  return new Promise(res => rl.question(question, ans => { rl.close(); res(ans.trim()); }));
+  return new Promise(res => rl.question(question, (ans: string) => { rl.close(); res(ans.trim()); }));
 }
 
-async function waitForEnter() {
+async function waitForEnter(): Promise<void> {
   await prompt('  [Enter] ');
 }
 
-const SPINNER_FRAMES = ['◐', '◓', '◑', '◒'];
+const SPINNER_FRAMES = ['\u25D0', '\u25D3', '\u25D1', '\u25D2'];
 
-function startSpinner(message) {
+function startSpinner(message: string): { stop(msg: string): void; fail(msg: string): void } {
   let i = 0;
   const id = setInterval(() => {
     process.stdout.write(`\r  ${SPINNER_FRAMES[i++ % SPINNER_FRAMES.length]} ${message}`);
   }, 120);
   return {
-    stop(finalMessage) {
+    stop(finalMessage: string) {
       clearInterval(id);
-      process.stdout.write(`\r  ✓ ${finalMessage}\n`);
+      process.stdout.write(`\r  \u2713 ${finalMessage}\n`);
     },
-    fail(finalMessage) {
+    fail(finalMessage: string) {
       clearInterval(id);
-      process.stdout.write(`\r  ✗ ${finalMessage}\n`);
+      process.stdout.write(`\r  \u2717 ${finalMessage}\n`);
     },
   };
 }
 
-function findReceipt(dir) {
-  let result = null;
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function findReceipt(dir: string): Record<string, any> | null {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let result: Record<string, any> | null = null;
   const receiptPath = join(dir, 'receipt.json');
   if (existsSync(receiptPath)) result = JSON.parse(readFileSync(receiptPath, 'utf-8'));
   // If receipt has no commitment_hash, try commitment.json
@@ -518,21 +520,21 @@ function findReceipt(dir) {
       const c = JSON.parse(readFileSync(commitPath, 'utf-8'));
       if (c.commitment_hash) {
         result = result || {};
-        result.commitment_hash = c.commitment_hash;
+        result!.commitment_hash = c.commitment_hash;
       }
     }
   }
   return result;
 }
 
-function buildRevealFolder(srcDir) {
+function buildRevealFolder(srcDir: string): string {
   const receipt = findReceipt(srcDir);
   const hashPrefix = receipt?.commitment_hash?.slice(0, 12) || 'unknown';
   const date = new Date().toISOString().slice(0, 10);
   return `reveals/${date}-${hashPrefix}`;
 }
 
-function generateVerifyScript(commitmentHash) {
+function generateVerifyScript(commitmentHash?: string): string {
   return `#!/usr/bin/env bash
 # Verify this reveal against the commitment
 # Commitment hash: ${commitmentHash || 'unknown'}
@@ -560,7 +562,8 @@ fi
 
 // ── Publication verification ──
 
-async function verifyPublicationWithServers(commitmentHash, fileUrls) {
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+async function verifyPublicationWithServers(commitmentHash: string, fileUrls: Record<string, string>): Promise<any[]> {
   const servers = getServers();
   if (servers.length === 0) {
     console.log('No servers in registry — skipping publication verification.');
@@ -569,7 +572,8 @@ async function verifyPublicationWithServers(commitmentHash, fileUrls) {
 
   console.log(`\nVerifying publication with ${servers.length} server(s)...`);
 
-  const attestations = [];
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const attestations: any[] = [];
 
   for (const server of servers) {
     const endpoint = `${server.url.replace(/\/$/, '')}/v1/commitments/${commitmentHash}/verify-publication`;
@@ -580,7 +584,7 @@ async function verifyPublicationWithServers(commitmentHash, fileUrls) {
         body: JSON.stringify({ file_urls: fileUrls }),
       });
       if (res.ok) {
-        const body = await res.json();
+        const body = await res.json() as any;
         const icon = body.all_match ? '\u2713' : '\u2717';
         console.log(`  ${server.name}: ${icon} ${body.verified_items}/${body.provided_items} items verified`);
         if (body.all_match) {
@@ -600,16 +604,17 @@ async function verifyPublicationWithServers(commitmentHash, fileUrls) {
         console.log(`  ${server.name}: ${res.status} ${body}`);
         attestations.push({ server: server.name, server_url: server.url, error: `${res.status}: ${body}` });
       }
-    } catch (e) {
-      console.log(`  ${server.name}: unreachable (${e.message})`);
-      attestations.push({ server: server.name, server_url: server.url, error: e.message });
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e);
+      console.log(`  ${server.name}: unreachable (${msg})`);
+      attestations.push({ server: server.name, server_url: server.url, error: msg });
     }
   }
 
   return attestations;
 }
 
-function generateRevealReadme(srcDir, commitHash) {
+function generateRevealReadme(srcDir: string, commitHash: string): string {
   let md = `# Commitment Reveal: ${commitHash.slice(0, 12)}\n\n`;
   md += `## Protocol Evidence\n\n`;
 
@@ -632,6 +637,7 @@ function generateRevealReadme(srcDir, commitHash) {
     const sr = JSON.parse(readFileSync(srPath, 'utf-8'));
     md += `### Server Receipts\n`;
     md += `| Server | Beacon Round | Received At |\n|--------|-------------|-------------|\n`;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     for (const r of sr.receipts) {
       const round = r.receipt?.selection?.beacon_output?.round || '?';
       const registeredAt = r.receipt?.registered_at || '?';
@@ -649,7 +655,8 @@ function generateRevealReadme(srcDir, commitHash) {
     const selectedSet = new Set(reveal.selected_items || []);
     md += `### Random Selection\n`;
     md += `| # | File | Hash | Selected? |\n|---|------|------|-----------|\n`;
-    manifest.items.forEach((item, i) => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    manifest.items.forEach((item: any, i: number) => {
       const sel = selectedSet.has(item.hash) ? 'Yes' : 'No';
       md += `| ${i + 1} | ${item.path} | \`${item.hash.slice(0, 12)}...\` | ${sel} |\n`;
     });
@@ -664,7 +671,7 @@ function generateRevealReadme(srcDir, commitHash) {
 
 // ── Publish: GitHub ──
 
-async function cmdPublishGithub(dir, repoName) {
+async function cmdPublishGithub(dir: string, repoName?: string): Promise<void> {
   const srcDir = resolve(dir);
   if (!existsSync(srcDir)) {
     console.error(`Directory not found: ${srcDir}`);
@@ -774,8 +781,9 @@ Each folder in \`reveals/\` contains data that was committed before evaluation, 
   console.log(`  Verify: cd ${revealFolder} && ./verify.sh`);
 
   // Verify publication — server fetches data from GitHub and confirms hashes
-  let attestations = [];
-  let fileUrls = {};
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let attestations: any[] = [];
+  const fileUrls: Record<string, string> = {};
   if (receipt?.commitment_hash) {
     const manifest = walkDir(srcDir);
     for (const entry of manifest) {
@@ -807,7 +815,7 @@ Each folder in \`reveals/\` contains data that was committed before evaluation, 
 
 // ── Publish: Hugging Face ──
 
-async function cmdPublishHuggingface(dir, repoName) {
+async function cmdPublishHuggingface(dir: string, repoName?: string): Promise<void> {
   const srcDir = resolve(dir);
   if (!existsSync(srcDir)) {
     console.error(`Directory not found: ${srcDir}`);
@@ -823,7 +831,7 @@ async function cmdPublishHuggingface(dir, repoName) {
       hfToken = readFileSync(cachedTokenPath, 'utf-8').trim();
     }
   }
-  let hfUser = null;
+  let hfUser: string | null = null;
 
   if (hasHfCli) {
     const whoami = shell('huggingface-cli whoami 2>&1', { allowFail: true });
@@ -839,10 +847,10 @@ async function cmdPublishHuggingface(dir, repoName) {
         headers: { Authorization: `Bearer ${hfToken}` },
       });
       if (res.ok) {
-        const data = await res.json();
+        const data = await res.json() as any;
         hfUser = data.name;
       }
-    } catch {}
+    } catch { /* ignore */ }
   }
 
   if (!hfUser) {
@@ -859,7 +867,7 @@ async function cmdPublishHuggingface(dir, repoName) {
   console.log(`Publishing to Hugging Face: ${fullRepo}`);
 
   // Determine clone URL
-  let cloneUrl;
+  let cloneUrl: string;
   if (hfToken) {
     cloneUrl = `https://${hfUser}:${hfToken}@huggingface.co/datasets/${fullRepo}`;
   } else {
@@ -868,7 +876,7 @@ async function cmdPublishHuggingface(dir, repoName) {
 
   // Create dataset repo if needed (via API)
   const checkUrl = `https://huggingface.co/api/datasets/${fullRepo}`;
-  const authHeaders = hfToken
+  const authHeaders: Record<string, string> = hfToken
     ? { Authorization: `Bearer ${hfToken}` }
     : {};
 
@@ -876,7 +884,7 @@ async function cmdPublishHuggingface(dir, repoName) {
   try {
     const res = await fetch(checkUrl, { headers: authHeaders });
     repoExists = res.ok;
-  } catch {}
+  } catch { /* ignore */ }
 
   if (!repoExists) {
     console.log(`Creating dataset repository ${fullRepo} ...`);
@@ -1001,8 +1009,9 @@ npx cr verify reveals/<folder>/commitment.json
   console.log(`  ${hfUrl}`);
 
   // Verify publication — server fetches data from HF and confirms hashes
-  let attestations = [];
-  let fileUrls = {};
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let attestations: any[] = [];
+  const fileUrls: Record<string, string> = {};
   if (receipt?.commitment_hash) {
     const manifest = walkDir(srcDir);
     for (const entry of manifest) {
@@ -1034,7 +1043,7 @@ npx cr verify reveals/<folder>/commitment.json
 
 // ── Publish: Interactive ──
 
-async function cmdPublishInteractive(dir) {
+async function cmdPublishInteractive(dir: string): Promise<void> {
   const srcDir = resolve(dir);
   if (!existsSync(srcDir)) {
     console.error(`Directory not found: ${srcDir}`);
@@ -1042,7 +1051,7 @@ async function cmdPublishInteractive(dir) {
   }
 
   // Detect available providers
-  const providers = [];
+  const providers: { name: string; key: string }[] = [];
 
   // GitHub
   if (hasCommand('gh')) {
@@ -1063,7 +1072,7 @@ async function cmdPublishInteractive(dir) {
     let hfOk = false;
     if (hasHfCli) {
       const whoami = shell('huggingface-cli whoami 2>&1', { allowFail: true });
-      hfOk = whoami && !whoami.includes('Not logged in') && !whoami.includes('error');
+      hfOk = !!(whoami && !whoami.includes('Not logged in') && !whoami.includes('error'));
     }
     if (!hfOk && hfToken) hfOk = true;
     if (hfOk) providers.push({ name: 'Hugging Face', key: 'huggingface' });
@@ -1097,7 +1106,7 @@ async function cmdPublishInteractive(dir) {
 
 // ── Go: Interactive Wizard ──
 
-async function cmdGo(dirPath, probability = 0.50) {
+async function cmdGo(dirPath: string, probability = 0.50): Promise<void> {
   const dir = resolve(dirPath);
   if (!existsSync(dir) || !statSync(dir).isDirectory()) {
     console.error(`Directory not found: ${dir}`);
@@ -1119,7 +1128,7 @@ async function cmdGo(dirPath, probability = 0.50) {
     const kp = wasm.generateKeypair();
     saveKey(kp);
     key = JSON.parse(readFileSync(KEY_FILE, 'utf-8'));
-    console.log(`  ✓ Key saved: ${key.did}`);
+    console.log(`  \u2713 Key saved: ${key.did}`);
     console.log();
   } else {
     key = loadKey();
@@ -1127,12 +1136,12 @@ async function cmdGo(dirPath, probability = 0.50) {
 
   console.log();
   console.log('  Commit-Reveal Protocol');
-  console.log('  ──────────────────────');
+  console.log('  \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500');
   console.log(`  Directory: ${dirPath} (${fileCount} file${fileCount !== 1 ? 's' : ''})`);
   console.log();
 
   // ── Step 1: Hash ──
-  console.log('  Step 1 — Hash');
+  console.log('  Step 1 \u2014 Hash');
   console.log('  SHA-256 hash each file to create a tamper-proof manifest.');
   console.log();
   await waitForEnter();
@@ -1149,13 +1158,13 @@ async function cmdGo(dirPath, probability = 0.50) {
   writeFileSync(join(dir, 'manifest.json'), JSON.stringify(manifestData, null, 2) + '\n');
 
   for (const item of manifestData.items) {
-    console.log(`    ${item.hash.slice(0, 16)}…  ${item.path}`);
+    console.log(`    ${item.hash.slice(0, 16)}\u2026  ${item.path}`);
   }
-  console.log(`  ✓ ${manifestData.items.length} files → manifest.json`);
+  console.log(`  \u2713 ${manifestData.items.length} files \u2192 manifest.json`);
   console.log();
 
   // ── Step 2: Commit ──
-  console.log('  Step 2 — Commit');
+  console.log('  Step 2 \u2014 Commit');
   console.log(`  Sign a commitment locking in ${manifestData.items.length} file hashes at ${(probability * 100).toFixed(0)}% reveal probability.`);
   console.log();
   await waitForEnter();
@@ -1178,12 +1187,12 @@ async function cmdGo(dirPath, probability = 0.50) {
   );
   writeFileSync(join(dir, 'commitment.json'), JSON.stringify(commitment, null, 2) + '\n');
 
-  console.log(`  ✓ Commitment: ${commitment.commitment_hash.slice(0, 16)}...${commitment.commitment_hash.slice(-6)}`);
-  console.log('  ✓ Saved commitment.json');
+  console.log(`  \u2713 Commitment: ${commitment.commitment_hash.slice(0, 16)}...${commitment.commitment_hash.slice(-6)}`);
+  console.log('  \u2713 Saved commitment.json');
   console.log();
 
   // ── Step 3: Submit ──
-  console.log('  Step 3 — Submit');
+  console.log('  Step 3 \u2014 Submit');
   console.log('  Send to independent servers. Each waits for the next drand beacon (~3s)');
   console.log('  to randomly select which files must be revealed.');
   console.log();
@@ -1191,7 +1200,7 @@ async function cmdGo(dirPath, probability = 0.50) {
 
   const servers = getServers();
   if (servers.length === 0) {
-    console.log('  ✗ No servers in registry. Run: pb-js servers');
+    console.log('  \u2717 No servers in registry. Run: pb-js servers');
     process.exit(1);
   }
 
@@ -1206,14 +1215,14 @@ async function cmdGo(dirPath, probability = 0.50) {
         body: JSON.stringify(commitment),
       });
       if (res.ok) {
-        const receipt = await res.json();
+        const receipt = await res.json() as any;
         return { server_name: server.name, server_url: server.url, receipt, duplicate: false };
       } else if (res.status === 409) {
         // Commitment already exists — fetch the existing receipt
         const getUrl = `${server.url.replace(/\/$/, '')}/v1/commitments/${commitment.commitment_hash}`;
         const getRes = await fetch(getUrl);
         if (getRes.ok) {
-          const existing = await getRes.json();
+          const existing = await getRes.json() as any;
           return { server_name: server.name, server_url: server.url, receipt: existing, duplicate: true };
         }
         return { server_name: server.name, server_url: server.url, receipt: null, duplicate: true };
@@ -1224,32 +1233,33 @@ async function cmdGo(dirPath, probability = 0.50) {
     })
   );
 
-  const receipts = [];
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const receipts: { server_name: string | null; server_url: string; receipt: any; duplicate: boolean }[] = [];
   let duplicateCount = 0;
-  let firstFailure = null;
+  let firstFailure: boolean | null = null;
   for (let i = 0; i < settled.length; i++) {
     const r = settled[i];
     if (r.status === 'fulfilled') {
       if (r.value.duplicate) duplicateCount++;
       const label = r.value.duplicate ? '(already committed)' : `round ${r.value.receipt?.selection?.beacon_output?.round || '?'}`;
       if (receipts.length === 0) spinner.stop(`${r.value.server_name}: ${label}`);
-      else console.log(`  ✓ ${r.value.server_name}: ${label}`);
+      else console.log(`  \u2713 ${r.value.server_name}: ${label}`);
       if (r.value.receipt) receipts.push(r.value);
     } else {
       if (!firstFailure) { spinner.fail(`${servers[i].name}: ${r.reason?.message || 'failed'}`); firstFailure = true; }
-      else console.log(`  ✗ ${servers[i].name}: ${r.reason?.message || 'failed'}`);
+      else console.log(`  \u2717 ${servers[i].name}: ${r.reason?.message || 'failed'}`);
     }
   }
 
   if (receipts.length === 0) {
-    console.log('  ✗ All servers failed.');
+    console.log('  \u2717 All servers failed.');
     process.exit(1);
   }
 
   if (duplicateCount > 0) {
     console.log();
-    console.log(`  ⚠ WARNING: This data has already been committed to ${duplicateCount} server${duplicateCount !== 1 ? 's' : ''}.`);
-    console.log('  Re-running on previously committed data — using existing server receipts.');
+    console.log(`  \u26A0 WARNING: This data has already been committed to ${duplicateCount} server${duplicateCount !== 1 ? 's' : ''}.`);
+    console.log('  Re-running on previously committed data \u2014 using existing server receipts.');
   }
 
   const serverReceipts = {
@@ -1261,24 +1271,24 @@ async function cmdGo(dirPath, probability = 0.50) {
   writeFileSync(join(dir, 'server-receipts.json'), JSON.stringify(serverReceipts, null, 2) + '\n');
   writeFileSync(join(dir, 'receipt.json'), JSON.stringify(receipts[0].receipt, null, 2) + '\n');
 
-  console.log(`  ✓ Saved server-receipts.json (${receipts.length} receipt${receipts.length !== 1 ? 's' : ''})`);
+  console.log(`  \u2713 Saved server-receipts.json (${receipts.length} receipt${receipts.length !== 1 ? 's' : ''})`);
 
   // Show beacon randomness and selection result
   const firstSelection = receipts.find(r => r.receipt?.selection?.selected_items)?.receipt?.selection;
   if (firstSelection) {
     console.log();
-    console.log(`  Beacon: ${firstSelection.beacon_output.randomness.slice(0, 24)}…`);
+    console.log(`  Beacon: ${firstSelection.beacon_output.randomness.slice(0, 24)}\u2026`);
     const selectedSet = new Set(firstSelection.selected_items);
     console.log(`  Selected ${firstSelection.selected_count} of ${firstSelection.total_count} for reveal:`);
     for (const item of manifestData.items) {
       const sel = selectedSet.has(item.hash);
-      console.log(`    ${sel ? '→' : ' '} ${item.path}`);
+      console.log(`    ${sel ? '\u2192' : ' '} ${item.path}`);
     }
   }
   console.log();
 
   // ── Step 4: Publish ──
-  console.log('  Step 4 — Publish');
+  console.log('  Step 4 \u2014 Publish');
   console.log('  Publish the original data of selected files to GitHub or other public hosting.');
   console.log();
   await waitForEnter();
@@ -1297,7 +1307,7 @@ async function cmdGo(dirPath, probability = 0.50) {
       // Load receipt (the individual server receipt with .commitment inside, not the wrapper)
       const receiptPath = join(dir, 'receipt.json');
       if (!existsSync(receiptPath)) {
-        console.log('  ⚠ No receipt.json found — skipping publish server upload');
+        console.log('  \u26A0 No receipt.json found \u2014 skipping publish server upload');
         throw new Error('skip');
       }
       const receiptJson = readFileSync(receiptPath, 'utf-8');
@@ -1315,7 +1325,7 @@ async function cmdGo(dirPath, probability = 0.50) {
       }
 
       // Auth: try Ed25519 signature auth using the signing key
-      const authHeaders = {};
+      const authHeaders: Record<string, string> = {};
       if (key.private_key_hex && (key.public_key_hex || key.did)) {
         const ts = Math.floor(Date.now() / 1000).toString();
         const message = `upload:${ts}`;
@@ -1332,8 +1342,8 @@ async function cmdGo(dirPath, probability = 0.50) {
       }
 
       if (!authHeaders['Authorization']) {
-        console.log('  ⚠ No publish server auth available (set PB_PUBLISH_TOKEN or link signing key)');
-        console.log('  (continuing — GitHub publish succeeded)');
+        console.log('  \u26A0 No publish server auth available (set PB_PUBLISH_TOKEN or link signing key)');
+        console.log('  (continuing \u2014 GitHub publish succeeded)');
       } else {
         const uploadRes = await fetch(publishUrl, {
           method: 'POST',
@@ -1342,26 +1352,27 @@ async function cmdGo(dirPath, probability = 0.50) {
         });
 
         if (uploadRes.ok) {
-          const uploadResult = await uploadRes.json();
-          console.log(`  ✓ Uploaded ${dataFiles.length} file${dataFiles.length !== 1 ? 's' : ''} to ${publisher.name}`);
+          await uploadRes.json() as any;
+          console.log(`  \u2713 Uploaded ${dataFiles.length} file${dataFiles.length !== 1 ? 's' : ''} to ${publisher.name}`);
         } else {
           const errBody = await uploadRes.text();
-          console.log(`  ⚠ Publish server upload failed: ${uploadRes.status} ${errBody}`);
-          console.log('  (continuing — GitHub publish succeeded)');
+          console.log(`  \u26A0 Publish server upload failed: ${uploadRes.status} ${errBody}`);
+          console.log('  (continuing \u2014 GitHub publish succeeded)');
         }
       }
     }
-  } catch (err) {
-    if (err.message !== 'skip') {
-      console.log(`  ⚠ Publish server upload failed: ${err.message}`);
-      console.log('  (continuing — GitHub publish succeeded)');
+  } catch (err: unknown) {
+    const errMsg = err instanceof Error ? err.message : String(err);
+    if (errMsg !== 'skip') {
+      console.log(`  \u26A0 Publish server upload failed: ${errMsg}`);
+      console.log('  (continuing \u2014 GitHub publish succeeded)');
     }
   }
 
   console.log();
 
   // ── Step 5: Reveal ──
-  console.log('  Step 5 — Reveal');
+  console.log('  Step 5 \u2014 Reveal');
   console.log('  Submit signed reveal to servers and get signed confirmation.');
   console.log();
   await waitForEnter();
@@ -1369,16 +1380,16 @@ async function cmdGo(dirPath, probability = 0.50) {
   // Get selected items from first receipt
   const firstReceipt = receipts.find(r => r.receipt?.selection?.selected_items);
   if (!firstReceipt) {
-    console.log('  ✗ No selection found in receipts.');
+    console.log('  \u2717 No selection found in receipts.');
     process.exit(1);
   }
-  const selectedItems = firstReceipt.receipt.selection.selected_items;
+  const selectedItems: string[] = firstReceipt.receipt.selection.selected_items;
 
   const revealPayload = {
     spec_version: '0.2.0',
     commitment_hash: commitment.commitment_hash,
     selected_items: selectedItems,
-    voluntary_items: [],
+    voluntary_items: [] as string[],
     revealed_at: new Date().toISOString(),
     signing_key: key.did || key.did_key,
   };
@@ -1389,10 +1400,10 @@ async function cmdGo(dirPath, probability = 0.50) {
 
   writeFileSync(join(dir, 'reveal.json'), JSON.stringify(reveal, null, 2) + '\n');
 
-  console.log(`  ✓ Revealing ${selectedItems.length} selected item${selectedItems.length !== 1 ? 's' : ''}`);
+  console.log(`  \u2713 Revealing ${selectedItems.length} selected item${selectedItems.length !== 1 ? 's' : ''}`);
 
   // Load file_urls from publication.json for server-side data verification
-  let selectedFileUrls = {};
+  const selectedFileUrls: Record<string, string> = {};
   const pubPath = join(dir, 'publication.json');
   if (existsSync(pubPath)) {
     try {
@@ -1402,10 +1413,10 @@ async function cmdGo(dirPath, probability = 0.50) {
           if (pub.file_urls[hash]) selectedFileUrls[hash] = pub.file_urls[hash];
         }
       }
-    } catch {}
+    } catch { /* ignore */ }
   }
   if (Object.keys(selectedFileUrls).length === 0) {
-    console.log('  ⚠ No publication.json found — servers may reject reveal without file_urls');
+    console.log('  \u26A0 No publication.json found \u2014 servers may reject reveal without file_urls');
   }
 
   // Submit reveal to servers
@@ -1420,7 +1431,7 @@ async function cmdGo(dirPath, probability = 0.50) {
         body: JSON.stringify({ ...reveal, file_urls: selectedFileUrls }),
       });
       if (res.ok) {
-        const body = await res.json();
+        const body = await res.json() as any;
         return { server_name: server.name, server_url: server.url, response: body };
       } else {
         const body = await res.text();
@@ -1429,7 +1440,8 @@ async function cmdGo(dirPath, probability = 0.50) {
     })
   );
 
-  const revealReceipts = [];
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const revealReceipts: { server_name: string | null; server_url: string; response: any }[] = [];
   let firstRevealPrinted = false;
   for (let i = 0; i < revealSettled.length; i++) {
     const r = revealSettled[i];
@@ -1440,11 +1452,11 @@ async function cmdGo(dirPath, probability = 0.50) {
       if (resp.file_urls_registered > 0) parts.push(`${resp.file_urls_registered} file URLs registered`);
       const msg = parts.join(', ');
       if (!firstRevealPrinted) { revealSpinner.stop(msg); firstRevealPrinted = true; }
-      else console.log(`  ✓ ${msg}`);
+      else console.log(`  \u2713 ${msg}`);
       revealReceipts.push(r.value);
     } else {
       if (!firstRevealPrinted) { revealSpinner.fail(`${servers[i].name}: ${r.reason?.message || 'failed'}`); firstRevealPrinted = true; }
-      else console.log(`  ✗ ${servers[i].name}: ${r.reason?.message || 'failed'}`);
+      else console.log(`  \u2717 ${servers[i].name}: ${r.reason?.message || 'failed'}`);
     }
   }
 
@@ -1458,7 +1470,7 @@ async function cmdGo(dirPath, probability = 0.50) {
   };
   writeFileSync(join(dir, 'reveal-receipts.json'), JSON.stringify(revealReceiptsData, null, 2) + '\n');
 
-  console.log('  ✓ Saved reveal.json + reveal-receipts.json');
+  console.log('  \u2713 Saved reveal.json + reveal-receipts.json');
 
   // Push reveal files back to GitHub repo
   if (existsSync(join(dir, 'publication.json'))) {
@@ -1485,19 +1497,20 @@ async function cmdGo(dirPath, probability = 0.50) {
           if (diffCheck) {
             shell(`git commit -m "Add reveal receipts for ${pub.reveal_folder}"`, { cwd: cloneDir });
             shell('git push', { cwd: cloneDir });
-            console.log('  ✓ Pushed reveal receipts to GitHub');
+            console.log('  \u2713 Pushed reveal receipts to GitHub');
           }
         }
       }
-    } catch (err) {
-      console.log(`  ⚠ Could not update GitHub repo: ${err.message}`);
+    } catch (err: unknown) {
+      const errMsg = err instanceof Error ? err.message : String(err);
+      console.log(`  \u26A0 Could not update GitHub repo: ${errMsg}`);
     }
   }
 
   console.log();
 
   // ── Summary ──
-  console.log('  ─────────────────────────────────');
+  console.log('  \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500');
   console.log(`  Done! Evidence chain in ${dirPath}:`);
   console.log('    manifest.json        file hashes');
   console.log('    commitment.json      signed commitment');
@@ -1510,7 +1523,7 @@ async function cmdGo(dirPath, probability = 0.50) {
 
 // ── Generate random test data ──
 
-function cmdGenerate(baseDir, count) {
+function cmdGenerate(baseDir: string, count: number): void {
   const dir = resolve(baseDir);
   // Find next available index
   let idx = 0;
@@ -1557,7 +1570,7 @@ function cmdGenerate(baseDir, count) {
 
 // ── Argument parsing ──
 
-function usage() {
+function usage(): void {
   console.log(`Usage:
   pb-js go <dir> [-p <prob>]                Guided wizard (just hit Enter)
   pb-js key generate                        Generate Ed25519 keypair
@@ -1576,7 +1589,7 @@ function usage() {
   process.exit(1);
 }
 
-async function main() {
+async function main(): Promise<void> {
   const args = process.argv.slice(2);
   if (args.length === 0) usage();
 
@@ -1585,7 +1598,7 @@ async function main() {
 
   if (cmd === 'go' && args[1]) {
     let probability = 0.50;
-    let dirArg = args[1];
+    const dirArg = args[1];
     for (let i = 2; i < args.length; i++) {
       if ((args[i] === '-p' || args[i] === '--probability') && args[i + 1]) {
         probability = parseFloat(args[i + 1]);
@@ -1619,7 +1632,7 @@ async function main() {
   } else if (cmd === 'servers') {
     cmdServers();
   } else if (cmd === 'submit' && args[1]) {
-    let server = undefined;
+    let server: string | undefined = undefined;
     for (let i = 2; i < args.length; i++) {
       if ((args[i] === '-s' || args[i] === '--server') && args[i + 1]) {
         server = args[i + 1];
@@ -1630,7 +1643,7 @@ async function main() {
   } else if (cmd === 'reveal' && args[1]) {
     await cmdReveal(args[1]);
   } else if (cmd === 'publish') {
-    let repoName = undefined;
+    let repoName: string | undefined = undefined;
     // Parse --repo flag from remaining args
     const publishArgs = args.slice(1);
     for (let i = 0; i < publishArgs.length; i++) {
@@ -1642,7 +1655,6 @@ async function main() {
     }
 
     const target = publishArgs[0];
-    const dirArg = publishArgs[1] || publishArgs[0];
 
     if (target === 'github' && publishArgs[1]) {
       await cmdPublishGithub(publishArgs[1], repoName);

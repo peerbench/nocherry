@@ -2,12 +2,15 @@
   "name": "@nocherry/sdk",
   "version": "0.1.0",
   "type": "module",
-  "main": "src/index.js",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
   "bin": {
-    "pb-js": "src/cli.js"
+    "pb-js": "dist/cli.js"
   },
   "scripts": {
-    "test": "node --test test/vectors.test.js test/cli.test.js"
+    "build": "tsup",
+    "test": "tsx --test test/vectors.test.ts test/cli.test.ts",
+    "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "pb-wasm": "file:../../pkg"

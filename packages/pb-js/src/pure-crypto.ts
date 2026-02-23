@@ -12,13 +12,11 @@ import { createHash, createHmac } from 'node:crypto';
 
 // ── Hashing ──
 
-export function hashBytes(data) {
+export function hashBytes(data: Uint8Array | Buffer): string {
   return createHash('sha256').update(data).digest('hex');
 }
 
-export function hashManifest(entries) {
-  // entries is an array of { name, type, hash }
-  // Canonical JSON: no whitespace, keys in order: name, type, hash
+export function hashManifest(entries: { name: string; type: string; hash: string }[]): string {
   const canonical = '[' + entries.map(e =>
     `{"name":${JSON.stringify(e.name)},"type":${JSON.stringify(e.type)},"hash":${JSON.stringify(e.hash)}}`
   ).join(',') + ']';
@@ -27,7 +25,7 @@ export function hashManifest(entries) {
 
 // ── PRNG ──
 
-export function prngNext(seedHex, index) {
+export function prngNext(seedHex: string, index: number): string {
   const seed = Buffer.from(seedHex, 'hex');
   const indexBuf = Buffer.alloc(8);
   indexBuf.writeBigUInt64LE(BigInt(index));
@@ -37,23 +35,17 @@ export function prngNext(seedHex, index) {
 
 // ── Threshold ──
 
-export function threshold(p) {
-  // floor(p × 2^64)
-  // Use BigInt arithmetic: floor(p * 2^64)
-  // p is a float64. We need: floor(p × 18446744073709551616)
+export function threshold(p: number): string {
   const TWO_64 = 18446744073709551616n;
-  // Convert p to a fraction representation for precision
-  // For common values: p = n/d
-  // Simple approach: multiply and truncate
   const result = BigInt(Math.floor(p * Number(TWO_64)));
   return result.toString();
 }
 
 // ── Per-Item Selection ──
 
-export function selectPerItem(beaconRandomnessHex, commitmentHash, itemHash, revealProbability) {
+export function selectPerItem(beaconRandomnessHex: string, commitmentHash: string, itemHash: string, revealProbability: number): boolean {
   const key = Buffer.from(beaconRandomnessHex, 'hex');
-  const msg = commitmentHash + itemHash; // concatenation of hex strings
+  const msg = commitmentHash + itemHash;
   const mac = createHmac('sha256', key).update(msg).digest();
   const value = mac.readBigUInt64LE(0);
   const thresh = BigInt(threshold(revealProbability));
@@ -62,7 +54,7 @@ export function selectPerItem(beaconRandomnessHex, commitmentHash, itemHash, rev
 
 // ── Batch Selection (Fisher-Yates) ──
 
-export function selectBatch(items, beaconRandomnessHex, count) {
+export function selectBatch(items: string[], beaconRandomnessHex: string, count: number): string[] {
   if (count > items.length) {
     throw new Error(`count (${count}) exceeds items length (${items.length})`);
   }
@@ -78,7 +70,7 @@ export function selectBatch(items, beaconRandomnessHex, count) {
 
 // ── Commitment Hash ──
 
-export function computeCommitmentHash(signingPayload) {
+export function computeCommitmentHash(signingPayload: string): string {
   return createHash('sha256').update(signingPayload).digest('hex');
 }
 
@@ -87,15 +79,15 @@ export function computeCommitmentHash(signingPayload) {
 const DRAND_GENESIS = 1692803367;
 const DRAND_PERIOD = 3;
 
-export function drandRoundTime(round) {
+export function drandRoundTime(round: number): number {
   return DRAND_GENESIS + (Number(round) - 1) * DRAND_PERIOD;
 }
 
-export function drandTimeToRound(unixTime) {
+export function drandTimeToRound(unixTime: number): number {
   return Math.floor((Number(unixTime) - DRAND_GENESIS) / DRAND_PERIOD) + 1;
 }
 
-export function drandNextRoundAfter(unixTime) {
+export function drandNextRoundAfter(unixTime: number): number {
   const t = Number(unixTime);
   if (t < DRAND_GENESIS) return 1;
   const round = drandTimeToRound(t);

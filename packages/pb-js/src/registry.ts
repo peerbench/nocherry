@@ -6,17 +6,17 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { join, dirname } from 'node:path';
 
-let _cache = null;
+let _cache: Registry | null = null;
 
 /** Map primary_url → url for backward compatibility with all downstream code. */
-function normalizeEntry(entry) {
+function normalizeEntry(entry: ServerEntry): ServerEntry {
   if (entry.primary_url && !entry.url) {
     return { ...entry, url: entry.primary_url };
   }
   return entry;
 }
 
-export function loadRegistry() {
+export function loadRegistry(): Registry {
   if (_cache) return _cache;
   const here = dirname(fileURLToPath(import.meta.url));
   const filePath = join(here, '..', '..', '..', 'servers.json');
@@ -26,16 +26,16 @@ export function loadRegistry() {
     servers: (raw.servers || []).map(normalizeEntry),
     reveal_publishers: (raw.reveal_publishers || []).map(normalizeEntry),
   };
-  return _cache;
+  return _cache!;
 }
 
-export function getServers(env) {
+export function getServers(env?: string): ServerEntry[] {
   const { servers } = loadRegistry();
   if (!env) return servers;
   return servers.filter(s => s.environment === env);
 }
 
-export function resolveServer(nameOrUrl) {
+export function resolveServer(nameOrUrl?: string): ServerEntry {
   const servers = getServers();
 
   if (!nameOrUrl) {
@@ -56,14 +56,14 @@ export function resolveServer(nameOrUrl) {
   return { name: null, url: nameOrUrl, server_key: null, operator: null, environment: null };
 }
 
-export function getRevealPublishers(env) {
+export function getRevealPublishers(env?: string): ServerEntry[] {
   const { reveal_publishers } = loadRegistry();
   if (!reveal_publishers) return [];
   if (!env) return reveal_publishers;
   return reveal_publishers.filter(p => p.environment === env);
 }
 
-export function resolveRevealPublisher(nameOrUrl) {
+export function resolveRevealPublisher(nameOrUrl?: string): ServerEntry {
   const publishers = getRevealPublishers();
 
   if (!nameOrUrl) {
@@ -79,4 +79,19 @@ export function resolveRevealPublisher(nameOrUrl) {
   if (byUrl) return byUrl;
 
   return { name: null, url: nameOrUrl, operator: null, environment: null };
+}
+
+interface ServerEntry {
+  name: string | null;
+  url: string;
+  primary_url?: string;
+  alternative_url?: string;
+  server_key?: string | null;
+  operator: string | null;
+  environment: string | null;
+}
+
+interface Registry {
+  servers: ServerEntry[];
+  reveal_publishers: ServerEntry[];
 }
