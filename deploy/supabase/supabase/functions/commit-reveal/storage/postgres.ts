@@ -7,6 +7,7 @@
 
 import { Kysely, PostgresDialect } from "npm:kysely@^0.27.0";
 import pg from "npm:pg@^8.13.0";
+import type { Keypair } from "../types.ts";
 
 interface Database {
   commitments: {
@@ -60,7 +61,7 @@ export class KyselyStorage {
 
   // ── Server identity ──
 
-  async getServerIdentity() {
+  async getServerIdentity(): Promise<Keypair | null> {
     const row = await this.db
       .selectFrom("server_identity")
       .select("value")
@@ -69,7 +70,7 @@ export class KyselyStorage {
     return row ? (typeof row.value === "string" ? JSON.parse(row.value) : row.value) : null;
   }
 
-  async setServerIdentity(keypair: Record<string, string>) {
+  async setServerIdentity(keypair: Keypair) {
     await this.db
       .insertInto("server_identity")
       .values({ key: "keypair", value: JSON.stringify(keypair) })
