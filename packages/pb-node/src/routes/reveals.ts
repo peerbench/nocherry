@@ -7,18 +7,21 @@
  */
 
 import { Hono } from 'hono';
+import type { KyselyStorage } from 'pb-storage';
 import * as wasm from 'pb-wasm';
 import { signResponse } from '../signing.js';
 import { getArrivalBeacon } from '../beacon.js';
 import { config } from '../config.js';
 
-const route = new Hono();
+type Env = { Variables: { storage: KyselyStorage } };
+
+const route = new Hono<Env>();
 
 /**
  * Fetch a URL, hash the response, and compare against itemHash.
  * Retries once after 2s on failure or mismatch.
  */
-async function fetchAndVerify(url, itemHash) {
+async function fetchAndVerify(url: string, itemHash: string) {
   for (let attempt = 0; attempt < 2; attempt++) {
     try {
       const res = await fetch(url, { signal: AbortSignal.timeout(15000) });
@@ -33,7 +36,7 @@ async function fetchAndVerify(url, itemHash) {
       }
       if (attempt === 0) { await new Promise(r => setTimeout(r, 2000)); continue; }
       return { hash: itemHash, url, status: 'mismatch', computed_hash: computed };
-    } catch (e) {
+    } catch (e: any) {
       if (attempt === 0) { await new Promise(r => setTimeout(r, 2000)); continue; }
       return { hash: itemHash, url, status: 'fetch_error', detail: e.message };
     }
@@ -46,7 +49,7 @@ async function fetchAndVerify(url, itemHash) {
 route.post('/:hash/reveals', async (c) => {
   const storage = c.get('storage');
   const hash = c.req.param('hash');
-  let body;
+  let body: any;
   try {
     body = await c.req.json();
   } catch {
@@ -101,7 +104,7 @@ route.post('/:hash/reveals', async (c) => {
     if (!valid) {
       return c.json({ error: 'Invalid reveal signature' }, 400);
     }
-  } catch (e) {
+  } catch (e: any) {
     return c.json({ error: `Signature verification failed: ${e.message}` }, 400);
   }
 
@@ -109,10 +112,10 @@ route.post('/:hash/reveals', async (c) => {
   const verifyEnabled = config.verifyRevealData;
   const fileUrls = body.file_urls;
   let dataVerified = false;
-  let verification = null;
+  let verification: any = null;
 
   if (verifyEnabled) {
-    const selectedItems = body.selected_items || [];
+    const selectedItems: string[] = body.selected_items || [];
     if (selectedItems.length === 0) {
       // Nothing to verify — skip
       dataVerified = true;
@@ -122,7 +125,7 @@ route.post('/:hash/reveals', async (c) => {
       verification = { verified_items: 0, total_selected: selectedItems.length, items: [], note: 'no file_urls provided' };
     } else {
 
-    const results = [];
+    const results: any[] = [];
     for (const itemHash of selectedItems) {
       const url = fileUrls[itemHash];
       if (!url) {
@@ -195,14 +198,14 @@ route.get('/:hash/mirrors', async (c) => {
   }
 
   const reveals = await storage.getReveals(hash);
-  const mirrors = [];
-  const seen = new Set();
+  const mirrors: { item_hash: string; url: string; revealed_at: string }[] = [];
+  const seen = new Set<string>();
   for (const reveal of reveals) {
     if (reveal.file_urls && typeof reveal.file_urls === 'object') {
       for (const [itemHash, url] of Object.entries(reveal.file_urls)) {
-        if (!seen.has(url)) {
-          seen.add(url);
-          mirrors.push({ item_hash: itemHash, url, revealed_at: reveal.revealed_at });
+        if (!seen.has(url as string)) {
+          seen.add(url as string);
+          mirrors.push({ item_hash: itemHash, url: url as string, revealed_at: reveal.revealed_at });
         }
       }
     }
@@ -219,7 +222,7 @@ route.post('/:hash/verify-publication', async (c) => {
   const storage = c.get('storage');
   const hash = c.req.param('hash');
 
-  let body;
+  let body: any;
   try {
     body = await c.req.json();
   } catch {
@@ -238,14 +241,14 @@ route.post('/:hash/verify-publication', async (c) => {
 
   const commitment = record.commitment;
   const committedItems = new Set(commitment.items);
-  const results = [];
+  const results: any[] = [];
 
   for (const [itemHash, url] of Object.entries(file_urls)) {
     if (!committedItems.has(itemHash)) {
       results.push({ hash: itemHash, url, status: 'not_in_commitment' });
       continue;
     }
-    results.push(await fetchAndVerify(url, itemHash));
+    results.push(await fetchAndVerify(url as string, itemHash));
   }
 
   const matchCount = results.filter(r => r.status === 'match').length;

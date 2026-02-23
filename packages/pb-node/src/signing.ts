@@ -3,15 +3,22 @@
  * The server has its own Ed25519 keypair for signing responses.
  */
 
+import type { KyselyStorage } from 'pb-storage';
 import * as wasm from 'pb-wasm';
 
-let serverKeypair = null;
+interface Keypair {
+  did_key: string;
+  private_key_hex: string;
+  public_key_hex: string;
+}
+
+let serverKeypair: Keypair | null = null;
 
 /**
  * Initialize or load the server's signing keypair.
  * Async because storage is now async (Kysely).
  */
-export async function initServerKey(storage) {
+export async function initServerKey(storage: KyselyStorage) {
   const existing = await storage.getServerIdentity();
   if (existing) {
     serverKeypair = existing;
@@ -28,7 +35,7 @@ export async function initServerKey(storage) {
   return serverKeypair;
 }
 
-export function getServerKey() {
+export function getServerKey(): string {
   if (!serverKeypair) throw new Error('Server key not initialized');
   return serverKeypair.did_key;
 }
@@ -37,7 +44,7 @@ export function getServerKey() {
  * Sign a JSON object with the server's key.
  * Returns the hex signature.
  */
-export function serverSign(obj) {
+export function serverSign(obj: unknown): string {
   if (!serverKeypair) throw new Error('Server key not initialized');
   const payload = JSON.stringify(obj);
   const bytes = new TextEncoder().encode(payload);
@@ -47,7 +54,7 @@ export function serverSign(obj) {
 /**
  * Add server_key and server_signature to a response object.
  */
-export function signResponse(obj) {
+export function signResponse<T extends Record<string, unknown>>(obj: T) {
   const withKey = { ...obj, server_key: getServerKey() };
   const signature = serverSign(withKey);
   return { ...withKey, server_signature: signature };

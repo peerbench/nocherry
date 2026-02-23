@@ -20,6 +20,7 @@ import { describe, it, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import * as wasm from 'pb-wasm';
 import { createServer } from 'node:http';
+import type { Server } from 'node:http';
 import { readFileSync, writeFileSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -27,12 +28,12 @@ import { getApp, cleanup, isRemote } from './_setup.js';
 
 const DRAND_CHAIN_HASH = '52db9ba70e0cc0f6eaf7803dd07447a1f5477735fd3f661792ba94600c84e971';
 
-let app;
-let fileServer;
-let fileServerPort;
-let tmpDir;
+let app: { request(url: string, init?: RequestInit): Promise<Response> };
+let fileServer: Server;
+let fileServerPort: number;
+let tmpDir: string;
 
-function makeCommitment(kp, items, opts = {}) {
+function makeCommitment(kp: any, items: string[], opts: any = {}) {
   const params = {
     items,
     reveal_probability: opts.reveal_probability || 0.50,
@@ -42,8 +43,8 @@ function makeCommitment(kp, items, opts = {}) {
   return wasm.createCommitment(JSON.stringify(params), kp.private_key_hex);
 }
 
-async function req(method, path, body) {
-  const init = {
+async function req(method: string, path: string, body?: any) {
+  const init: RequestInit = {
     method,
     headers: { 'Content-Type': 'application/json' },
   };
@@ -55,10 +56,10 @@ async function req(method, path, body) {
  * Start a simple static file server that serves files from `dir`.
  * Returns { server, port }.
  */
-function startFileServer(dir) {
+function startFileServer(dir: string): Promise<{ server: Server; port: number }> {
   return new Promise((resolve) => {
     const server = createServer((request, response) => {
-      const urlPath = decodeURIComponent(request.url);
+      const urlPath = decodeURIComponent(request.url!);
       const filePath = join(dir, urlPath);
       try {
         const data = readFileSync(filePath);
@@ -70,7 +71,8 @@ function startFileServer(dir) {
       }
     });
     server.listen(0, '127.0.0.1', () => {
-      resolve({ server, port: server.address().port });
+      const addr = server.address() as { port: number };
+      resolve({ server, port: addr.port });
     });
   });
 }
@@ -99,13 +101,13 @@ describe('E2E: commit → submit → reveal → publish → verify-publication (
     const dataDir = join(tmpDir, 'published', 'data');
     mkdirSync(dataDir, { recursive: true });
 
-    const files = [
-      { name: 'result-01.json', content: JSON.stringify({ model: 'test-gpt', score: 0.847, task: 'mmlu' }) },
-      { name: 'result-02.json', content: JSON.stringify({ model: 'test-gpt', score: 0.912, task: 'hellaswag' }) },
-      { name: 'result-03.json', content: JSON.stringify({ model: 'test-gpt', score: 0.763, task: 'truthfulqa' }) },
+    const files: { name: string; content: string; hash: string }[] = [
+      { name: 'result-01.json', content: JSON.stringify({ model: 'test-gpt', score: 0.847, task: 'mmlu' }), hash: '' },
+      { name: 'result-02.json', content: JSON.stringify({ model: 'test-gpt', score: 0.912, task: 'hellaswag' }), hash: '' },
+      { name: 'result-03.json', content: JSON.stringify({ model: 'test-gpt', score: 0.763, task: 'truthfulqa' }), hash: '' },
     ];
 
-    const itemHashes = [];
+    const itemHashes: string[] = [];
     for (const f of files) {
       writeFileSync(join(dataDir, f.name), f.content);
       const hash = wasm.hashBytes(new TextEncoder().encode(f.content));
@@ -148,8 +150,8 @@ describe('E2E: commit → submit → reveal → publish → verify-publication (
     assert.ok(receipt.selection.beacon_output.randomness, 'Beacon should have randomness');
 
     // ── 5. Get selection ──
-    const selectedItems = receipt.selection.selected_items || [];
-    const voluntaryItems = commitment.items.filter(h => !selectedItems.includes(h));
+    const selectedItems: string[] = receipt.selection.selected_items || [];
+    const voluntaryItems = commitment.items.filter((h: string) => !selectedItems.includes(h));
 
     // With 50% probability and 3 items, we expect 0-3 selected
     assert.ok(selectedItems.length >= 0 && selectedItems.length <= 3);
@@ -174,7 +176,7 @@ describe('E2E: commit → submit → reveal → publish → verify-publication (
     const reveal = { ...revealPayload, signature: revealSig };
 
     // Build file_urls for server-side data verification
-    const revealFileUrls = {};
+    const revealFileUrls: Record<string, string> = {};
     for (const item of selectedItems) {
       const file = files.find(f => f.hash === item);
       if (file) {
@@ -221,7 +223,7 @@ describe('E2E: commit → submit → reveal → publish → verify-publication (
     }
 
     // ── 9. Verify publication — server fetches each file and hashes it ──
-    const fileUrls = {};
+    const fileUrls: Record<string, string> = {};
     for (const f of files) {
       fileUrls[f.hash] = `http://127.0.0.1:${fileServerPort}/published/data/${f.name}`;
     }
