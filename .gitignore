@@ -14,6 +14,8 @@ deploy/cloudflare/node_modules/
 deploy/cloudflare/src/wasm/pb_wasm_bg.wasm
 deployments.log
 deploy/supabase/supabase/.temp/
+deploy/supabase/supabase/.branches/
+supabase/
 secrets/
 dist/
 *.tsbuildinfo
