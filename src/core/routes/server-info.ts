@@ -1,16 +1,15 @@
 /**
  * GET /v1/server-info
- * Reads config from c.get('config') instead of module-level import.
  */
 
-import { Hono } from "npm:hono@^4.6.0";
-import type { AppEnv } from "../types.ts";
-import { getServerKey } from "../signing.ts";
+import { Hono } from 'hono';
+import type { AppEnv } from '../types.ts'
+import { getServerKey } from '../signing.ts'
 
 const route = new Hono<AppEnv>();
 
-route.get("/", (c) => {
-  const config = c.get("config");
+route.get('/', (c) => {
+  const config = c.get('config');
   return c.json({
     operator: config.operator,
     server_key: getServerKey(),

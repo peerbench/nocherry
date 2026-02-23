@@ -1,6 +1,8 @@
 {
   "nodeModulesDir": "auto",
   "imports": {
+    "@core/": "../../../../../src/core/",
+    "hono": "npm:hono@^4.6.0",
     "@types/pg": "npm:@types/pg@^8.16.0"
   }
 }

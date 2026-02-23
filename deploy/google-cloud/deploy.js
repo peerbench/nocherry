@@ -217,8 +217,9 @@ function buildAndPush(config) {
   banner('Step 7: Building and pushing container image');
 
   const imageTag = `${config.region}-docker.pkg.dev/${config.project}/cloud-run-source-deploy/${config.serviceName}`;
+  const nocherryRoot = resolve(__dirname, '../..');
 
-  run(`gcloud builds submit --tag ${imageTag}`);
+  run(`gcloud builds submit --tag ${imageTag} --dockerfile deploy/google-cloud/Dockerfile`, { cwd: nocherryRoot });
   console.log(`  Image built and pushed: ${imageTag}`);
 
   return { imageTag };

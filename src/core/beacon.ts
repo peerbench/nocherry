@@ -1,11 +1,10 @@
 /**
  * Beacon fetching — reactive (on-demand) with caching.
  * Currently supports drand quicknet.
- * Identical logic to pb-node, all storage calls are awaited.
  */
 
-import type { D1Storage } from './storage/d1';
-import * as wasm from './wasm/pb_wasm.js';
+import type { StorageInterface } from './types.ts'
+import { getWasm } from './wasm-registry.ts'
 
 const DRAND_QUICKNET_CHAIN = '52db9ba70e0cc0f6eaf7803dd07447a1f5477735fd3f661792ba94600c84e971';
 const DRAND_RELAYS = [
@@ -13,9 +12,6 @@ const DRAND_RELAYS = [
   `https://drand.cloudflare.com/${DRAND_QUICKNET_CHAIN}/public`,
 ];
 
-/**
- * Fetch a drand round from a relay. Tries each relay in order.
- */
 async function fetchDrandRound(round: number) {
   let lastErr: unknown;
   for (const baseUrl of DRAND_RELAYS) {
@@ -41,24 +37,18 @@ async function fetchDrandRound(round: number) {
   throw lastErr || new Error('All drand relays failed');
 }
 
-/**
- * Get the beacon output for a commitment.
- * Computes the needed round, checks cache, fetches if needed.
- * Will retry for up to `maxWaitMs` if the round hasn't been emitted yet.
- */
-export async function getBeaconOutput(storage: D1Storage, beacon: { type: string }, registeredAt: string, maxWaitMs: number = 15000) {
+export async function getBeaconOutput(storage: StorageInterface, beacon: { type: string }, registeredAt: string, maxWaitMs: number = 15000) {
   if (beacon.type !== 'drand') {
     throw new Error(`Unsupported beacon type: ${beacon.type}`);
   }
 
+  const wasm = getWasm();
   const regUnix = Math.floor(new Date(registeredAt).getTime() / 1000);
   const neededRound = Number(wasm.drandNextRoundAfter(BigInt(regUnix)));
 
-  // Check cache
   const cached = await storage.getCachedBeacon('drand', neededRound);
   if (cached) return cached;
 
-  // Fetch with retry
   const deadline = Date.now() + maxWaitMs;
   let delay = 500;
   while (true) {
@@ -76,14 +66,12 @@ export async function getBeaconOutput(storage: D1Storage, beacon: { type: string
   }
 }
 
-/**
- * Get the most recent beacon round at a given timestamp (the "arrival" beacon).
- */
-export async function getArrivalBeacon(storage: D1Storage, beacon: { type: string }, timestamp: string) {
+export async function getArrivalBeacon(storage: StorageInterface, beacon: { type: string }, timestamp: string) {
   if (beacon.type !== 'drand') {
     throw new Error(`Unsupported beacon type: ${beacon.type}`);
   }
 
+  const wasm = getWasm();
   const tsUnix = Math.floor(new Date(timestamp).getTime() / 1000);
   const nextRound = Number(wasm.drandNextRoundAfter(BigInt(tsUnix)));
   const currentRound = nextRound - 1;
@@ -102,10 +90,8 @@ export async function getArrivalBeacon(storage: D1Storage, beacon: { type: strin
   }
 }
 
-/**
- * Compute selection for a commitment given a beacon output.
- */
 export function computeSelection(commitment: any, beaconOutput: any) {
+  const wasm = getWasm();
   const items: string[] = commitment.items;
   const randomness: string = beaconOutput.randomness;
   const commitHash: string = commitment.commitment_hash;

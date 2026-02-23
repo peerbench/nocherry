@@ -1,9 +1,17 @@
 /**
- * Cloud Run configuration — reads from process.env.
+ * Cloud Run configuration -- reads from process.env.
  * Cloud Run auto-sets PORT (8080) and GOOGLE_CLOUD_PROJECT.
  */
 
-export function getConfig() {
+import type { Config } from '../../../src/core/types.ts'
+
+interface GoogleCloudConfig extends Config {
+  port: number;
+  projectId: string;
+  firestoreDatabase: string;
+}
+
+export function getConfig(): GoogleCloudConfig {
   return {
     port: parseInt(process.env.PORT || '8080', 10),
     projectId: process.env.GOOGLE_CLOUD_PROJECT || '',
@@ -18,3 +26,5 @@ export function getConfig() {
     verifyRevealData: process.env.VERIFY_REVEAL_DATA !== 'false',
   };
 }
+
+export type { GoogleCloudConfig };

@@ -7,11 +7,11 @@ import { Hono } from 'hono';
 import type { AppEnv } from './types';
 import { D1Storage } from './storage/d1';
 import { getConfig } from './config';
-import { initServerKey } from './signing';
+import { initServerKey } from './core/signing.ts';
 
-import serverInfoRoute from './routes/server-info';
-import commitmentsRoute from './routes/commitments';
-import revealsRoute from './routes/reveals';
+import serverInfoRoute from './core/routes/server-info.ts';
+import commitmentsRoute from './core/routes/commitments.ts';
+import revealsRoute from './core/routes/reveals.ts';
 
 export function createApp() {
   const app = new Hono<AppEnv>();

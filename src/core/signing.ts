@@ -1,19 +1,14 @@
 /**
- * Server signing utilities — async lazy-init pattern for Workers.
- * The server has its own Ed25519 keypair for signing responses.
+ * Server signing utilities — the server has its own Ed25519 keypair
+ * for signing responses.
  */
 
-import type { D1Storage } from './storage/d1';
-import type { Keypair } from './types';
-import * as wasm from './wasm/pb_wasm.js';
+import type { StorageInterface, Keypair } from './types.ts'
+import { getWasm } from './wasm-registry.ts'
 
 let serverKeypair: Keypair | null = null;
 
-/**
- * Initialize or load the server's signing keypair.
- * No-op after first successful call (module-level cache).
- */
-export async function initServerKey(storage: D1Storage): Promise<Keypair> {
+export async function initServerKey(storage: StorageInterface): Promise<Keypair> {
   if (serverKeypair) return serverKeypair;
 
   const existing = await storage.getServerIdentity();
@@ -22,6 +17,7 @@ export async function initServerKey(storage: D1Storage): Promise<Keypair> {
     return serverKeypair;
   }
 
+  const wasm = getWasm();
   const kp = wasm.generateKeypair();
   serverKeypair = {
     did_key: kp.did_key,
@@ -37,19 +33,14 @@ export function getServerKey(): string {
   return serverKeypair.did_key;
 }
 
-/**
- * Sign a JSON object with the server's key.
- */
 export function serverSign(obj: unknown): string {
   if (!serverKeypair) throw new Error('Server key not initialized');
+  const wasm = getWasm();
   const payload = JSON.stringify(obj);
   const bytes = new TextEncoder().encode(payload);
   return wasm.signMessage(serverKeypair.private_key_hex, bytes);
 }
 
-/**
- * Add server_key and server_signature to a response object.
- */
 export function signResponse<T extends Record<string, unknown>>(obj: T) {
   const withKey = { ...obj, server_key: getServerKey() };
   const signature = serverSign(withKey);

@@ -5,14 +5,16 @@
  */
 
 import { Hono } from 'hono';
-import { getConfig } from './config.js';
+import type { AppEnv } from '../../../src/core/types.ts'
+import { getConfig } from './config.ts';
+import { FirestoreStorage } from './storage/firestore.ts';
 
-import serverInfoRoute from './routes/server-info.js';
-import commitmentsRoute from './routes/commitments.js';
-import revealsRoute from './routes/reveals.js';
+import serverInfoRoute from '../../../src/core/routes/server-info.ts';
+import commitmentsRoute from '../../../src/core/routes/commitments.ts';
+import revealsRoute from '../../../src/core/routes/reveals.ts';
 
-export function createApp(storage) {
-  const app = new Hono();
+export function createApp(storage: FirestoreStorage) {
+  const app = new Hono<AppEnv>();
   const config = getConfig();
 
   // Middleware: inject storage and config

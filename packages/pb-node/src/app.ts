@@ -5,25 +5,29 @@
 import { Hono } from 'hono';
 import type { KyselyStorage } from 'pb-storage';
 import { createSqliteStorage } from 'pb-storage/sqlite';
-import { initServerKey } from './signing.js';
+import * as wasm from 'pb-wasm';
+import { registerWasm } from '../../../src/core/wasm-registry.ts'
+import { initServerKey } from '../../../src/core/signing.ts'
+import type { AppEnv } from '../../../src/core/types.ts'
 import { config } from './config.js';
 
-import serverInfoRoute from './routes/server-info.js';
-import commitmentsRoute from './routes/commitments.js';
-import revealsRoute from './routes/reveals.js';
+import serverInfoRoute from '../../../src/core/routes/server-info.ts'
+import commitmentsRoute from '../../../src/core/routes/commitments.ts'
+import revealsRoute from '../../../src/core/routes/reveals.ts'
 
-type Env = { Variables: { storage: KyselyStorage } };
+registerWasm(wasm);
 
 /**
  * Create a Hono app with the given storage backend.
  * Storage must already have server key initialized.
  */
 export function createApp(storage: KyselyStorage) {
-  const app = new Hono<Env>();
+  const app = new Hono<AppEnv>();
 
-  // Inject storage into every request context
+  // Inject storage and config into every request context
   app.use('*', async (c, next) => {
     c.set('storage', storage);
+    c.set('config', config);
     await next();
   });
 

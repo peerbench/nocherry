@@ -2,25 +2,21 @@
  * Commitment routes:
  *   POST /v1/commitments
  *   GET  /v1/commitments/:hash
+ *   GET  /v1/commitments/:hash/selection
  */
 
 import { Hono } from 'hono';
-import type { KyselyStorage } from 'pb-storage';
-import * as wasm from 'pb-wasm';
-import { getBeaconOutput, getArrivalBeacon, computeSelection } from '../beacon.js';
-import { signResponse } from '../signing.js';
-import { resolveIdentity } from '../did-resolver.js';
+import type { AppEnv } from '../types.ts'
+import { getWasm } from '../wasm-registry.ts'
+import { getBeaconOutput, getArrivalBeacon, computeSelection } from '../beacon.ts'
+import { signResponse } from '../signing.ts'
+import { resolveIdentity } from '../did-resolver.ts'
 
-type Env = { Variables: { storage: KyselyStorage } };
+const route = new Hono<AppEnv>();
 
-const route = new Hono<Env>();
-
-/**
- * POST /v1/commitments — submit a new commitment.
- * The server validates, stores, waits for beacon, computes selection, and returns a full receipt.
- */
 route.post('/', async (c) => {
   const storage = c.get('storage');
+  const wasm = getWasm();
   let body: any;
   try {
     body = await c.req.json();
@@ -31,7 +27,6 @@ route.post('/', async (c) => {
     return c.json({ error: 'Request body must be a JSON object' }, 400);
   }
 
-  // Validate required fields
   const required = ['spec_version', 'commitment_hash', 'items', 'item_count',
     'reveal_probability', 'beacon', 'committed_at', 'signing_key', 'signature'];
   for (const field of required) {
@@ -40,7 +35,6 @@ route.post('/', async (c) => {
     }
   }
 
-  // Validate items
   if (!Array.isArray(body.items) || body.items.length === 0) {
     return c.json({ error: 'items must be a non-empty array' }, 400);
   }
@@ -56,13 +50,11 @@ route.post('/', async (c) => {
     return c.json({ error: 'Duplicate items' }, 400);
   }
 
-  // Validate reveal_probability
   const p = body.reveal_probability;
   if (typeof p !== 'number' || p <= 0 || p > 1) {
     return c.json({ error: 'reveal_probability must be in (0, 1]' }, 400);
   }
 
-  // Verify user's signature
   try {
     const valid = wasm.verifyCommitment(JSON.stringify(body));
     if (!valid) {
@@ -77,16 +69,13 @@ route.post('/', async (c) => {
     ? resolveIdentity(body.identity, body.signing_key)
     : Promise.resolve(null);
 
-  // Check for duplicate
   const existing = await storage.getCommitment(body.commitment_hash);
   if (existing) {
     return c.json({ error: 'Commitment already exists' }, 409);
   }
 
-  // Record server-side timestamp
   const registeredAt = new Date().toISOString();
 
-  // Store commitment (catch UNIQUE constraint race between check and insert)
   try {
     await storage.putCommitment(body.commitment_hash, body, registeredAt);
   } catch (e: any) {
@@ -96,7 +85,6 @@ route.post('/', async (c) => {
     throw e;
   }
 
-  // Fetch arrival beacon (latest round at registration time — already public)
   let arrivalBeacon = null;
   try {
     arrivalBeacon = await getArrivalBeacon(storage, body.beacon, registeredAt);
@@ -104,24 +92,18 @@ route.post('/', async (c) => {
     // Non-critical
   }
 
-  // Fetch beacon and compute selection
   let selection: any = null;
   try {
     const beaconOutput = await getBeaconOutput(storage, body.beacon, registeredAt);
     selection = computeSelection(body, beaconOutput);
     await storage.putSelection(body.commitment_hash, selection, beaconOutput.round);
   } catch {
-    // Beacon fetch failed — still record the commitment, return without selection
     selection = null;
   }
 
-  // Get signer activity
   const signerActivity = await storage.getSignerActivity(body.signing_key);
-
-  // Await DID identity resolution (runs in parallel with beacon/selection)
   const keyMatchesIdentity = await identityPromise;
 
-  // Build and sign the response
   const receipt = signResponse({
     commitment: body,
     commitment_hash: body.commitment_hash,
@@ -135,9 +117,6 @@ route.post('/', async (c) => {
   return c.json(receipt, 201);
 });
 
-/**
- * GET /v1/commitments/:hash — retrieve a stored commitment receipt.
- */
 route.get('/:hash', async (c) => {
   const storage = c.get('storage');
   const hash = c.req.param('hash');
@@ -150,7 +129,6 @@ route.get('/:hash', async (c) => {
   const selection = await storage.getSelection(hash);
   const signerActivity = await storage.getSignerActivity(record.commitment.signing_key);
 
-  // Fetch arrival beacon (latest round at registration time)
   let arrivalBeacon = null;
   try {
     arrivalBeacon = await getArrivalBeacon(storage, record.commitment.beacon, record.registered_at);
@@ -171,9 +149,6 @@ route.get('/:hash', async (c) => {
   return c.json(receipt);
 });
 
-/**
- * GET /v1/commitments/:hash/selection — get selection record.
- */
 route.get('/:hash/selection', async (c) => {
   const storage = c.get('storage');
   const hash = c.req.param('hash');
@@ -183,13 +158,11 @@ route.get('/:hash/selection', async (c) => {
     return c.json({ error: 'Commitment not found' }, 404);
   }
 
-  // Check cache first
   let selection: any = await storage.getSelection(hash);
   if (selection) {
     return c.json(signResponse(selection));
   }
 
-  // Compute on demand
   try {
     const beaconOutput = await getBeaconOutput(storage, record.commitment.beacon, record.registered_at);
     selection = computeSelection(record.commitment, beaconOutput);

@@ -2,7 +2,7 @@
  * Server configuration — loaded from Deno environment or defaults.
  */
 
-import type { Config } from "./types.ts";
+import type { Config } from "@core/types.ts";
 
 export function getConfig(): Config {
   return {
