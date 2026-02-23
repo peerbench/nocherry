@@ -101,7 +101,7 @@ export function computeSelection(commitment: any, beaconOutput: any) {
   let selectedItems: string[];
   let selectionMode: string;
 
-  if (itemCount > 20) {
+  if (itemCount > 1) {
     const count = Math.ceil(p * itemCount);
     selectedItems = wasm.selectBatch(JSON.stringify(items), randomness, count);
     selectionMode = 'batch';

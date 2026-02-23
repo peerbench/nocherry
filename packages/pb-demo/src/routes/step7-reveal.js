@@ -7,7 +7,7 @@ const route = new Hono();
 
 const refs = [
   codeRef('crates/pb-core/src/reveal.rs', 9, 36, 'Rust: Reveal struct & signing payload'),
-  codeRef('packages/pb-node/src/routes/reveals.ts', 46, 80, 'Server: POST reveals handler'),
+  codeRef('src/core/routes/reveals.ts', 40, 89, 'Server: POST reveals handler'),
 ];
 
 function esc(s) {

@@ -38,11 +38,10 @@ export async function createDemoApp(options) {
 
   // Always create embedded pb-node
   const pbNodeMod = await import('../../pb-node/dist/app.js');
-  const signingMod = await import('../../pb-node/dist/signing.js');
   const storageMod = await import('pb-storage/sqlite');
 
   const pbStorage = storageMod.createSqliteStorage(':memory:');
-  await signingMod.initServerKey(pbStorage);
+  await pbNodeMod.initServerKey(pbStorage);
   const embeddedApp = pbNodeMod.createApp(pbStorage);
 
   // Build full server lists: embedded + remotes
