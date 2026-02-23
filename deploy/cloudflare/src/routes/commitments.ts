@@ -8,19 +8,20 @@
  */
 
 import { Hono } from 'hono';
+import type { AppEnv } from '../types';
 import * as wasm from '../wasm/pb_wasm.js';
-import { getBeaconOutput, getArrivalBeacon, computeSelection } from '../beacon.js';
-import { signResponse } from '../signing.js';
-import { resolveIdentity } from '../did-resolver.js';
+import { getBeaconOutput, getArrivalBeacon, computeSelection } from '../beacon';
+import { signResponse } from '../signing';
+import { resolveIdentity } from '../did-resolver';
 
-const route = new Hono();
+const route = new Hono<AppEnv>();
 
 /**
  * POST /v1/commitments — submit a new commitment.
  */
 route.post('/', async (c) => {
   const storage = c.get('storage');
-  let body;
+  let body: any;
   try {
     body = await c.req.json();
   } catch {
@@ -67,7 +68,7 @@ route.post('/', async (c) => {
     if (!valid) {
       return c.json({ error: 'Invalid commitment signature' }, 400);
     }
-  } catch (e) {
+  } catch (e: any) {
     return c.json({ error: `Signature verification failed: ${e.message}` }, 400);
   }
 
@@ -88,7 +89,7 @@ route.post('/', async (c) => {
   // Store commitment (catch UNIQUE constraint race between check and insert)
   try {
     await storage.putCommitment(body.commitment_hash, body, registeredAt);
-  } catch (e) {
+  } catch (e: any) {
     if (e.message && (e.message.includes('UNIQUE') || e.message.includes('unique') || e.message.includes('duplicate key') || e.message.includes('already exists'))) {
       return c.json({ error: 'Commitment already exists' }, 409);
     }
@@ -104,12 +105,12 @@ route.post('/', async (c) => {
   }
 
   // Fetch beacon and compute selection
-  let selection;
+  let selection: any = null;
   try {
     const beaconOutput = await getBeaconOutput(storage, body.beacon, registeredAt);
     selection = computeSelection(body, beaconOutput);
     await storage.putSelection(body.commitment_hash, selection, beaconOutput.round);
-  } catch (e) {
+  } catch {
     selection = null;
   }
 
@@ -182,7 +183,7 @@ route.get('/:hash/selection', async (c) => {
   }
 
   // Check cache first
-  let selection = await storage.getSelection(hash);
+  let selection: any = await storage.getSelection(hash);
   if (selection) {
     return c.json(signResponse(selection));
   }
@@ -193,7 +194,7 @@ route.get('/:hash/selection', async (c) => {
     selection = computeSelection(record.commitment, beaconOutput);
     await storage.putSelection(hash, selection, beaconOutput.round);
     return c.json(signResponse(selection));
-  } catch (e) {
+  } catch (e: any) {
     return c.json({ error: `Selection not available: ${e.message}` }, 503);
   }
 });

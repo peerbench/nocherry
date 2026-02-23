@@ -3,15 +3,17 @@
  * The server has its own Ed25519 keypair for signing responses.
  */
 
+import type { D1Storage } from './storage/d1';
+import type { Keypair } from './types';
 import * as wasm from './wasm/pb_wasm.js';
 
-let serverKeypair = null;
+let serverKeypair: Keypair | null = null;
 
 /**
  * Initialize or load the server's signing keypair.
  * No-op after first successful call (module-level cache).
  */
-export async function initServerKey(storage) {
+export async function initServerKey(storage: D1Storage): Promise<Keypair> {
   if (serverKeypair) return serverKeypair;
 
   const existing = await storage.getServerIdentity();
@@ -30,7 +32,7 @@ export async function initServerKey(storage) {
   return serverKeypair;
 }
 
-export function getServerKey() {
+export function getServerKey(): string {
   if (!serverKeypair) throw new Error('Server key not initialized');
   return serverKeypair.did_key;
 }
@@ -38,7 +40,7 @@ export function getServerKey() {
 /**
  * Sign a JSON object with the server's key.
  */
-export function serverSign(obj) {
+export function serverSign(obj: unknown): string {
   if (!serverKeypair) throw new Error('Server key not initialized');
   const payload = JSON.stringify(obj);
   const bytes = new TextEncoder().encode(payload);
@@ -48,7 +50,7 @@ export function serverSign(obj) {
 /**
  * Add server_key and server_signature to a response object.
  */
-export function signResponse(obj) {
+export function signResponse<T extends Record<string, unknown>>(obj: T) {
   const withKey = { ...obj, server_key: getServerKey() };
   const signature = serverSign(withKey);
   return { ...withKey, server_signature: signature };

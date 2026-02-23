@@ -4,9 +4,10 @@
  */
 
 import { Hono } from 'hono';
-import { getServerKey } from '../signing.js';
+import type { AppEnv } from '../types';
+import { getServerKey } from '../signing';
 
-const route = new Hono();
+const route = new Hono<AppEnv>();
 
 route.get('/', (c) => {
   const config = c.get('config');

@@ -5,12 +5,15 @@
   "type": "module",
   "scripts": {
     "dev": "npx wrangler dev",
-    "deploy": "node deploy.js"
+    "deploy": "node deploy.js",
+    "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "hono": "^4.0.0"
   },
   "devDependencies": {
-    "wrangler": "^3.0.0"
+    "wrangler": "^3.0.0",
+    "typescript": "^5.8.2",
+    "@cloudflare/workers-types": "^4.0.0"
   }
 }
