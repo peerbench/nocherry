@@ -168,7 +168,7 @@ describe('Identity Verification', () => {
 
     // PLC resolution queries https://plc.directory/{did} — we can't easily mock this
     // without intercepting fetch. Instead, test the resolver module directly.
-    const { resolveIdentity } = await import('../src/did-resolver.js');
+    const { resolveIdentity } = await import('../../../src/core/did-resolver.ts');
 
     // plc.directory is external, so this will return 'error' or succeed depending
     // on network availability. We test the module contract.

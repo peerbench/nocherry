@@ -7,7 +7,7 @@
 
 import { Kysely, PostgresDialect } from "npm:kysely@^0.27.0";
 import pg from "npm:pg@^8.13.0";
-import type { Keypair } from "../types.ts";
+import type { Keypair } from "@core/types.ts";
 
 interface Database {
   commitments: {

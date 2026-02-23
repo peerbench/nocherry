@@ -4,12 +4,15 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "start": "node src/server.js",
+    "start": "node --experimental-strip-types src/server.ts",
     "deploy": "node deploy.js"
   },
   "dependencies": {
     "@google-cloud/firestore": "^7.0.0",
     "@hono/node-server": "^1.0.0",
     "hono": "^4.0.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.0"
   }
 }

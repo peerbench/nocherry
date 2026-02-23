@@ -5,12 +5,19 @@
  * Collections: server_identity, commitments, selections, reveals, beacon_cache
  */
 
-import { Firestore, FieldValue } from '@google-cloud/firestore';
+import { Firestore } from '@google-cloud/firestore';
+import type { StorageInterface, Keypair } from '../../../../src/core/types.ts'
 
-export class FirestoreStorage {
-  /** @param {string} projectId @param {string} [databaseId] */
-  constructor(projectId, databaseId) {
-    const opts = { projectId };
+export class FirestoreStorage implements StorageInterface {
+  private db: Firestore;
+  private serverIdentity;
+  private commitments;
+  private selections;
+  private reveals;
+  private beaconCache;
+
+  constructor(projectId: string, databaseId?: string) {
+    const opts: { projectId: string; databaseId?: string } = { projectId };
     if (databaseId) opts.databaseId = databaseId;
     this.db = new Firestore(opts);
     this.serverIdentity = this.db.collection('server_identity');
@@ -20,23 +27,23 @@ export class FirestoreStorage {
     this.beaconCache = this.db.collection('beacon_cache');
   }
 
-  // ── Server identity ──
+  // -- Server identity --
 
-  async getServerIdentity() {
+  async getServerIdentity(): Promise<Keypair | null> {
     const doc = await this.serverIdentity.doc('keypair').get();
     if (!doc.exists) return null;
-    return JSON.parse(doc.data().value);
+    return JSON.parse(doc.data()!.value);
   }
 
-  async setServerIdentity(keypair) {
+  async setServerIdentity(keypair: Keypair): Promise<void> {
     await this.serverIdentity.doc('keypair').set({
       value: JSON.stringify(keypair),
     });
   }
 
-  // ── Commitments ──
+  // -- Commitments --
 
-  async putCommitment(id, commitment, registeredAt) {
+  async putCommitment(id: string, commitment: any, registeredAt: string): Promise<void> {
     try {
       await this.commitments.doc(id).create({
         signing_key: commitment.signing_key,
@@ -44,28 +51,28 @@ export class FirestoreStorage {
         registered_at: registeredAt,
         created_at: new Date().toISOString(),
       });
-    } catch (e) {
+    } catch (e: any) {
       if (e.code === 6) {
-        // ALREADY_EXISTS — Firestore create() throws gRPC code 6
+        // ALREADY_EXISTS -- Firestore create() throws gRPC code 6
         throw new Error('Commitment already exists');
       }
       throw e;
     }
   }
 
-  async getCommitment(id) {
+  async getCommitment(id: string): Promise<{ commitment: any; registered_at: string } | null> {
     const doc = await this.commitments.doc(id).get();
     if (!doc.exists) return null;
-    const data = doc.data();
+    const data = doc.data()!;
     return {
       commitment: JSON.parse(data.body),
       registered_at: data.registered_at,
     };
   }
 
-  // ── Selections ──
+  // -- Selections --
 
-  async putSelection(commitmentHash, selection, beaconRound) {
+  async putSelection(commitmentHash: string, selection: any, beaconRound: number): Promise<void> {
     await this.selections.doc(commitmentHash).set({
       beacon_round: beaconRound,
       body: JSON.stringify(selection),
@@ -73,15 +80,15 @@ export class FirestoreStorage {
     });
   }
 
-  async getSelection(commitmentHash) {
+  async getSelection(commitmentHash: string): Promise<any> {
     const doc = await this.selections.doc(commitmentHash).get();
     if (!doc.exists) return null;
-    return JSON.parse(doc.data().body);
+    return JSON.parse(doc.data()!.body);
   }
 
-  // ── Reveals ──
+  // -- Reveals --
 
-  async putReveal(id, commitmentHash, reveal, registeredAt) {
+  async putReveal(id: string, commitmentHash: string, reveal: any, registeredAt: string): Promise<void> {
     await this.reveals.doc(id).set({
       commitment_hash: commitmentHash,
       body: JSON.stringify(reveal),
@@ -89,7 +96,7 @@ export class FirestoreStorage {
     });
   }
 
-  async getReveals(commitmentHash) {
+  async getReveals(commitmentHash: string): Promise<any[]> {
     const snapshot = await this.reveals
       .where('commitment_hash', '==', commitmentHash)
       .get();
@@ -99,9 +106,9 @@ export class FirestoreStorage {
     });
   }
 
-  // ── Anti-spam / Activity ──
+  // -- Anti-spam / Activity --
 
-  async countCommitmentsByKey(signingKey, since) {
+  async countCommitmentsByKey(signingKey: string, since: string): Promise<number> {
     const snapshot = await this.commitments
       .where('signing_key', '==', signingKey)
       .where('registered_at', '>=', since)
@@ -110,10 +117,10 @@ export class FirestoreStorage {
     return snapshot.data().count;
   }
 
-  async getSignerActivity(signingKey) {
+  async getSignerActivity(signingKey: string): Promise<{ commitments_past_hour: number; commitments_past_month: number }> {
     const now = new Date();
-    const oneHourAgo = new Date(now - 3600 * 1000).toISOString();
-    const thirtyDaysAgo = new Date(now - 30 * 24 * 3600 * 1000).toISOString();
+    const oneHourAgo = new Date(now.getTime() - 3600 * 1000).toISOString();
+    const thirtyDaysAgo = new Date(now.getTime() - 30 * 24 * 3600 * 1000).toISOString();
 
     const [hourCount, monthCount] = await Promise.all([
       this.countCommitmentsByKey(signingKey, oneHourAgo),
@@ -126,16 +133,16 @@ export class FirestoreStorage {
     };
   }
 
-  // ── Beacon cache ──
+  // -- Beacon cache --
 
-  async getCachedBeacon(beaconType, round) {
+  async getCachedBeacon(beaconType: string, round: number): Promise<any> {
     const docId = `${beaconType}_${round}`;
     const doc = await this.beaconCache.doc(docId).get();
     if (!doc.exists) return null;
-    return JSON.parse(doc.data().body);
+    return JSON.parse(doc.data()!.body);
   }
 
-  async cacheBeacon(beaconType, round, output) {
+  async cacheBeacon(beaconType: string, round: number, output: any): Promise<void> {
     const docId = `${beaconType}_${round}`;
     await this.beaconCache.doc(docId).set({
       beacon_type: beaconType,
@@ -145,9 +152,9 @@ export class FirestoreStorage {
     });
   }
 
-  // ── Retention ──
+  // -- Retention --
 
-  async deleteOlderThan(cutoff) {
+  async deleteOlderThan(cutoff: Date): Promise<number> {
     const cutoffISO = cutoff.toISOString();
     let totalDeleted = 0;
 
@@ -185,9 +192,9 @@ export class FirestoreStorage {
     return totalDeleted;
   }
 
-  // ── Lifecycle ──
+  // -- Lifecycle --
 
-  async close() {
+  async close(): Promise<void> {
     await this.db.terminate();
   }
 }

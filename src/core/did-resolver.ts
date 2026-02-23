@@ -12,9 +12,6 @@ function isLocalhost(host: string): boolean {
   return hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '::1';
 }
 
-/**
- * Resolve a DID identity and check if the signing key is listed in its DID document.
- */
 export async function resolveIdentity(identity: string, signingKey: string): Promise<'matched' | 'mismatch' | 'error' | 'unsupported'> {
   const method = parseMethod(identity);
   if (!method) return 'unsupported';
@@ -42,22 +39,12 @@ export async function resolveIdentity(identity: string, signingKey: string): Pro
   }
 }
 
-/**
- * Parse the DID method from a DID string.
- */
 function parseMethod(did: string): string | null {
   if (typeof did !== 'string') return null;
   const match = did.match(/^did:(web|plc|webvh):/);
   return match ? match[1] : null;
 }
 
-/**
- * did:web resolution — transforms DID to HTTPS URL and fetches the DID document.
- * Per the DID Web spec, localhost/127.0.0.1 may use HTTP.
- *
- * did:web:example.com -> https://example.com/.well-known/did.json
- * did:web:example.com:path:to -> https://example.com/path/to/did.json
- */
 async function resolveDidWeb(did: string): Promise<unknown> {
   const parts = did.replace('did:web:', '').split(':');
   const host = decodeURIComponent(parts[0]);
@@ -76,11 +63,6 @@ async function resolveDidWeb(did: string): Promise<unknown> {
   return res.json();
 }
 
-/**
- * did:plc resolution — queries the PLC directory.
- *
- * did:plc:abc123 -> GET https://plc.directory/did:plc:abc123
- */
 async function resolveDidPlc(did: string): Promise<unknown> {
   const url = `https://plc.directory/${did}`;
   const res = await fetch(url, { signal: AbortSignal.timeout(RESOLVE_TIMEOUT_MS) });
@@ -88,9 +70,6 @@ async function resolveDidPlc(did: string): Promise<unknown> {
   return res.json();
 }
 
-/**
- * did:webvh resolution — same URL transform as did:web.
- */
 async function resolveDidWebVh(did: string): Promise<unknown> {
   const parts = did.replace('did:webvh:', '').split(':');
   const host = decodeURIComponent(parts[0]);
@@ -109,20 +88,12 @@ async function resolveDidWebVh(did: string): Promise<unknown> {
   return res.json();
 }
 
-/**
- * Extract verification method keys from a DID document and convert to did:key format.
- *
- * Supports publicKeyMultibase (Ed25519, multicodec prefix 0xed01) only for now.
- */
 function extractKeysFromDocument(doc: any): string[] {
   if (!doc || !Array.isArray(doc.verificationMethod)) return [];
 
   const keys: string[] = [];
   for (const vm of doc.verificationMethod) {
     if (vm.publicKeyMultibase) {
-      // publicKeyMultibase is a multibase-encoded key.
-      // For Ed25519 keys this is typically z-base58btc with 0xed01 prefix.
-      // The full string IS the did:key identifier (with the z prefix).
       keys.push(`did:key:${vm.publicKeyMultibase}`);
     }
   }

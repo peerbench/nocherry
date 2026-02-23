@@ -1,13 +1,19 @@
 /**
  * Cloud Run entry point.
- * Creates Firestore storage, initializes server key, starts Hono server.
+ * Registers WASM, creates Firestore storage, initializes server key, starts Hono server.
  */
 
+import { registerWasm } from '../../../src/core/wasm-registry.ts';
+import * as wasm from './wasm/pb_wasm.js';
+
+// Register WASM before anything else uses it
+registerWasm(wasm as any);
+
 import { serve } from '@hono/node-server';
-import { FirestoreStorage } from './storage/firestore.js';
-import { getConfig } from './config.js';
-import { initServerKey } from './signing.js';
-import { createApp } from './app.js';
+import { FirestoreStorage } from './storage/firestore.ts';
+import { getConfig } from './config.ts';
+import { initServerKey } from '../../../src/core/signing.ts';
+import { createApp } from './app.ts';
 
 const config = getConfig();
 const projectId = config.projectId;

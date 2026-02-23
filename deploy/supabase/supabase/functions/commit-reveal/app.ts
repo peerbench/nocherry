@@ -3,20 +3,19 @@
  * Injects storage and config into every request context.
  */
 
-import { Hono } from "npm:hono@^4.6.0";
-import type { AppEnv } from "./types.ts";
-import type { KyselyStorage } from "./storage/postgres.ts";
+import { Hono } from "hono";
+import type { AppEnv, StorageInterface } from "@core/types.ts";
 import { getConfig } from "./config.ts";
 
-import serverInfoRoute from "./routes/server-info.ts";
-import commitmentsRoute from "./routes/commitments.ts";
-import revealsRoute from "./routes/reveals.ts";
+import serverInfoRoute from "@core/routes/server-info.ts";
+import commitmentsRoute from "@core/routes/commitments.ts";
+import revealsRoute from "@core/routes/reveals.ts";
 
 /**
  * Create a Hono app with the given storage backend.
  * Server key must already be initialized before calling this.
  */
-export function createApp(storage: KyselyStorage) {
+export function createApp(storage: StorageInterface) {
   const app = new Hono<AppEnv>({ strict: false }).basePath("/commit-reveal");
 
   // Inject storage and config into every request context

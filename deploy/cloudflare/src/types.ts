@@ -1,8 +1,11 @@
 /**
- * Shared type definitions for the Cloudflare worker.
+ * Cloudflare-specific type definitions.
+ * Core types (Config, Keypair, StorageInterface) live in src/core/types.ts.
  */
 
-import type { D1Storage } from './storage/d1';
+import type { Config, StorageInterface } from './core/types.ts'
+
+export type { Config, Keypair } from './core/types.ts'
 
 // Cloudflare Worker env bindings
 export interface WorkerEnv {
@@ -16,24 +19,7 @@ export interface WorkerEnv {
 export type AppEnv = {
   Bindings: WorkerEnv;
   Variables: {
-    storage: D1Storage;
+    storage: StorageInterface;
     config: Config;
   };
 };
-
-export interface Config {
-  retention: string;
-  operator: string;
-  beaconTypes: string[];
-  specVersion: string;
-  version: string;
-  batchThreshold: number;
-  activityWindows: string[];
-  verifyRevealData: boolean;
-}
-
-export interface Keypair {
-  did_key: string;
-  private_key_hex: string;
-  public_key_hex: string;
-}

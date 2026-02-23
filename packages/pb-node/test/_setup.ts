@@ -7,7 +7,7 @@
  */
 
 import { createApp } from '../src/app.js';
-import { initServerKey } from '../src/signing.js';
+import { initServerKey } from '../../../src/core/signing.ts';
 import { createSqliteStorage } from 'pb-storage/sqlite';
 import type { KyselyStorage } from 'pb-storage';
 
