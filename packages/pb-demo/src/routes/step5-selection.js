@@ -6,9 +6,9 @@ import { codeRef } from '../code-refs.js';
 const route = new Hono();
 
 const refs = [
-  codeRef('packages/pb-node/src/beacon.ts', 111, 144, 'Server: computeSelection'),
+  codeRef('src/core/beacon.ts', 93, 125, 'Server: computeSelection'),
   codeRef('crates/pb-core/src/select.rs', 1, 40, 'Rust: PRNG + per-item selection'),
-  codeRef('packages/pb-node/src/beacon.ts', 18, 41, 'Server: fetchDrandRound'),
+  codeRef('src/core/beacon.ts', 15, 37, 'Server: fetchDrandRound'),
 ];
 
 route.get('/', (c) => {
@@ -52,9 +52,10 @@ route.get('/', (c) => {
 
     <h2>Selection Result</h2>
     ${note(`With <strong>reveal_probability = ${commitment.reveal_probability}</strong> and
-    <strong>${commitment.item_count} items</strong>, the per-item selection algorithm
-    independently tests each item: <code>HMAC-SHA256(beacon_randomness, commitment_hash || item_hash)</code>
-    produces a value that's compared against <code>floor(p &times; 2<sup>64</sup>)</code>.`)}
+    <strong>${commitment.item_count} items</strong>, ${commitment.item_count === 1
+      ? `the per-item selection algorithm tests the single item: <code>HMAC-SHA256(beacon_randomness, commitment_hash || item_hash)</code>
+    produces a value that's compared against <code>floor(p &times; 2<sup>64</sup>)</code>.`
+      : `the batch selection algorithm deterministically selects <code>ceil(p &times; n) = ${Math.ceil(commitment.reveal_probability * commitment.item_count)}</code> items using Fisher-Yates shuffle seeded by <code>SHA-256(beacon_randomness)</code>.`}`)}
 
     <ul class="item-list">
       ${(commitment.items || []).map((hash, i) => {

@@ -8,6 +8,7 @@ import { createSqliteStorage } from 'pb-storage/sqlite';
 import * as wasm from 'pb-wasm';
 import { registerWasm } from '../../../src/core/wasm-registry.ts'
 import { initServerKey } from '../../../src/core/signing.ts'
+export { initServerKey }
 import type { AppEnv } from '../../../src/core/types.ts'
 import { config } from './config.js';
 

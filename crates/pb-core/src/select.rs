@@ -131,9 +131,9 @@ pub fn select_batch_by_probability(
 }
 
 /// Determine selection mode based on item count (spec Section 4.5).
-/// Default threshold: 20.
+/// Default threshold: 1 (only single items use per-item coin flip).
 pub fn selection_mode(item_count: usize) -> &'static str {
-    selection_mode_with_threshold(item_count, 20)
+    selection_mode_with_threshold(item_count, 1)
 }
 
 pub fn selection_mode_with_threshold(item_count: usize, batch_threshold: usize) -> &'static str {
@@ -292,7 +292,8 @@ mod tests {
     #[test]
     fn selection_mode_threshold() {
         assert_eq!(selection_mode(1), "per_item");
-        assert_eq!(selection_mode(20), "per_item");
+        assert_eq!(selection_mode(2), "batch");
+        assert_eq!(selection_mode(20), "batch");
         assert_eq!(selection_mode(21), "batch");
         assert_eq!(selection_mode(100), "batch");
     }
@@ -301,6 +302,35 @@ mod tests {
     fn prng_deterministic() {
         let seed = decode_hex("e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855");
         assert_eq!(prng_next(&seed, 42), prng_next(&seed, 42));
+    }
+
+    #[test]
+    fn select_auto_per_item_only_for_single_item() {
+        let seed = decode_hex("e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855");
+        let commit_hash = "aabbccdd";
+
+        // 1 item → per_item (coin flip)
+        let items_1: Vec<String> = vec!["a1a1a1a1".into()];
+        let (_, mode) = select_auto(&seed, commit_hash, &items_1, 0.10).unwrap();
+        assert_eq!(mode, "per_item", "single item must use per_item mode");
+
+        // 2 items → batch (deterministic count)
+        let items_2: Vec<String> = vec!["a1a1a1a1".into(), "b2b2b2b2".into()];
+        let (selected, mode) = select_auto(&seed, commit_hash, &items_2, 0.10).unwrap();
+        assert_eq!(mode, "batch", "2 items must use batch mode");
+        assert_eq!(selected.len(), 1, "ceil(0.10 * 2) = 1 item must be selected");
+
+        // 5 items → batch, ceil(0.10 * 5) = 1
+        let items_5: Vec<String> = (0..5).map(|i| format!("{:08x}", i)).collect();
+        let (selected, mode) = select_auto(&seed, commit_hash, &items_5, 0.10).unwrap();
+        assert_eq!(mode, "batch", "5 items must use batch mode");
+        assert_eq!(selected.len(), 1, "ceil(0.10 * 5) = 1 item must be selected");
+
+        // 17 items → batch, ceil(0.10 * 17) = 2
+        let items_17: Vec<String> = (0..17).map(|i| format!("{:08x}", i)).collect();
+        let (selected, mode) = select_auto(&seed, commit_hash, &items_17, 0.10).unwrap();
+        assert_eq!(mode, "batch", "17 items must use batch mode");
+        assert_eq!(selected.len(), 2, "ceil(0.10 * 17) = 2 items must be selected");
     }
 
     #[test]
