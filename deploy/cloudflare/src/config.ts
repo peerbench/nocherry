@@ -2,7 +2,9 @@
  * Worker configuration — reads from Worker env bindings (c.env).
  */
 
-export function getConfig(env) {
+import type { Config, WorkerEnv } from './types';
+
+export function getConfig(env: WorkerEnv): Config {
   return {
     retention: env.RETENTION || '30d',
     operator: env.OPERATOR || 'Commit-Reveal',

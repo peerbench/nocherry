@@ -7,24 +7,20 @@
 
 const RESOLVE_TIMEOUT_MS = 5000;
 
-function isLocalhost(host) {
+function isLocalhost(host: string): boolean {
   const hostname = host.split(':')[0];
   return hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '::1';
 }
 
 /**
  * Resolve a DID identity and check if the signing key is listed in its DID document.
- *
- * @param {string} identity - The DID to resolve (e.g. "did:web:example.com")
- * @param {string} signingKey - The did:key to look for (e.g. "did:key:z6Mk...")
- * @returns {Promise<"matched"|"mismatch"|"error"|"unsupported">}
  */
-export async function resolveIdentity(identity, signingKey) {
+export async function resolveIdentity(identity: string, signingKey: string): Promise<'matched' | 'mismatch' | 'error' | 'unsupported'> {
   const method = parseMethod(identity);
   if (!method) return 'unsupported';
 
   try {
-    let doc;
+    let doc: any;
     switch (method) {
       case 'web':
         doc = await resolveDidWeb(identity);
@@ -48,9 +44,8 @@ export async function resolveIdentity(identity, signingKey) {
 
 /**
  * Parse the DID method from a DID string.
- * @returns {string|null} The method name or null if unsupported/invalid.
  */
-function parseMethod(did) {
+function parseMethod(did: string): string | null {
   if (typeof did !== 'string') return null;
   const match = did.match(/^did:(web|plc|webvh):/);
   return match ? match[1] : null;
@@ -60,16 +55,16 @@ function parseMethod(did) {
  * did:web resolution — transforms DID to HTTPS URL and fetches the DID document.
  * Per the DID Web spec, localhost/127.0.0.1 may use HTTP.
  *
- * did:web:example.com → https://example.com/.well-known/did.json
- * did:web:example.com:path:to → https://example.com/path/to/did.json
+ * did:web:example.com -> https://example.com/.well-known/did.json
+ * did:web:example.com:path:to -> https://example.com/path/to/did.json
  */
-async function resolveDidWeb(did) {
+async function resolveDidWeb(did: string): Promise<unknown> {
   const parts = did.replace('did:web:', '').split(':');
   const host = decodeURIComponent(parts[0]);
   const pathParts = parts.slice(1).map(decodeURIComponent);
 
   const scheme = isLocalhost(host) ? 'http' : 'https';
-  let url;
+  let url: string;
   if (pathParts.length === 0) {
     url = `${scheme}://${host}/.well-known/did.json`;
   } else {
@@ -84,9 +79,9 @@ async function resolveDidWeb(did) {
 /**
  * did:plc resolution — queries the PLC directory.
  *
- * did:plc:abc123 → GET https://plc.directory/did:plc:abc123
+ * did:plc:abc123 -> GET https://plc.directory/did:plc:abc123
  */
-async function resolveDidPlc(did) {
+async function resolveDidPlc(did: string): Promise<unknown> {
   const url = `https://plc.directory/${did}`;
   const res = await fetch(url, { signal: AbortSignal.timeout(RESOLVE_TIMEOUT_MS) });
   if (!res.ok) throw new Error(`did:plc fetch failed: ${res.status}`);
@@ -96,13 +91,13 @@ async function resolveDidPlc(did) {
 /**
  * did:webvh resolution — same URL transform as did:web.
  */
-async function resolveDidWebVh(did) {
+async function resolveDidWebVh(did: string): Promise<unknown> {
   const parts = did.replace('did:webvh:', '').split(':');
   const host = decodeURIComponent(parts[0]);
   const pathParts = parts.slice(1).map(decodeURIComponent);
 
   const scheme = isLocalhost(host) ? 'http' : 'https';
-  let url;
+  let url: string;
   if (pathParts.length === 0) {
     url = `${scheme}://${host}/.well-known/did.json`;
   } else {
@@ -118,14 +113,11 @@ async function resolveDidWebVh(did) {
  * Extract verification method keys from a DID document and convert to did:key format.
  *
  * Supports publicKeyMultibase (Ed25519, multicodec prefix 0xed01) only for now.
- *
- * @param {object} doc - The DID document
- * @returns {string[]} Array of did:key strings
  */
-function extractKeysFromDocument(doc) {
+function extractKeysFromDocument(doc: any): string[] {
   if (!doc || !Array.isArray(doc.verificationMethod)) return [];
 
-  const keys = [];
+  const keys: string[] = [];
   for (const vm of doc.verificationMethod) {
     if (vm.publicKeyMultibase) {
       keys.push(`did:key:${vm.publicKeyMultibase}`);

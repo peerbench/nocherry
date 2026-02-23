@@ -4,16 +4,17 @@
  */
 
 import { Hono } from 'hono';
-import { D1Storage } from './storage/d1.js';
-import { getConfig } from './config.js';
-import { initServerKey } from './signing.js';
+import type { AppEnv } from './types';
+import { D1Storage } from './storage/d1';
+import { getConfig } from './config';
+import { initServerKey } from './signing';
 
-import serverInfoRoute from './routes/server-info.js';
-import commitmentsRoute from './routes/commitments.js';
-import revealsRoute from './routes/reveals.js';
+import serverInfoRoute from './routes/server-info';
+import commitmentsRoute from './routes/commitments';
+import revealsRoute from './routes/reveals';
 
 export function createApp() {
-  const app = new Hono();
+  const app = new Hono<AppEnv>();
 
   // Middleware: inject storage, config, and ensure server key is initialized
   app.use('*', async (c, next) => {
