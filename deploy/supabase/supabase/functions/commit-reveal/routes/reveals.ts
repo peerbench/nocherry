@@ -4,22 +4,23 @@
  *   GET  /v1/commitments/:hash/reveals
  *   GET  /v1/commitments/:hash/mirrors    — file_urls from reveals
  *   POST /v1/commitments/:hash/verify-publication
+ *
+ * All storage calls are awaited.
  */
 
-import { Hono, type Context } from "npm:hono@^4.6.0";
+import { Hono } from "npm:hono@^4.6.0";
+import type { AppEnv } from "../types.ts";
 import * as wasm from "../wasm/mod.ts";
 import { signResponse } from "../signing.ts";
 import { getArrivalBeacon } from "../beacon.ts";
-import { config } from "../config.ts";
-import type { KyselyStorage } from "../storage/postgres.ts";
 
-const route = new Hono();
+const route = new Hono<AppEnv>();
 
 /**
  * Fetch a URL, hash the response, and compare against itemHash.
  * Retries once after 2s on failure or mismatch.
  */
-async function fetchAndVerify(url: string, itemHash: string): Promise<Record<string, unknown>> {
+async function fetchAndVerify(url: string, itemHash: string) {
   for (let attempt = 0; attempt < 2; attempt++) {
     try {
       const res = await fetch(url, { signal: AbortSignal.timeout(15000) });
@@ -34,21 +35,21 @@ async function fetchAndVerify(url: string, itemHash: string): Promise<Record<str
       }
       if (attempt === 0) { await new Promise(r => setTimeout(r, 2000)); continue; }
       return { hash: itemHash, url, status: "mismatch", computed_hash: computed };
-    } catch (e) {
+    } catch (e: any) {
       if (attempt === 0) { await new Promise(r => setTimeout(r, 2000)); continue; }
-      return { hash: itemHash, url, status: "fetch_error", detail: (e as Error).message };
+      return { hash: itemHash, url, status: "fetch_error", detail: e.message };
     }
   }
-  return { hash: itemHash, url, status: "fetch_error", detail: "retry exhausted" };
 }
 
 /**
  * POST /v1/commitments/:hash/reveals — submit a reveal.
  */
-route.post("/:hash/reveals", async (c: Context) => {
-  const storage = c.get("storage") as KyselyStorage;
+route.post("/:hash/reveals", async (c) => {
+  const storage = c.get("storage");
+  const config = c.get("config");
   const hash = c.req.param("hash");
-  let body: Record<string, unknown>;
+  let body: any;
   try {
     body = await c.req.json();
   } catch {
@@ -82,31 +83,21 @@ route.post("/:hash/reveals", async (c: Context) => {
 
   // Verify commitment_hash matches the path
   if (body.commitment_hash !== hash) {
-    return c.json(
-      { error: "commitment_hash in body does not match URL" },
-      400,
-    );
+    return c.json({ error: "commitment_hash in body does not match URL" }, 400);
   }
 
   // Validate all revealed items are in the original commitment
-  const commitmentItems = new Set(record.commitment.items as string[]);
-  const revealedItems = [
-    ...(body.selected_items as string[]),
-    ...(body.voluntary_items as string[]),
-  ];
-  for (const item of revealedItems) {
+  const commitmentItems = new Set(record.commitment.items);
+  for (const item of [...body.selected_items, ...body.voluntary_items]) {
     if (!commitmentItems.has(item)) {
-      return c.json(
-        { error: `Item ${item} not in original commitment` },
-        400,
-      );
+      return c.json({ error: `Item ${item} not in original commitment` }, 400);
     }
   }
 
   // Verify reveal signature
   try {
     const valid = wasm.verifySignature(
-      body.signing_key as string,
+      body.signing_key,
       new TextEncoder().encode(
         JSON.stringify({
           spec_version: body.spec_version,
@@ -117,26 +108,23 @@ route.post("/:hash/reveals", async (c: Context) => {
           signing_key: body.signing_key,
         }),
       ),
-      body.signature as string,
+      body.signature,
     );
     if (!valid) {
       return c.json({ error: "Invalid reveal signature" }, 400);
     }
-  } catch (e) {
-    return c.json(
-      { error: `Signature verification failed: ${(e as Error).message}` },
-      400,
-    );
+  } catch (e: any) {
+    return c.json({ error: `Signature verification failed: ${e.message}` }, 400);
   }
 
   // ── Data verification ──
   const verifyEnabled = config.verifyRevealData;
-  const fileUrls = body.file_urls as Record<string, string> | undefined;
+  const fileUrls = body.file_urls;
   let dataVerified = false;
-  let verification: Record<string, unknown> | null = null;
+  let verification: any = null;
 
   if (verifyEnabled) {
-    const selectedItems = (body.selected_items as string[]) || [];
+    const selectedItems: string[] = body.selected_items || [];
     if (selectedItems.length === 0) {
       dataVerified = true;
       verification = { verified_items: 0, total_selected: 0, items: [] };
@@ -145,7 +133,7 @@ route.post("/:hash/reveals", async (c: Context) => {
       verification = { verified_items: 0, total_selected: selectedItems.length, items: [], note: "no file_urls provided" };
     } else {
 
-    const results: Record<string, unknown>[] = [];
+    const results: any[] = [];
     for (const itemHash of selectedItems) {
       const url = fileUrls[itemHash];
       if (!url) {
@@ -155,7 +143,7 @@ route.post("/:hash/reveals", async (c: Context) => {
       results.push(await fetchAndVerify(url, itemHash));
     }
 
-    const matchCount = results.filter((r) => r.status === "match").length;
+    const matchCount = results.filter(r => r.status === "match").length;
     const allMatch = matchCount === selectedItems.length && matchCount > 0;
 
     dataVerified = allMatch;
@@ -173,33 +161,26 @@ route.post("/:hash/reveals", async (c: Context) => {
   // Fetch the current beacon at reveal time
   let beaconAtReveal = null;
   try {
-    beaconAtReveal = await getArrivalBeacon(
-      storage,
-      record.commitment.beacon,
-      registeredAt,
-    );
+    beaconAtReveal = await getArrivalBeacon(storage, record.commitment.beacon, registeredAt);
   } catch {
     // Non-critical
   }
 
-  return c.json(
-    signResponse({
-      reveal_id: revealId,
-      registered_at: registeredAt,
-      beacon_at_reveal: beaconAtReveal,
-      data_verified: dataVerified,
-      verification,
-      file_urls_registered: fileUrls && typeof fileUrls === "object" ? Object.keys(fileUrls).length : 0,
-    }),
-    201,
-  );
+  return c.json(signResponse({
+    reveal_id: revealId,
+    registered_at: registeredAt,
+    beacon_at_reveal: beaconAtReveal,
+    data_verified: dataVerified,
+    verification,
+    file_urls_registered: fileUrls && typeof fileUrls === "object" ? Object.keys(fileUrls).length : 0,
+  }), 201);
 });
 
 /**
  * GET /v1/commitments/:hash/reveals — list reveals for a commitment.
  */
-route.get("/:hash/reveals", async (c: Context) => {
-  const storage = c.get("storage") as KyselyStorage;
+route.get("/:hash/reveals", async (c) => {
+  const storage = c.get("storage");
   const hash = c.req.param("hash");
 
   const record = await storage.getCommitment(hash);
@@ -214,8 +195,8 @@ route.get("/:hash/reveals", async (c: Context) => {
 /**
  * GET /v1/commitments/:hash/mirrors — file_urls extracted from reveals.
  */
-route.get("/:hash/mirrors", async (c: Context) => {
-  const storage = c.get("storage") as KyselyStorage;
+route.get("/:hash/mirrors", async (c) => {
+  const storage = c.get("storage");
   const hash = c.req.param("hash");
 
   const record = await storage.getCommitment(hash);
@@ -227,12 +208,11 @@ route.get("/:hash/mirrors", async (c: Context) => {
   const mirrors: { item_hash: string; url: string; revealed_at: string }[] = [];
   const seen = new Set<string>();
   for (const reveal of reveals) {
-    const fileUrls = (reveal as Record<string, unknown>).file_urls as Record<string, string> | undefined;
-    if (fileUrls && typeof fileUrls === "object") {
-      for (const [itemHash, url] of Object.entries(fileUrls)) {
-        if (!seen.has(url)) {
-          seen.add(url);
-          mirrors.push({ item_hash: itemHash, url, revealed_at: (reveal as Record<string, unknown>).revealed_at as string });
+    if (reveal.file_urls && typeof reveal.file_urls === "object") {
+      for (const [itemHash, url] of Object.entries(reveal.file_urls)) {
+        if (!seen.has(url as string)) {
+          seen.add(url as string);
+          mirrors.push({ item_hash: itemHash, url: url as string, revealed_at: reveal.revealed_at });
         }
       }
     }
@@ -243,11 +223,11 @@ route.get("/:hash/mirrors", async (c: Context) => {
 /**
  * POST /v1/commitments/:hash/verify-publication — verify published data hashes.
  */
-route.post("/:hash/verify-publication", async (c: Context) => {
-  const storage = c.get("storage") as KyselyStorage;
+route.post("/:hash/verify-publication", async (c) => {
+  const storage = c.get("storage");
   const hash = c.req.param("hash");
 
-  let body: Record<string, unknown>;
+  let body: any;
   try {
     body = await c.req.json();
   } catch {
@@ -259,38 +239,35 @@ route.post("/:hash/verify-publication", async (c: Context) => {
     return c.json({ error: "Commitment not found" }, 404);
   }
 
-  const file_urls = body.file_urls as Record<string, string> | undefined;
+  const { file_urls } = body;
   if (!file_urls || typeof file_urls !== "object" || Object.keys(file_urls).length === 0) {
     return c.json({ error: "file_urls must be a non-empty object mapping item hashes to URLs" }, 400);
   }
 
   const commitment = record.commitment;
-  const committedItems = new Set(commitment.items as string[]);
-  const results: Record<string, unknown>[] = [];
+  const committedItems = new Set(commitment.items);
+  const results: any[] = [];
 
   for (const [itemHash, url] of Object.entries(file_urls)) {
     if (!committedItems.has(itemHash)) {
       results.push({ hash: itemHash, url, status: "not_in_commitment" });
       continue;
     }
-    results.push(await fetchAndVerify(url, itemHash));
+    results.push(await fetchAndVerify(url as string, itemHash));
   }
 
-  const matchCount = results.filter((r) => r.status === "match").length;
+  const matchCount = results.filter(r => r.status === "match").length;
   const allMatch = matchCount === Object.keys(file_urls).length && matchCount > 0;
 
-  return c.json(
-    signResponse({
-      commitment_hash: hash,
-      verified_items: matchCount,
-      total_items: (commitment.items as string[]).length,
-      provided_items: Object.keys(file_urls).length,
-      all_match: allMatch,
-      items: results,
-      verified_at: new Date().toISOString(),
-    }),
-    200,
-  );
+  return c.json(signResponse({
+    commitment_hash: hash,
+    verified_items: matchCount,
+    total_items: commitment.items.length,
+    provided_items: Object.keys(file_urls).length,
+    all_match: allMatch,
+    items: results,
+    verified_at: new Date().toISOString(),
+  }), 200);
 });
 
 export default route;
