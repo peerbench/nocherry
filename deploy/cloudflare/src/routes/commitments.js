@@ -11,6 +11,7 @@ import { Hono } from 'hono';
 import * as wasm from '../wasm/pb_wasm.js';
 import { getBeaconOutput, getArrivalBeacon, computeSelection } from '../beacon.js';
 import { signResponse } from '../signing.js';
+import { resolveIdentity } from '../did-resolver.js';
 
 const route = new Hono();
 
@@ -70,6 +71,11 @@ route.post('/', async (c) => {
     return c.json({ error: `Signature verification failed: ${e.message}` }, 400);
   }
 
+  // Fire off async DID identity resolution (non-blocking)
+  const identityPromise = body.identity
+    ? resolveIdentity(body.identity, body.signing_key)
+    : Promise.resolve(null);
+
   // Check for duplicate
   const existing = await storage.getCommitment(body.commitment_hash);
   if (existing) {
@@ -110,6 +116,9 @@ route.post('/', async (c) => {
   // Get signer activity
   const signerActivity = await storage.getSignerActivity(body.signing_key);
 
+  // Await DID identity resolution (runs in parallel with beacon/selection)
+  const keyMatchesIdentity = await identityPromise;
+
   // Build and sign the response
   const receipt = signResponse({
     commitment: body,
@@ -118,6 +127,7 @@ route.post('/', async (c) => {
     arrival_beacon: arrivalBeacon,
     selection,
     signer_activity: signerActivity,
+    key_matches_identity: keyMatchesIdentity,
   });
 
   return c.json(receipt, 201);
@@ -153,6 +163,7 @@ route.get('/:hash', async (c) => {
     arrival_beacon: arrivalBeacon,
     selection,
     signer_activity: signerActivity,
+    key_matches_identity: null,
   });
 
   return c.json(receipt);
