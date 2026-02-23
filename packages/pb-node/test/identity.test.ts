@@ -1,19 +1,23 @@
 /**
  * Identity verification tests for DID-based identity resolution.
  *
- * Uses a local mock DID server to serve DID documents.
+ * Dual-mode:
+ *   npm test          → local (mock DID server on localhost)
+ *   npm test:remote   → remote (real DID endpoints like plc.directory)
  */
 
 import { describe, it, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
-import type { Server } from 'node:http';
 import * as wasm from 'pb-wasm';
-import { getApp, cleanup } from './_setup.js';
+import { getApp, cleanup, isRemote } from './_setup.js';
 
 let app: { request(url: string, init?: RequestInit): Promise<Response> };
 
 const DRAND_CHAIN_HASH = '52db9ba70e0cc0f6eaf7803dd07447a1f5477735fd3f661792ba94600c84e971';
+
+// A well-known did:plc (bsky.app) — always resolvable via plc.directory
+const REAL_DID_PLC = 'did:plc:z72i7hdynmk6r22z27h6tvur';
 
 function makeCommitment(kp: any, items: string[], opts: any = {}) {
   const params: any = {
@@ -86,19 +90,24 @@ function makeDIDDocument(did: string, publicKeyMultibase: string) {
 }
 
 describe('Identity Verification', () => {
-  let mockServer: ReturnType<typeof createMockDidServer>;
+  let mockServer: ReturnType<typeof createMockDidServer> | null = null;
   let mockAddr: { port: number };
 
   before(async () => {
     app = await getApp();
-    mockServer = createMockDidServer();
-    mockAddr = await mockServer.start();
+    // Only start mock DID server in local mode
+    if (!isRemote) {
+      mockServer = createMockDidServer();
+      mockAddr = await mockServer.start();
+    }
   });
 
   after(async () => {
-    await mockServer.stop();
+    if (mockServer) await mockServer.stop();
     await cleanup();
   });
+
+  // ── Tests that work in both local and remote mode ──
 
   it('no identity field — receipt has key_matches_identity: null', async () => {
     const kp = wasm.generateKeypair();
@@ -109,42 +118,6 @@ describe('Identity Verification', () => {
     assert.equal(res.status, 201);
     const body = await res.json();
     assert.equal(body.key_matches_identity, null);
-  });
-
-  it('did:web matched — signing key found in DID document', async () => {
-    const kp = wasm.generateKeypair();
-    // Extract the multibase key part from did:key
-    const multibaseKey = kp.did_key.replace('did:key:', '');
-    const host = `127.0.0.1%3A${mockAddr.port}`;
-    const identity = `did:web:${host}`;
-
-    mockServer.addDocument('/.well-known/did.json', makeDIDDocument(identity, multibaseKey));
-
-    const itemHash = wasm.hashBytes(new TextEncoder().encode('identity-test-web-matched'));
-    const commitment = makeCommitment(kp, [itemHash], { identity });
-
-    const res = await req('POST', '/v1/commitments', commitment);
-    assert.equal(res.status, 201);
-    const body = await res.json();
-    assert.equal(body.key_matches_identity, 'matched');
-  });
-
-  it('did:web mismatch — signing key not in DID document', async () => {
-    const kp = wasm.generateKeypair();
-    const otherKp = wasm.generateKeypair();
-    const otherMultibaseKey = otherKp.did_key.replace('did:key:', '');
-    const host = `127.0.0.1%3A${mockAddr.port}`;
-    const identity = `did:web:${host}:mismatch`;
-
-    mockServer.addDocument('/mismatch/did.json', makeDIDDocument(identity, otherMultibaseKey));
-
-    const itemHash = wasm.hashBytes(new TextEncoder().encode('identity-test-web-mismatch'));
-    const commitment = makeCommitment(kp, [itemHash], { identity });
-
-    const res = await req('POST', '/v1/commitments', commitment);
-    assert.equal(res.status, 201);
-    const body = await res.json();
-    assert.equal(body.key_matches_identity, 'mismatch');
   });
 
   it('did:web error — server unreachable', async () => {
@@ -159,39 +132,6 @@ describe('Identity Verification', () => {
     assert.equal(res.status, 201);
     const body = await res.json();
     assert.equal(body.key_matches_identity, 'error');
-  });
-
-  it('did:plc matched — mock PLC directory returns correct key', async () => {
-    const kp = wasm.generateKeypair();
-    const multibaseKey = kp.did_key.replace('did:key:', '');
-    const identity = 'did:plc:testuser123';
-
-    // PLC resolution queries https://plc.directory/{did} — we can't easily mock this
-    // without intercepting fetch. Instead, test the resolver module directly.
-    const { resolveIdentity } = await import('../../../src/core/did-resolver.ts');
-
-    // plc.directory is external, so this will return 'error' or succeed depending
-    // on network availability. We test the module contract.
-    const result = await resolveIdentity(identity, kp.did_key);
-    assert.ok(['matched', 'mismatch', 'error'].includes(result),
-      `Expected matched/mismatch/error, got: ${result}`);
-  });
-
-  it('did:webvh matched — mock webvh server returns correct key', async () => {
-    const kp = wasm.generateKeypair();
-    const multibaseKey = kp.did_key.replace('did:key:', '');
-    const host = `127.0.0.1%3A${mockAddr.port}`;
-    const identity = `did:webvh:${host}:webvh-test`;
-
-    mockServer.addDocument('/webvh-test/did.json', makeDIDDocument(identity, multibaseKey));
-
-    const itemHash = wasm.hashBytes(new TextEncoder().encode('identity-test-webvh-matched'));
-    const commitment = makeCommitment(kp, [itemHash], { identity });
-
-    const res = await req('POST', '/v1/commitments', commitment);
-    assert.equal(res.status, 201);
-    const body = await res.json();
-    assert.equal(body.key_matches_identity, 'matched');
   });
 
   it('unsupported DID method — returns "unsupported"', async () => {
@@ -230,8 +170,8 @@ describe('Identity Verification', () => {
 
   it('identity is signed — tampering with identity after signing fails verification', async () => {
     const kp = wasm.generateKeypair();
-    const host = `127.0.0.1%3A${mockAddr.port}`;
-    const identity = `did:web:${host}:tamper-test`;
+    // Use a DID that doesn't need resolution — signature check is pre-resolution
+    const identity = isRemote ? REAL_DID_PLC : 'did:web:example.com';
 
     const itemHash = wasm.hashBytes(new TextEncoder().encode('identity-test-signed'));
     const commitment = makeCommitment(kp, [itemHash], { identity });
@@ -243,49 +183,178 @@ describe('Identity Verification', () => {
     assert.equal(res.status, 400, 'Tampered identity should fail signature verification');
   });
 
-  it('DID resolution does not delay registered_at timestamp', async () => {
-    const kp = wasm.generateKeypair();
-    const host = `127.0.0.1%3A${mockAddr.port}`;
-    const identity = `did:web:${host}:timing-test`;
-    const multibaseKey = kp.did_key.replace('did:key:', '');
+  if (!isRemote) {
+    // ── Local-only tests (mock DID server on localhost) ──
 
-    mockServer.addDocument('/timing-test/did.json', makeDIDDocument(identity, multibaseKey));
+    it('did:web matched — signing key found in DID document', async () => {
+      const kp = wasm.generateKeypair();
+      const multibaseKey = kp.did_key.replace('did:key:', '');
+      const host = `127.0.0.1%3A${mockAddr.port}`;
+      const identity = `did:web:${host}`;
 
-    const itemHash = wasm.hashBytes(new TextEncoder().encode('identity-test-timing'));
-    const commitment = makeCommitment(kp, [itemHash], { identity });
+      mockServer!.addDocument('/.well-known/did.json', makeDIDDocument(identity, multibaseKey));
 
-    const beforeMs = Date.now();
-    const res = await req('POST', '/v1/commitments', commitment);
-    assert.equal(res.status, 201);
-    const body = await res.json();
+      const itemHash = wasm.hashBytes(new TextEncoder().encode('identity-test-web-matched'));
+      const commitment = makeCommitment(kp, [itemHash], { identity });
 
-    const registeredMs = new Date(body.registered_at).getTime();
-    // registered_at should be very close to 'now' — not delayed by DID resolution
-    // Allow 2 seconds tolerance (generous for local mock)
-    assert.ok(Math.abs(registeredMs - beforeMs) < 2000,
-      `registered_at (${body.registered_at}) should be close to request time, diff: ${Math.abs(registeredMs - beforeMs)}ms`);
-  });
+      const res = await req('POST', '/v1/commitments', commitment);
+      assert.equal(res.status, 201);
+      const body = await res.json();
+      assert.equal(body.key_matches_identity, 'matched');
+    });
 
-  it('GET /v1/commitments/:hash returns key_matches_identity: null', async () => {
-    const kp = wasm.generateKeypair();
-    const host = `127.0.0.1%3A${mockAddr.port}`;
-    const identity = `did:web:${host}:get-test`;
-    const multibaseKey = kp.did_key.replace('did:key:', '');
+    it('did:web mismatch — signing key not in DID document', async () => {
+      const kp = wasm.generateKeypair();
+      const otherKp = wasm.generateKeypair();
+      const otherMultibaseKey = otherKp.did_key.replace('did:key:', '');
+      const host = `127.0.0.1%3A${mockAddr.port}`;
+      const identity = `did:web:${host}:mismatch`;
 
-    mockServer.addDocument('/get-test/did.json', makeDIDDocument(identity, multibaseKey));
+      mockServer!.addDocument('/mismatch/did.json', makeDIDDocument(identity, otherMultibaseKey));
 
-    const itemHash = wasm.hashBytes(new TextEncoder().encode('identity-test-get'));
-    const commitment = makeCommitment(kp, [itemHash], { identity });
+      const itemHash = wasm.hashBytes(new TextEncoder().encode('identity-test-web-mismatch'));
+      const commitment = makeCommitment(kp, [itemHash], { identity });
 
-    const postRes = await req('POST', '/v1/commitments', commitment);
-    assert.equal(postRes.status, 201);
-    const postBody = await postRes.json();
-    assert.equal(postBody.key_matches_identity, 'matched');
+      const res = await req('POST', '/v1/commitments', commitment);
+      assert.equal(res.status, 201);
+      const body = await res.json();
+      assert.equal(body.key_matches_identity, 'mismatch');
+    });
 
-    // GET should return null (point-in-time check only at registration)
-    const getRes = await req('GET', `/v1/commitments/${commitment.commitment_hash}`);
-    assert.equal(getRes.status, 200);
-    const getBody = await getRes.json();
-    assert.equal(getBody.key_matches_identity, null);
-  });
+    it('did:webvh matched — mock webvh server returns correct key', async () => {
+      const kp = wasm.generateKeypair();
+      const multibaseKey = kp.did_key.replace('did:key:', '');
+      const host = `127.0.0.1%3A${mockAddr.port}`;
+      const identity = `did:webvh:${host}:webvh-test`;
+
+      mockServer!.addDocument('/webvh-test/did.json', makeDIDDocument(identity, multibaseKey));
+
+      const itemHash = wasm.hashBytes(new TextEncoder().encode('identity-test-webvh-matched'));
+      const commitment = makeCommitment(kp, [itemHash], { identity });
+
+      const res = await req('POST', '/v1/commitments', commitment);
+      assert.equal(res.status, 201);
+      const body = await res.json();
+      assert.equal(body.key_matches_identity, 'matched');
+    });
+
+    it('did:plc — resolver contract test', async () => {
+      const kp = wasm.generateKeypair();
+      const identity = 'did:plc:testuser123';
+
+      const { resolveIdentity } = await import('../../../src/core/did-resolver.ts');
+
+      const result = await resolveIdentity(identity, kp.did_key);
+      assert.ok(['matched', 'mismatch', 'error'].includes(result),
+        `Expected matched/mismatch/error, got: ${result}`);
+    });
+
+    it('DID resolution does not delay registered_at timestamp', async () => {
+      const kp = wasm.generateKeypair();
+      const host = `127.0.0.1%3A${mockAddr.port}`;
+      const identity = `did:web:${host}:timing-test`;
+      const multibaseKey = kp.did_key.replace('did:key:', '');
+
+      mockServer!.addDocument('/timing-test/did.json', makeDIDDocument(identity, multibaseKey));
+
+      const itemHash = wasm.hashBytes(new TextEncoder().encode('identity-test-timing'));
+      const commitment = makeCommitment(kp, [itemHash], { identity });
+
+      const beforeMs = Date.now();
+      const res = await req('POST', '/v1/commitments', commitment);
+      assert.equal(res.status, 201);
+      const body = await res.json();
+
+      const registeredMs = new Date(body.registered_at).getTime();
+      assert.ok(Math.abs(registeredMs - beforeMs) < 2000,
+        `registered_at (${body.registered_at}) should be close to request time, diff: ${Math.abs(registeredMs - beforeMs)}ms`);
+    });
+
+    it('GET /v1/commitments/:hash returns key_matches_identity: null', async () => {
+      const kp = wasm.generateKeypair();
+      const host = `127.0.0.1%3A${mockAddr.port}`;
+      const identity = `did:web:${host}:get-test`;
+      const multibaseKey = kp.did_key.replace('did:key:', '');
+
+      mockServer!.addDocument('/get-test/did.json', makeDIDDocument(identity, multibaseKey));
+
+      const itemHash = wasm.hashBytes(new TextEncoder().encode('identity-test-get'));
+      const commitment = makeCommitment(kp, [itemHash], { identity });
+
+      const postRes = await req('POST', '/v1/commitments', commitment);
+      assert.equal(postRes.status, 201);
+      const postBody = await postRes.json();
+      assert.equal(postBody.key_matches_identity, 'matched');
+
+      // GET should return null (point-in-time check only at registration)
+      const getRes = await req('GET', `/v1/commitments/${commitment.commitment_hash}`);
+      assert.equal(getRes.status, 200);
+      const getBody = await getRes.json();
+      assert.equal(getBody.key_matches_identity, null);
+    });
+  }
+
+  if (isRemote) {
+    // ── Remote tests (real DID endpoints via plc.directory) ──
+
+    it('did:plc mismatch — real DID resolves but key does not match', async () => {
+      const kp = wasm.generateKeypair();
+      const itemHash = wasm.hashBytes(new TextEncoder().encode('identity-test-plc-mismatch'));
+      const commitment = makeCommitment(kp, [itemHash], { identity: REAL_DID_PLC });
+
+      const res = await req('POST', '/v1/commitments', commitment);
+      assert.equal(res.status, 201);
+      const body = await res.json();
+      assert.equal(body.key_matches_identity, 'mismatch',
+        'Random signing key should not match bsky.app DID document');
+    });
+
+    it('did:plc error — nonexistent DID returns error', async () => {
+      const kp = wasm.generateKeypair();
+      const itemHash = wasm.hashBytes(new TextEncoder().encode('identity-test-plc-error'));
+      const commitment = makeCommitment(kp, [itemHash], {
+        identity: 'did:plc:aaaaaaaaaaaaaaaaaaaaaa',
+      });
+
+      const res = await req('POST', '/v1/commitments', commitment);
+      assert.equal(res.status, 201);
+      const body = await res.json();
+      assert.equal(body.key_matches_identity, 'error',
+        'Nonexistent DID should return error from plc.directory 404');
+    });
+
+    it('DID resolution does not delay registered_at timestamp', async () => {
+      const kp = wasm.generateKeypair();
+      const itemHash = wasm.hashBytes(new TextEncoder().encode('identity-test-timing-remote'));
+      const commitment = makeCommitment(kp, [itemHash], { identity: REAL_DID_PLC });
+
+      const beforeMs = Date.now();
+      const res = await req('POST', '/v1/commitments', commitment);
+      assert.equal(res.status, 201);
+      const body = await res.json();
+
+      const registeredMs = new Date(body.registered_at).getTime();
+      // Allow 5 seconds tolerance for remote (network latency)
+      assert.ok(Math.abs(registeredMs - beforeMs) < 5000,
+        `registered_at should be close to request time, diff: ${Math.abs(registeredMs - beforeMs)}ms`);
+    });
+
+    it('GET /v1/commitments/:hash returns key_matches_identity: null', async () => {
+      const kp = wasm.generateKeypair();
+      const itemHash = wasm.hashBytes(new TextEncoder().encode('identity-test-get-remote'));
+      const commitment = makeCommitment(kp, [itemHash], { identity: REAL_DID_PLC });
+
+      const postRes = await req('POST', '/v1/commitments', commitment);
+      assert.equal(postRes.status, 201);
+      const postBody = await postRes.json();
+      assert.equal(postBody.key_matches_identity, 'mismatch');
+
+      // GET should return null (point-in-time check only at registration)
+      const getRes = await req('GET', `/v1/commitments/${commitment.commitment_hash}`);
+      assert.equal(getRes.status, 200);
+      const getBody = await getRes.json();
+      assert.equal(getBody.key_matches_identity, null,
+        'GET receipt should not re-resolve identity');
+    });
+  }
 });
