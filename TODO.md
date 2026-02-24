@@ -76,7 +76,7 @@ Issues found during full code audit against the unified spec.
 - [ ] **Human: manually verify CLI end-to-end** — run `pb key generate`, hash, commit, submit, verify on real data and confirm everything feels right
 - [ ] **AI: stress-test large file hashing** — verify that `pb hash file` works on large files (100MB+, 1GB+), check memory usage (should stream in 64KiB chunks per spec, verify the WASM implementation actually does this)
 - [ ] **AI: stress-test deeply nested directory hashing** — create a test with 100+ subdirectories, each with deeply nested structures (5-10 levels), verify that `pb hash dir` produces a single reproducible hash per top-level folder. Test that identical directory trees on different machines produce identical hashes. Edge cases: empty directories, symlinks, hidden files (.gitkeep), unicode filenames
-- [ ] **AI: test large item counts** — commit with 1000+ items, verify selection algorithm (batch mode kicks in at ≥20 items), confirm receipt is correct and verifiable
+- [ ] **AI: test large item counts** — commit with 1000+ items, verify selection algorithm (batch mode kicks in at ≥2 items), confirm receipt is correct and verifiable
 
 ### Data Mirrors
 
@@ -449,6 +449,26 @@ The CLI wizard (`pb go <dir>`) and the web demo (`pb-demo`) implement the same c
 - [ ] **Remove JSDoc type annotations** — Once TypeScript types are in place, clean up redundant JSDoc `@typedef` blocks
 
 ---
+
+## Deployment Improvements
+
+### Supabase: Eliminate copy-on-deploy for shared core
+- Currently `setup.sh` copies `src/core/` into the function directory before deploy because the Supabase CLI ESZip bundler historically can't resolve imports outside the `supabase/` directory
+- The `--use-api` flag (server-side bundling without Docker) may now support parent-directory imports via import maps — see [CLI #1028](https://github.com/supabase/cli/issues/1028) and [Discussion #33613](https://github.com/orgs/supabase/discussions/33613)
+- If/when `--use-api` stabilizes, change `deno.json` to `"@core/": "../../../../../src/core/"` and drop the copy step entirely — matching how Google Cloud uses direct relative imports
+- Test: `supabase functions deploy commit-reveal --use-api` with the import map pointing outside supabase/
+
+### PGlite: Migrate from JavaScript to TypeScript
+- `deploy/pglite/src/` is currently plain `.js` files (app.js, server.js, config.js)
+- All other deploy targets (Cloudflare, Google Cloud, Supabase) are TypeScript
+- PGlite currently imports from `pb-node/dist/app.js` (the tsup bundle) because it can't run TypeScript directly
+- After migration, PGlite could import `src/core/` directly like Google Cloud does (using `node --experimental-strip-types`), eliminating the pb-node dist dependency
+
+### Docker: Add a simple local Docker deployment
+- Currently no Docker-based deployment for self-hosting
+- Should be straightforward: Node.js image running pb-node with SQLite storage
+- Useful for users who want `docker run` without installing Node.js
+- Could also serve as the base image for Google Cloud Run (currently has its own Dockerfile at `deploy/google-cloud/Dockerfile`)
 
 ## Later
 
