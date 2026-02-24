@@ -64,6 +64,16 @@ rm -rf "$WASM_OUT/build"
 
 info "WASM artifacts copied to function directory"
 
+# ── 2b. Sync shared core from monorepo ──
+
+CORE_SRC="$MONO_ROOT/src/core"
+CORE_DST="$SCRIPT_DIR/supabase/functions/commit-reveal/core"
+
+echo "Syncing shared core..."
+rm -rf "$CORE_DST"
+cp -r "$CORE_SRC" "$CORE_DST"
+info "Core synced from src/core/"
+
 # ── 3. Get project ref ──
 
 PROJECT_REF="${1:-${SUPABASE_PROJECT_REF:-}}"
