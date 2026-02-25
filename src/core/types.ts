@@ -15,7 +15,6 @@ export interface Config {
   beaconTypes: string[];
   specVersion: string;
   version: string;
-  batchThreshold: number;
   activityWindows: string[];
   verifyRevealData: boolean;
 }

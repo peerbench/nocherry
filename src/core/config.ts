@@ -6,10 +6,9 @@
 import type { Config } from './types.ts';
 
 /** Base config values identical across all deployment targets. */
-export const BASE_CONFIG: Pick<Config, 'beaconTypes' | 'specVersion' | 'version' | 'batchThreshold' | 'activityWindows'> = {
+export const BASE_CONFIG: Pick<Config, 'beaconTypes' | 'specVersion' | 'version' | 'activityWindows'> = {
   beaconTypes: ['drand'],
   specVersion: '0.2.0',
   version: '0.2.0',
-  batchThreshold: 1,
   activityWindows: ['1h', '30d'],
 };
