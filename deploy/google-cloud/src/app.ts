@@ -8,10 +8,7 @@ import { Hono } from 'hono';
 import type { AppEnv } from '../../../src/core/types.ts'
 import { getConfig } from './config.ts';
 import { FirestoreStorage } from './storage/firestore.ts';
-
-import serverInfoRoute from '../../../src/core/routes/server-info.ts';
-import commitmentsRoute from '../../../src/core/routes/commitments.ts';
-import revealsRoute from '../../../src/core/routes/reveals.ts';
+import { mountRoutes } from '../../../src/core/app.ts';
 
 export function createApp(storage: FirestoreStorage) {
   const app = new Hono<AppEnv>();
@@ -24,22 +21,5 @@ export function createApp(storage: FirestoreStorage) {
     await next();
   });
 
-  // Health check
-  app.get('/health', (c) => c.json({ status: 'ok', version: config.version }));
-
-  // Routes
-  app.route('/v1/server-info', serverInfoRoute);
-  app.route('/v1/commitments', commitmentsRoute);
-  app.route('/v1/commitments', revealsRoute);
-
-  // 404 fallback
-  app.notFound((c) => c.json({ error: 'Not found' }, 404));
-
-  // Error handler
-  app.onError((err, c) => {
-    console.error('Unhandled error:', err);
-    return c.json({ error: 'Internal server error' }, 500);
-  });
-
-  return app;
+  return mountRoutes(app);
 }

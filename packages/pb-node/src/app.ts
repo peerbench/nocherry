@@ -10,11 +10,8 @@ import { registerWasm } from '../../../src/core/wasm-registry.ts'
 import { initServerKey } from '../../../src/core/signing.ts'
 export { initServerKey }
 import type { AppEnv } from '../../../src/core/types.ts'
+import { mountRoutes } from '../../../src/core/app.ts';
 import { config } from './config.js';
-
-import serverInfoRoute from '../../../src/core/routes/server-info.ts'
-import commitmentsRoute from '../../../src/core/routes/commitments.ts'
-import revealsRoute from '../../../src/core/routes/reveals.ts'
 
 registerWasm(wasm);
 
@@ -32,24 +29,7 @@ export function createApp(storage: KyselyStorage) {
     await next();
   });
 
-  // Health check
-  app.get('/health', (c) => c.json({ status: 'ok', version: config.version }));
-
-  // Routes
-  app.route('/v1/server-info', serverInfoRoute);
-  app.route('/v1/commitments', commitmentsRoute);
-  app.route('/v1/commitments', revealsRoute);
-
-  // 404 fallback
-  app.notFound((c) => c.json({ error: 'Not found' }, 404));
-
-  // Error handler
-  app.onError((err, c) => {
-    console.error('Unhandled error:', err);
-    return c.json({ error: 'Internal server error' }, 500);
-  });
-
-  return app;
+  return mountRoutes(app);
 }
 
 /**

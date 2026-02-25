@@ -6,10 +6,7 @@
 import { Hono } from "hono";
 import type { AppEnv, StorageInterface } from "@core/types.ts";
 import { getConfig } from "./config.ts";
-
-import serverInfoRoute from "@core/routes/server-info.ts";
-import commitmentsRoute from "@core/routes/commitments.ts";
-import revealsRoute from "@core/routes/reveals.ts";
+import { mountRoutes } from "@core/app.ts";
 
 /**
  * Create a Hono app with the given storage backend.
@@ -25,25 +22,5 @@ export function createApp(storage: StorageInterface) {
     await next();
   });
 
-  // Health check
-  app.get("/health", (c) => {
-    const config = c.get("config");
-    return c.json({ status: "ok", version: config.version });
-  });
-
-  // Routes
-  app.route("/v1/server-info", serverInfoRoute);
-  app.route("/v1/commitments", commitmentsRoute);
-  app.route("/v1/commitments", revealsRoute);
-
-  // 404 fallback
-  app.notFound((c) => c.json({ error: "Not found" }, 404));
-
-  // Error handler
-  app.onError((err, c) => {
-    console.error("Unhandled error:", err);
-    return c.json({ error: "Internal server error" }, 500);
-  });
-
-  return app;
+  return mountRoutes(app);
 }
