@@ -14,6 +14,8 @@ import { getArrivalBeacon } from '../beacon.ts'
 
 const route = new Hono<AppEnv>();
 
+const HASH_RE = /^[0-9a-f]{64}$/;
+
 async function fetchAndVerify(url: string, itemHash: string) {
   const wasm = getWasm();
   for (let attempt = 0; attempt < 2; attempt++) {
@@ -42,6 +44,7 @@ route.post('/:hash/reveals', async (c) => {
   const config = c.get('config');
   const wasm = getWasm();
   const hash = c.req.param('hash');
+  if (!HASH_RE.test(hash)) return c.json({ error: 'Commitment not found' }, 404);
   let body: any;
   try {
     body = await c.req.json();
@@ -155,6 +158,7 @@ route.post('/:hash/reveals', async (c) => {
 route.get('/:hash/reveals', async (c) => {
   const storage = c.get('storage');
   const hash = c.req.param('hash');
+  if (!HASH_RE.test(hash)) return c.json({ error: 'Commitment not found' }, 404);
 
   const record = await storage.getCommitment(hash);
   if (!record) {
@@ -168,6 +172,7 @@ route.get('/:hash/reveals', async (c) => {
 route.get('/:hash/mirrors', async (c) => {
   const storage = c.get('storage');
   const hash = c.req.param('hash');
+  if (!HASH_RE.test(hash)) return c.json({ error: 'Commitment not found' }, 404);
 
   const record = await storage.getCommitment(hash);
   if (!record) {
@@ -193,6 +198,7 @@ route.get('/:hash/mirrors', async (c) => {
 route.post('/:hash/verify-publication', async (c) => {
   const storage = c.get('storage');
   const hash = c.req.param('hash');
+  if (!HASH_RE.test(hash)) return c.json({ error: 'Commitment not found' }, 404);
 
   let body: any;
   try {
