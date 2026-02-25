@@ -64,15 +64,21 @@ rm -rf "$WASM_OUT/build"
 
 info "WASM artifacts copied to function directory"
 
-# ── 2b. Sync shared core from monorepo ──
+# ── 2b. Ensure shared core symlink exists ──
 
-CORE_SRC="$MONO_ROOT/src/core"
 CORE_DST="$SCRIPT_DIR/supabase/functions/commit-reveal/core"
 
-echo "Syncing shared core..."
-rm -rf "$CORE_DST"
-cp -r "$CORE_SRC" "$CORE_DST"
-info "Core synced from src/core/"
+if [ -L "$CORE_DST" ]; then
+  info "Core symlink already in place"
+elif [ -d "$CORE_DST" ]; then
+  warn "core/ is a directory (not a symlink) — replacing with symlink"
+  rm -rf "$CORE_DST"
+  ln -s ../../../../../src/core "$CORE_DST"
+  info "Core symlink created"
+else
+  ln -s ../../../../../src/core "$CORE_DST"
+  info "Core symlink created"
+fi
 
 # ── 3. Get project ref ──
 
