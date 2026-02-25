@@ -4,6 +4,7 @@
  */
 
 import type { Config } from '../../../src/core/types.ts'
+import { BASE_CONFIG } from '../../../src/core/config.ts';
 
 interface GoogleCloudConfig extends Config {
   port: number;
@@ -13,16 +14,12 @@ interface GoogleCloudConfig extends Config {
 
 export function getConfig(): GoogleCloudConfig {
   return {
+    ...BASE_CONFIG,
     port: parseInt(process.env.PORT || '8080', 10),
     projectId: process.env.GOOGLE_CLOUD_PROJECT || '',
     firestoreDatabase: process.env.FIRESTORE_DATABASE || '',
     retention: process.env.RETENTION || '30d',
     operator: process.env.OPERATOR || 'Commit-Reveal',
-    beaconTypes: ['drand'],
-    specVersion: '0.2.0',
-    version: '0.2.0',
-    batchThreshold: 1,
-    activityWindows: ['1h', '30d'],
     verifyRevealData: process.env.VERIFY_REVEAL_DATA !== 'false',
   };
 }

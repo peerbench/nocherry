@@ -8,10 +8,7 @@ import type { AppEnv } from './types';
 import { D1Storage } from './storage/d1';
 import { getConfig } from './config';
 import { initServerKey } from './core/signing.ts';
-
-import serverInfoRoute from './core/routes/server-info.ts';
-import commitmentsRoute from './core/routes/commitments.ts';
-import revealsRoute from './core/routes/reveals.ts';
+import { mountRoutes } from './core/app.ts';
 
 export function createApp() {
   const app = new Hono<AppEnv>();
@@ -26,25 +23,5 @@ export function createApp() {
     await next();
   });
 
-  // Health check
-  app.get('/health', (c) => {
-    const config = c.get('config');
-    return c.json({ status: 'ok', version: config.version });
-  });
-
-  // Routes
-  app.route('/v1/server-info', serverInfoRoute);
-  app.route('/v1/commitments', commitmentsRoute);
-  app.route('/v1/commitments', revealsRoute);
-
-  // 404 fallback
-  app.notFound((c) => c.json({ error: 'Not found' }, 404));
-
-  // Error handler
-  app.onError((err, c) => {
-    console.error('Unhandled error:', err);
-    return c.json({ error: 'Internal server error' }, 500);
-  });
-
-  return app;
+  return mountRoutes(app);
 }
