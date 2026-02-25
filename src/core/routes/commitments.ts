@@ -14,6 +14,8 @@ import { resolveIdentity } from '../did-resolver.ts'
 
 const route = new Hono<AppEnv>();
 
+const HASH_RE = /^[0-9a-f]{64}$/;
+
 route.post('/', async (c) => {
   const storage = c.get('storage');
   const wasm = getWasm();
@@ -120,6 +122,7 @@ route.post('/', async (c) => {
 route.get('/:hash', async (c) => {
   const storage = c.get('storage');
   const hash = c.req.param('hash');
+  if (!HASH_RE.test(hash)) return c.json({ error: 'Commitment not found' }, 404);
 
   const record = await storage.getCommitment(hash);
   if (!record) {
@@ -152,6 +155,7 @@ route.get('/:hash', async (c) => {
 route.get('/:hash/selection', async (c) => {
   const storage = c.get('storage');
   const hash = c.req.param('hash');
+  if (!HASH_RE.test(hash)) return c.json({ error: 'Commitment not found' }, 404);
 
   const record = await storage.getCommitment(hash);
   if (!record) {
