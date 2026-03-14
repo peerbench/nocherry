@@ -495,6 +495,7 @@ dependencies = [
  "ed25519-dalek",
  "getrandom",
  "hex",
+ "js-sys",
  "pb-core",
  "serde",
  "serde-wasm-bindgen",
