@@ -28,8 +28,10 @@ export function page({ title, stepNumber, content, codeRefs = [], rightPanel, se
 </head>
 <body>
   <header>
-    <a href="/" class="logo">Commit-Reveal Protocol</a>
+    <a href="/" class="logo">NOCHERRY</a>
     <span class="badge">${esc(badgeText)}</span>
+    <a href="https://docs.nocherry.net/README.html" class="header-link">Introduction</a>
+    <a href="https://docs.nocherry.net/nochery-commit-reveal-spec-v0.4.html" class="header-link">Spec</a>
   </header>
 
   ${stepNumber ? renderNav(stepNumber, completedStep) : ''}
@@ -144,6 +146,13 @@ header .badge {
   background: var(--accent);
   color: #fff;
 }
+header .header-link {
+  margin-left: auto;
+  color: #ccc;
+  text-decoration: none;
+  font-size: 0.9rem;
+}
+header .header-link:hover { color: #fff; }
 
 footer {
   padding: 16px 24px;
