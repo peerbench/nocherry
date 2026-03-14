@@ -64,7 +64,7 @@ route.get('/', (c) => {
       <p>Type or paste data items, one per line. Each line becomes a separate item that gets hashed.</p>
       <form method="POST">
         <input type="hidden" name="mode" value="custom">
-        <textarea name="data" rows="8" placeholder="Enter one item per line, e.g.:&#10;Model accuracy: 94.2% on test set&#10;Latency p50: 83ms&#10;Throughput: 1200 req/s"
+        <textarea name="data" rows="8"
           style="width:100%;padding:12px;font-family:'SF Mono','Fira Code','Consolas',monospace;font-size:0.85rem;border:1px solid #ccc;border-radius:6px;resize:vertical;background:#f8f9fa"></textarea>
         <button type="submit" class="btn">Hash Custom Data</button>
       </form>
