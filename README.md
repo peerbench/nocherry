@@ -1,3 +1,9 @@
+# NoCherry -- Anti Data Cherry-Picking Consortium
+
+<p align="center">
+  <img src="assets/nocherry_mascot1.png" alt="Just say no to cherry picking data" width="300">
+</p>
+
 # Commit-Reveal Protocol
 
 > Hash your data, commit the hashes to a timestamped server, wait for a drand beacon round you couldn't have predicted, and the beacon deterministically picks which items you must reveal. You can't cherry-pick what gets audited.
