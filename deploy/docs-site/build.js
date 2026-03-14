@@ -105,13 +105,27 @@ async function main() {
     await writeFile(join(RAW_DIR, `${slug}.md`), md);
   }
 
-  // Copy images from docs/ and assets/
+  // Copy images from root, docs/, and assets/
+  // Root-level images (demo.gif etc.)
+  const rootAll = await readdir(ROOT_DIR);
+  for (const f of rootAll) {
+    if (/\.(png|jpg|jpeg|gif|svg)$/i.test(f)) {
+      await copyFile(join(ROOT_DIR, f), join(OUT_DIR, f));
+    }
+  }
+
+  // assets/ subfolder — preserve path so assets/nocherry_mascot1.png works
+  const assetsOut = join(OUT_DIR, 'assets');
+  await mkdir(assetsOut, { recursive: true });
   for (const dir of [DOCS_DIR, join(ROOT_DIR, 'assets')]) {
     try {
       const files = await readdir(dir);
       for (const f of files) {
         if (/\.(png|jpg|jpeg|gif|svg)$/i.test(f)) {
           await copyFile(join(dir, f), join(OUT_DIR, f));
+          if (dir.endsWith('assets')) {
+            await copyFile(join(dir, f), join(assetsOut, f));
+          }
         }
       }
     } catch {}
