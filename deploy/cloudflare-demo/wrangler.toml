@@ -1,0 +1,15 @@
+name = "commit-reveal-demo"
+main = "src/index.js"
+compatibility_date = "2025-01-01"
+compatibility_flags = ["nodejs_compat"]
+
+routes = [
+  { pattern = "demo.nocherry.net", zone_id = "1af6f2e9dca8b15e8af67f29f5cefb0d" }
+]
+
+[[rules]]
+type = "CompiledWasm"
+globs = ["**/*.wasm"]
+
+[alias]
+"pb-wasm" = "./src/wasm/pb_wasm.js"
