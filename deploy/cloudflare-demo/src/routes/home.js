@@ -34,7 +34,6 @@ route.get('/', (c) => {
           <form method="POST" action="/steps/1" style="margin:0">
             <input type="hidden" name="mode" value="live">
             <button type="submit" class="btn" style="padding:12px 28px;font-size:1rem">Start Demo</button>
-            <div style="font-size:0.8rem;color:#666;margin-top:6px;text-align:center">Live servers on peerbench.ai<br>Real multi-server experience</div>
           </form>
         </div>
       </div>
