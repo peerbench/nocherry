@@ -111,6 +111,9 @@ pub fn threshold(p: f64) -> String {
 
 // ── Commitment ──
 
+/// Default reveal probability: 10% of items.
+const DEFAULT_REVEAL_PROBABILITY: f64 = 0.10;
+
 #[wasm_bindgen(js_name = "createCommitment")]
 pub fn create_commitment(params_json: &str, private_key_hex: &str) -> Result<JsValue, JsError> {
     let params: serde_json::Value = serde_json::from_str(params_json)
@@ -123,13 +126,20 @@ pub fn create_commitment(params_json: &str, private_key_hex: &str) -> Result<JsV
         .collect();
 
     let reveal_probability = params["reveal_probability"].as_f64()
-        .ok_or_else(|| JsError::new("reveal_probability is required"))?;
+        .unwrap_or(DEFAULT_REVEAL_PROBABILITY);
 
-    let beacon_ref: beacon::BeaconRef = serde_json::from_value(params["beacon"].clone())
-        .map_err(|e| JsError::new(&format!("parse beacon: {e}")))?;
+    let beacon_ref: beacon::BeaconRef = if params["beacon"].is_null() || params.get("beacon").is_none() {
+        beacon::BeaconRef::drand_quicknet()
+    } else {
+        serde_json::from_value(params["beacon"].clone())
+            .map_err(|e| JsError::new(&format!("parse beacon: {e}")))?
+    };
 
-    let committed_at = params["committed_at"].as_str()
-        .ok_or_else(|| JsError::new("committed_at is required"))?;
+    let committed_at = match params["committed_at"].as_str() {
+        Some(s) => s.to_string(),
+        None => js_sys::Date::new_0().to_iso_string().as_string()
+            .unwrap_or_else(|| "1970-01-01T00:00:00.000Z".to_string()),
+    };
 
     let key_bytes = hex::decode(private_key_hex)
         .map_err(|e| JsError::new(&format!("decode key: {e}")))?;
@@ -151,7 +161,7 @@ pub fn create_commitment(params_json: &str, private_key_hex: &str) -> Result<JsV
         beacon: beacon_ref,
         metadata: params.get("metadata").cloned(),
         stream_id: params.get("stream_id").and_then(|v| v.as_str()).map(|s| s.to_string()),
-        committed_at: committed_at.to_string(),
+        committed_at,
         identity,
     }, &kp).map_err(|e| JsError::new(&e))?;
 

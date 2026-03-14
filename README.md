@@ -89,6 +89,42 @@ Both methods are deterministic -- anyone with the beacon output and commitment c
 
 All cryptographic operations are implemented once in Rust (`crates/pb-core`) and compiled to WebAssembly for use in browsers and Node.js.
 
+## What you provide
+
+You hash your files locally and only send the hashes -- the server never sees your raw data. The SDK needs two things:
+
+1. **Your data** -- files or bytes to hash (the SDK computes SHA-256 for you via `hashBytes`)
+2. **A signing key** -- identifies you and prevents forgery. Generate one with `generateKeypair()` or `pb-js key generate`
+
+Everything else has sensible defaults. Two things you might want to change:
+
+- **Reveal probability** (default: `0.10`) -- what fraction of your items the beacon randomly selects for reveal. `0.10` means ~10%. For 2+ items, at least 1 is always selected. Set higher for more transparency, lower for less.
+- **Identity (DID)** -- link your signing key to a verifiable identity (`did:web` or `did:plc`). Without this, your commitment is pseudonymous. With it, the server resolves the DID and confirms the key matches.
+
+### Single-item commitments: coin-flip mode
+
+When you commit a batch of items, the protocol uses a Fisher-Yates shuffle to select exactly `ceil(probability * item_count)` items -- this guarantees at least 1 item is always selected.
+
+But when you commit a single item, the protocol switches to **coin-flip mode**. Each commitment is an independent Bernoulli trial: the beacon randomness is fed into an HMAC along with your commitment, and if the output falls below the probability threshold, the item is selected. At the default 10% probability, there's a 10% chance it's selected and a 90% chance it's not.
+
+If the coin doesn't land, nothing happens -- but you can commit the same data again. Each new commitment gets a different timestamp, which means a different beacon round, which means a fresh coin flip. Over repeated commitments, the probability compounds: after 10 independent commits at 10%, the chance of being selected at least once is ~65%. After 22 commits, it exceeds 90%.
+
+This is useful when you have a single piece of data (like a model or a report) that you want to subject to ongoing random audits. Each commit is cheap, and eventually the beacon will select it.
+
+### Revealing data
+
+Revealing is optional and can happen outside the protocol entirely. You can publish your data anywhere and anyone can verify it against the committed hashes offline -- the receipt is self-contained. If you use the server's reveal endpoint, you can optionally include `file_urls` mapping item hashes to public URLs, and the server will fetch and verify the data matches.
+
+<details>
+<summary>Advanced options</summary>
+
+- **Beacon** (default: drand quicknet) -- which public randomness beacon determines selection. You'd only change this to use a different randomness source.
+- **Committed at** (default: current time) -- client-side timestamp included in the signed commitment. The server records its own `registered_at` independently, which is what determines beacon timing. This field exists so the same signed commitment can go to multiple servers.
+- **Metadata** -- arbitrary JSON stored with the commitment (not signed). Use it for dataset name, version, or description.
+- **Stream ID** -- groups related commitments into a sequence, like daily snapshots of the same dataset.
+
+</details>
+
 ## Randomness beacon
 
 The protocol uses [drand](https://drand.love) quicknet as its randomness source:
@@ -105,29 +141,63 @@ The beacon interface is pluggable -- other randomness sources can be added.
 ├── crates/
 │   ├── pb-core/              # Rust: all crypto primitives (zero network I/O)
 │   └── pb-cli/               # Rust: native CLI (future)
+├── src/
+│   └── core/                 # Shared Hono routes, beacon logic, signing, DID resolution
 ├── packages/
 │   ├── pb-wasm/              # WASM bindings for pb-core (@nocherry/core)
 │   ├── pb-js/                # JavaScript SDK wrapping WASM (@nocherry/sdk)
 │   ├── pb-node/              # HTTP server - Hono, portable (@nocherry/server)
-│   ├── pb-storage/           # Storage adapters - SQLite & Postgres via Kysely
+│   ├── pb-storage/           # Storage adapters - SQLite, Postgres, PGlite via Kysely
 │   └── pb-demo/              # Interactive 7-step demo web app (@nocherry/demo)
 ├── deploy/
 │   ├── cloudflare/           # Cloudflare Workers + D1 deployment
-│   └── supabase/             # Supabase Edge Functions + Postgres
+│   ├── google-cloud/         # Cloud Run + Firestore deployment
+│   ├── supabase/             # Supabase Edge Functions + Postgres
+│   └── pglite/               # In-process WASM Postgres (dev/testing)
 └── docs/                     # Protocol specifications
 ```
 
-### Architecture principle
-
-**Cryptographic correctness is implemented once in Rust**, then exposed everywhere:
-
-- **WASM** -- browsers, Node.js, Cloudflare Workers, Deno
-- **Native** -- CLI tools, Python bindings (via PyO3)
-- **HTTP servers** -- thin wrappers in JavaScript using Hono (runs on Node.js, Workers, and Deno with the same code)
-
 ## Quick start
 
-### Run the interactive demo
+### CLI
+
+```bash
+# Generate a signing key
+npx pb-js key generate
+
+# Hash a directory, create a commitment, and submit to servers
+npx pb-js go ./my-data
+```
+
+The `go` command is a guided wizard that walks you through the full flow: hash, commit, submit, wait for beacon, and get your receipt.
+
+### SDK
+
+```js
+import { generateKeypair, hashBytes, createCommitment } from '@nocherry/sdk';
+
+// 1. Generate a key (or load an existing one)
+const kp = generateKeypair();
+
+// 2. Hash your data
+const hashes = files.map(f => hashBytes(f));
+
+// 3. Create a commitment (only items + key required, everything else defaults)
+const commitment = createCommitment(
+  JSON.stringify({ items: hashes }),
+  kp.private_key_hex
+);
+
+// 4. Submit to a server
+const res = await fetch('https://server.example/v1/commitments', {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify(commitment),
+});
+const receipt = await res.json();
+```
+
+### Interactive demo
 
 ```bash
 npm install
@@ -135,61 +205,15 @@ npm start -w packages/pb-demo
 # Open http://localhost:7421
 ```
 
-The demo walks through all 7 steps of the protocol with a live drand beacon ticker, real Ed25519 signing, and actual server-side receipt generation.
-
-### Run the server standalone
-
-```bash
-npm start -w packages/pb-node
-# Server at http://localhost:3000
-```
+Walks through all 7 steps with a live drand beacon ticker, real Ed25519 signing, and server-side receipt generation.
 
 ### Run tests
 
 ```bash
-# Server API tests (11 tests)
-node --test packages/pb-node/test/api.test.js
-
-# Demo walkthrough tests (8 tests)
-node --test packages/pb-demo/test/walkthrough.test.js
-
-# Browser tests (4 tests, requires Playwright)
-npx playwright test --config packages/pb-demo/playwright.config.js
-
-# Rust core tests
-cargo test
+npx tsx --test packages/pb-node/test/api.test.ts   # Server API tests
+npx tsx --test packages/pb-demo/test/walkthrough.test.js  # Demo tests
+cargo test                                          # Rust core tests
 ```
-
-### Build WASM from source
-
-```bash
-# Requires wasm-pack: cargo install wasm-pack
-wasm-pack build packages/pb-wasm --target web --out-dir ../../pkg
-```
-
-## HTTP API
-
-### `POST /v1/commitments`
-
-Submit a signed commitment. Returns a receipt with beacon output and selection.
-
-### `GET /v1/commitments/:hash`
-
-Retrieve a stored commitment by its hash.
-
-### `POST /v1/commitments/:hash/reveals`
-
-Submit a reveal for a previously committed set of items.
-
-### `GET /v1/server-info`
-
-Server metadata: public key, supported beacon types, version.
-
-### `GET /health`
-
-Health check.
-
-See the [full specification](docs/nochery-commit-reveal-spec-v0.4.md) for request/response schemas.
 
 ## Deployment
 
@@ -199,32 +223,14 @@ The server runs anywhere Hono runs:
 |--------|---------|-------|
 | Node.js | SQLite (better-sqlite3) | `npm start -w packages/pb-node` |
 | Cloudflare Workers | D1 (SQLite at edge) | [deploy/cloudflare/](deploy/cloudflare/) |
+| Google Cloud Run | Firestore | [deploy/google-cloud/](deploy/google-cloud/) |
 | Supabase Edge Functions | Postgres | [deploy/supabase/](deploy/supabase/) |
+| PGlite (in-process) | WASM Postgres | [deploy/pglite/](deploy/pglite/) |
 
-## Specifications
+## Documentation
 
-| Document | Description |
-|----------|-------------|
-| [**Use Cases**](docs/use-cases.md) | Why this exists -- AI benchmarks, test fairness, training data provenance, compliance audits |
-| [**Unified Spec**](docs/nochery-commit-reveal-spec-v0.4.md) | Complete protocol specification (v0.4) -- hashing, commitment format, selection algorithms, beacon interface, verification pipeline, HTTP API, test vectors |
-| [Reference Implementation](docs/reference-implementation.md) | Architecture document -- monorepo structure, Rust-once philosophy, storage adapters, deployment patterns |
-
-<details>
-<summary>Superseded specs (kept for history)</summary>
-
-| Document | Description |
-|----------|-------------|
-| [Commit-Reveal Spec v0.2](docs/commit-reveal-spec.md) | Original protocol spec (superseded by unified spec) |
-| [Hashing Spec v0.3](docs/hashing-spec.md) | Original hashing spec (superseded by unified spec) |
-
-</details>
-
-## Design priorities
-
-1. **Standalone** -- runs independently; no dependency on external nodes, identity systems, or benchmark registries
-2. **Verifiable offline** -- given the commitment, beacon output, and revealed data, anyone can verify without contacting the service
-3. **Simple** -- one hash algorithm (SHA-256), one signature scheme (Ed25519), pluggable randomness sources
-4. **Composable** -- can be embedded in other systems or run as a separate microservice
+- [**Technical Spec v0.4**](docs/nochery-commit-reveal-spec-v0.4.md) -- complete protocol specification: hashing, commitment format, selection algorithms, beacon interface, verification pipeline, HTTP API, test vectors
+- [**Use Cases**](docs/use-cases.md) -- AI benchmarks, test fairness, training data provenance, compliance audits
 
 ## License
 
