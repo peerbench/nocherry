@@ -235,7 +235,7 @@ The server runs anywhere Hono runs:
 
 ## Documentation
 
-- [**Technical Spec v0.4**](docs/nochery-commit-reveal-spec-v0.4.md) -- complete protocol specification: hashing, commitment format, selection algorithms, beacon interface, verification pipeline, HTTP API, test vectors
+- [**Technical Spec v0.4**](docs/nocherry-commit-reveal-spec-v0.4.md) -- complete protocol specification: hashing, commitment format, selection algorithms, beacon interface, verification pipeline, HTTP API, test vectors
 - [**Use Cases**](docs/use-cases.md) -- AI benchmarks, test fairness, training data provenance, compliance audits
 
 ## License

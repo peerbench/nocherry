@@ -38,7 +38,7 @@
 
 ## TODO
 
-### Spec Alignment (nochery-commit-reveal-spec-v0.4.md) — Completed 2026-02-08
+### Spec Alignment (nocherry-commit-reveal-spec-v0.4.md) — Completed 2026-02-08
 
 Issues found during full code audit against the unified spec.
 
