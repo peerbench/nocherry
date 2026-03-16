@@ -31,7 +31,7 @@ export function page({ title, stepNumber, content, codeRefs = [], rightPanel, se
     <a href="/" class="logo">NOCHERRY</a>
     <span class="badge">${esc(badgeText)}</span>
     <a href="https://docs.nocherry.net/README.html" class="header-link">Introduction</a>
-    <a href="https://docs.nocherry.net/nochery-commit-reveal-spec-v0.4.html" class="header-link">Spec</a>
+    <a href="https://docs.nocherry.net/nocherry-commit-reveal-spec-v0.4.html" class="header-link">Spec</a>
   </header>
 
   ${stepNumber ? renderNav(stepNumber, completedStep) : ''}

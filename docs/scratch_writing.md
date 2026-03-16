@@ -1,6 +1,6 @@
 # Archived Spec Content
 
-Content removed from `nochery-commit-reveal-spec-v0.4.md` during trimming.
+Content removed from `nocherry-commit-reveal-spec-v0.4.md` during trimming.
 These sections were cut because they describe unimplemented features, design rationale
 that doesn't belong in a normative spec, or aspirational architecture.
 
