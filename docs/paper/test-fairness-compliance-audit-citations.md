@@ -34,7 +34,7 @@ Additional references for the "Standardized Test Fairness and Item Auditing" and
 
 ### van der Linden & Veldkamp (2007) — Conditional Item-Exposure Control in Adaptive Testing Using Item-Ineligibility Probabilities
 
-- **Link:** https://doi.org/10.3102/10769986032004398
+- **Link:** https://doi.org/10.3102/1076998606298044
 - **Authors:**
   - Wim J. van der Linden — University of Twente
   - Bernard P. Veldkamp — University of Twente
