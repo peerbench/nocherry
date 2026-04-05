@@ -142,7 +142,7 @@ Additional references for the AI Benchmark Integrity section of the NoCherry com
 - **Quote:** "Nearly half of the benchmarks exhibit saturation, with rates increasing as benchmarks age. Hiding test data (public vs. private) shows no protective effect."
 - **Why relevant:** The finding that keeping test sets private does not prevent saturation is devastating for the standard held-out test set approach. This directly motivates commit-reveal's alternative: rather than hiding the test set (which fails), use cryptographic random sampling to prevent selective reporting from a known test set.
 
-### Chen, Chen, Li, Jiang, Wan, He, Ran, Gu, Li, Xie & Ray (2025) — From Static to Dynamic Evaluation: Benchmarking LLMs Under Data Contamination
+### Chen, Chen, Li, Jiang, Wan, He, Ran, Gu, Li, Xie & Ray (2025) — Recent Advances in Large Language Model Benchmarks against Data Contamination: From Static to Dynamic Evaluation
 - **Link:** https://arxiv.org/abs/2502.17521
 - **Authors:**
   - Simin Chen — Columbia University
