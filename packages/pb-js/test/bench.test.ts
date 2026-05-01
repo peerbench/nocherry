@@ -5,7 +5,7 @@
 
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import * as wasm from 'pb-wasm';
+import * as wasm from '@nocherry/pb-wasm';
 import * as pure from '../src/pure-crypto.js';
 
 const ITERATIONS = 10000;

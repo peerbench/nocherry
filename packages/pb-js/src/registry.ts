@@ -2,9 +2,9 @@
  * Server registry — loads servers.json and provides lookup helpers.
  */
 
-import { readFileSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
-import { join, dirname } from 'node:path';
+// Bundler inlines the JSON, so the registry survives both file:-style
+// dev installs and npm tarball consumption (no fs path resolution).
+import serversJson from '../servers.json' with { type: 'json' };
 
 let _cache: Registry | null = null;
 
@@ -18,11 +18,8 @@ function normalizeEntry(entry: ServerEntry): ServerEntry {
 
 export function loadRegistry(): Registry {
   if (_cache) return _cache;
-  const here = dirname(fileURLToPath(import.meta.url));
-  const filePath = join(here, '..', '..', '..', 'servers.json');
-  const raw = JSON.parse(readFileSync(filePath, 'utf-8'));
+  const raw = serversJson as { servers?: ServerEntry[]; reveal_publishers?: ServerEntry[] };
   _cache = {
-    ...raw,
     servers: (raw.servers || []).map(normalizeEntry),
     reveal_publishers: (raw.reveal_publishers || []).map(normalizeEntry),
   };

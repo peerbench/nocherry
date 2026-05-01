@@ -5,7 +5,7 @@
  * and adds higher-level helpers (multi-server submit, etc).
  */
 
-import * as wasm from 'pb-wasm';
+import * as wasm from '@nocherry/pb-wasm';
 
 // Re-export core functions
 export const hashBytes = wasm.hashBytes;

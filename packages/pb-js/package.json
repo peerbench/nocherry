@@ -13,6 +13,6 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "pb-wasm": "file:../../pkg"
+    "@nocherry/pb-wasm": "*"
   }
 }

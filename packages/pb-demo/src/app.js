@@ -25,7 +25,7 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 
 function loadServersJson() {
   try {
-    const raw = readFileSync(resolve(__dirname, '..', '..', '..', 'servers.json'), 'utf-8');
+    const raw = readFileSync(resolve(__dirname, '..', '..', 'pb-js', 'servers.json'), 'utf-8');
     const parsed = JSON.parse(raw);
     return { servers: parsed.servers || [], revealPublishers: parsed.reveal_publishers || [] };
   } catch {
