@@ -62,12 +62,15 @@ steps:
           && npm pkg set "dependencies.@nocherry/pb-wasm=$$VER" \
           && npm version "$$VER" --no-git-tag-version )
 
-        # Install workspace deps + build pb-js. With pb-js's dep now
+        # Install workspace deps with --ignore-scripts so we skip
+        # pb-node's better-sqlite3 native rebuild (it needs a build
+        # toolchain not present in the cloud-sdk:alpine image, and
+        # we don't run pb-node here anyway). With pb-js's dep now
         # pinned to a published version, the workspace install still
         # links @nocherry/pb-wasm locally (workspace name match wins
         # over registry version match), so the build uses the freshly
         # built pkg/.
-        npm install
+        npm install --ignore-scripts
         npm run build -w @nocherry/sdk
 
         ( cd packages/pb-js && npm publish --registry="https://$$REG/" )
