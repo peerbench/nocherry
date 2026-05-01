@@ -1,0 +1,81 @@
+# Cloud Build pipeline for nocherry npm publishing.
+#
+# Wired to the "nocherry-publish" trigger defined in the gcp-infra repo
+# (terraform/nocherry/main.tf). Triggered on every push to main.
+#
+# Publishes two packages to Artifact Registry (npm):
+#   - @nocherry/pb-wasm  (wasm-pack output, --target=nodejs)
+#   - @nocherry/sdk      (pb-js, depends on pb-wasm at the same version)
+#
+# Both packages share a fresh UTC timestamp version (0.0.YYYYMMDDHHMMSS)
+# so each main push produces a monotonically increasing release. pb-js
+# pins @nocherry/pb-wasm to the exact same version for reproducibility.
+
+steps:
+  # 1. Compile pb-wasm crate to WebAssembly with the @nocherry scope.
+  #    --scope makes wasm-pack write package.json with name
+  #    "@nocherry/pb-wasm" directly, no post-processing needed.
+  - name: 'rust:1-slim'
+    id: 'wasm-build'
+    entrypoint: 'sh'
+    args:
+      - '-c'
+      - |
+        set -eu
+        apt-get update -qq && apt-get install -y -qq curl >/dev/null
+        curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh >/dev/null
+        wasm-pack build packages/pb-wasm \
+          --target nodejs \
+          --out-dir ../../pkg \
+          --scope nocherry
+
+  # 2. Auth to AR npm, bump both package versions to a shared timestamp,
+  #    install workspace deps, build pb-js with tsup, publish both.
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk:alpine'
+    id: 'publish'
+    entrypoint: 'sh'
+    args:
+      - '-c'
+      - |
+        set -eu
+        apk add --no-cache nodejs npm >/dev/null
+
+        TOKEN="$$(gcloud auth print-access-token)"
+        REG="${_REGION}-npm.pkg.dev/${PROJECT_ID}/${_NPM_REPO}"
+        cat > "$$HOME/.npmrc" <<EOF
+        @nocherry:registry=https://$$REG/
+        //$$REG/:always-auth=true
+        //$$REG/:_authToken=$$TOKEN
+        EOF
+
+        VER="0.0.$$(date -u +%Y%m%d%H%M%S)"
+
+        # Bump wasm package to VER and publish.
+        ( cd pkg \
+          && npm version "$$VER" --no-git-tag-version \
+          && npm publish --registry="https://$$REG/" )
+
+        # Pin pb-js's @nocherry/pb-wasm dep to the exact VER we just
+        # published (replaces the local "*" workspace marker), bump
+        # pb-js itself to VER.
+        ( cd packages/pb-js \
+          && npm pkg set "dependencies.@nocherry/pb-wasm=$$VER" \
+          && npm version "$$VER" --no-git-tag-version )
+
+        # Install workspace deps + build pb-js. With pb-js's dep now
+        # pinned to a published version, the workspace install still
+        # links @nocherry/pb-wasm locally (workspace name match wins
+        # over registry version match), so the build uses the freshly
+        # built pkg/.
+        npm install
+        npm run build -w @nocherry/sdk
+
+        ( cd packages/pb-js && npm publish --registry="https://$$REG/" )
+
+substitutions:
+  _REGION: europe-west3
+  _NPM_REPO: pbfed-npm
+
+options:
+  logging: CLOUD_LOGGING_ONLY
+  machineType: E2_HIGHCPU_8
