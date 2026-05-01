@@ -2,9 +2,11 @@
   "name": "nocherry-commit-reveal",
   "private": true,
   "workspaces": [
-    "packages/*"
+    "packages/*",
+    "pkg"
   ],
   "scripts": {
+    "build:wasm": "wasm-pack build packages/pb-wasm --target nodejs --out-dir ../../pkg --scope nocherry",
     "build": "npm run build -ws --if-present",
     "typecheck": "npm run typecheck -ws --if-present"
   },

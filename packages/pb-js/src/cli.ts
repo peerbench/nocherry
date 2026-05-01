@@ -24,7 +24,7 @@ import { homedir } from 'node:os';
 import { execSync } from 'node:child_process';
 import { createInterface } from 'node:readline';
 import { randomBytes, randomInt } from 'node:crypto';
-import * as wasm from 'pb-wasm';
+import * as wasm from '@nocherry/pb-wasm';
 import { getServers, resolveServer, getRevealPublishers } from './registry.js';
 
 const KEY_DIR = join(homedir(), '.nocherry');

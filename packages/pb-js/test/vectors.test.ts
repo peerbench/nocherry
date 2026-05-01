@@ -8,7 +8,7 @@
 
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import * as wasm from 'pb-wasm';
+import * as wasm from '@nocherry/pb-wasm';
 
 // ── Hashing Spec Section 7.1: File Hashes ──
 
