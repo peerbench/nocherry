@@ -48,6 +48,20 @@ steps:
         //$$REG/:_authToken=$$TOKEN
         EOF
 
+        # Install workspace deps + build pb-js BEFORE bumping versions.
+        # While pb-js's dep is still "*", workspace name-match links
+        # node_modules/@nocherry/pb-wasm -> ../pkg, so tsup picks up
+        # the freshly built wasm. --ignore-scripts skips pb-node's
+        # better-sqlite3 native rebuild (no toolchain in this image,
+        # and we never run pb-node from here).
+        #
+        # Bumping pb-js's dep to a concrete version BEFORE install
+        # would push npm 11 into resolving from the registry instead
+        # of the local workspace, then 404 because the version isn't
+        # published yet.
+        npm install --ignore-scripts
+        npm run build -w @nocherry/sdk
+
         VER="0.0.$$(date -u +%Y%m%d%H%M%S)"
 
         # Bump wasm package to VER and publish.
@@ -56,24 +70,14 @@ steps:
           && npm publish --registry="https://$$REG/" )
 
         # Pin pb-js's @nocherry/pb-wasm dep to the exact VER we just
-        # published (replaces the local "*" workspace marker), bump
-        # pb-js itself to VER.
+        # published (replaces the "*" workspace marker), bump pb-js
+        # itself to VER, and publish. The dist is already built
+        # against the freshly compiled pkg from the workspace link
+        # above, so we don't need to reinstall.
         ( cd packages/pb-js \
           && npm pkg set "dependencies.@nocherry/pb-wasm=$$VER" \
-          && npm version "$$VER" --no-git-tag-version )
-
-        # Install workspace deps with --ignore-scripts so we skip
-        # pb-node's better-sqlite3 native rebuild (it needs a build
-        # toolchain not present in the cloud-sdk:alpine image, and
-        # we don't run pb-node here anyway). With pb-js's dep now
-        # pinned to a published version, the workspace install still
-        # links @nocherry/pb-wasm locally (workspace name match wins
-        # over registry version match), so the build uses the freshly
-        # built pkg/.
-        npm install --ignore-scripts
-        npm run build -w @nocherry/sdk
-
-        ( cd packages/pb-js && npm publish --registry="https://$$REG/" )
+          && npm version "$$VER" --no-git-tag-version \
+          && npm publish --registry="https://$$REG/" )
 
 substitutions:
   _REGION: europe-west3
