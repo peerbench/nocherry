@@ -18,7 +18,7 @@
 
 import { describe, it, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import * as wasm from 'pb-wasm';
+import * as wasm from '@nocherry/pb-wasm';
 import { createServer } from 'node:http';
 import type { Server } from 'node:http';
 import { readFileSync, writeFileSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs';

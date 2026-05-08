@@ -6,10 +6,10 @@
  *   SERVER_URL=https://… → remote mode (real fetch against live server)
  */
 
-import { createApp } from '../src/app.js';
-import { initServerKey } from '../../../src/core/signing.ts';
-import { createSqliteStorage } from 'pb-storage/sqlite';
-import type { KyselyStorage } from 'pb-storage';
+import { createApp, loadConfigFromEnv } from '../src/app.js';
+import { initServerKey } from '../../../src/core/signing.js';
+import { createSqliteStorage } from '@nocherry/storage/sqlite';
+import type { KyselyStorage } from '@nocherry/storage';
 
 const SERVER_URL = process.env.SERVER_URL;
 
@@ -43,7 +43,7 @@ export async function getApp(): Promise<AppLike> {
   } else {
     _storage = createSqliteStorage(':memory:');
     await initServerKey(_storage);
-    _app = createApp(_storage);
+    _app = createApp(_storage, loadConfigFromEnv());
   }
   return _app;
 }

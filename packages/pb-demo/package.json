@@ -13,7 +13,7 @@
     "hono": "^4.0.0",
     "@hono/node-server": "^1.13.0",
     "better-sqlite3": "^11.0.0",
-    "pb-storage": "file:../pb-storage",
+    "pb-storage": "file:../storage",
     "pb-wasm": "file:../../pkg"
   },
   "devDependencies": {

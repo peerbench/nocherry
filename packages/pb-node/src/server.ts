@@ -4,11 +4,10 @@
 
 import { serve } from '@hono/node-server';
 import { createDefaultApp } from './app.js';
-import { config } from './config.js';
 
-const { app, storage } = await createDefaultApp();
+const { app, storage, config } = await createDefaultApp();
 
-const server = serve({
+serve({
   fetch: app.fetch,
   port: config.port,
 }, (info) => {

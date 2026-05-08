@@ -11,7 +11,9 @@
     "declaration": true,
     "declarationMap": true,
     "sourceMap": true,
-    "resolveJsonModule": true
+    "resolveJsonModule": true,
+    "allowImportingTsExtensions": true,
+    "noEmit": true
   },
   "exclude": ["node_modules", "dist", "pkg", "target", "crates"]
 }

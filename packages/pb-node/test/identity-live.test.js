@@ -8,7 +8,7 @@
 
 import { describe, it, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import * as wasm from 'pb-wasm';
+import * as wasm from '@nocherry/pb-wasm';
 import { getApp, cleanup } from './_setup.js';
 
 let app;
