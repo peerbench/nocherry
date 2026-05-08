@@ -3,13 +3,16 @@
 # Wired to the "nocherry-publish" trigger defined in the gcp-infra repo
 # (terraform/nocherry/main.tf). Triggered on every push to main.
 #
-# Publishes two packages to Artifact Registry (npm):
+# Publishes four packages to Artifact Registry (npm):
 #   - @nocherry/pb-wasm  (wasm-pack output, --target=nodejs)
 #   - @nocherry/sdk      (pb-js, depends on pb-wasm at the same version)
+#   - @nocherry/storage  (Kysely-based storage adapters; no @nocherry deps)
+#   - @nocherry/server   (pb-node Hono app; depends on pb-wasm + storage)
 #
-# Both packages share a fresh UTC timestamp version (0.0.YYYYMMDDHHMMSS)
-# so each main push produces a monotonically increasing release. pb-js
-# pins @nocherry/pb-wasm to the exact same version for reproducibility.
+# All packages share a fresh UTC timestamp version (0.0.YYYYMMDDHHMMSS)
+# so each main push produces a monotonically increasing release. Each
+# downstream consumer pins its @nocherry/* deps to the exact same VER
+# for reproducibility.
 
 steps:
   # 1. Compile pb-wasm crate to WebAssembly with the @nocherry scope.
@@ -48,34 +51,51 @@ steps:
         //$$REG/:_authToken=$$TOKEN
         EOF
 
-        # Install workspace deps + build pb-js BEFORE bumping versions.
-        # While pb-js's dep is still "*", workspace name-match links
-        # node_modules/@nocherry/pb-wasm -> ../pkg, so tsup picks up
-        # the freshly built wasm. --ignore-scripts skips pb-node's
-        # better-sqlite3 native rebuild (no toolchain in this image,
-        # and we never run pb-node from here).
+        # Install workspace deps + build every package's dist BEFORE
+        # bumping versions. While each consumer's @nocherry/* dep is
+        # still "*", workspace name-match links node_modules/@nocherry/*
+        # to sibling packages, so tsup picks up freshly built code.
+        # --ignore-scripts skips pb-node's better-sqlite3 native rebuild
+        # (no toolchain in this image, and we never run pb-node here).
         #
-        # Bumping pb-js's dep to a concrete version BEFORE install
-        # would push npm 11 into resolving from the registry instead
-        # of the local workspace, then 404 because the version isn't
-        # published yet.
+        # Bumping deps to a concrete version BEFORE install would push
+        # npm 11 into resolving from the registry instead of the local
+        # workspace, then 404 because the version isn't published yet.
         npm install --ignore-scripts
         npm run build -w @nocherry/sdk
+        npm run build -w @nocherry/storage
+        npm run build -w @nocherry/server
 
         VER="0.0.$$(date -u +%Y%m%d%H%M%S)"
 
-        # Bump wasm package to VER and publish.
+        # 1. Publish @nocherry/pb-wasm (no @nocherry deps).
         ( cd pkg \
           && npm version "$$VER" --no-git-tag-version \
           && npm publish --registry="https://$$REG/" )
 
-        # Pin pb-js's @nocherry/pb-wasm dep to the exact VER we just
-        # published (replaces the "*" workspace marker), bump pb-js
-        # itself to VER, and publish. The dist is already built
-        # against the freshly compiled pkg from the workspace link
-        # above, so we don't need to reinstall.
+        # 2. Publish @nocherry/sdk. Pin its @nocherry/pb-wasm dep to
+        #    the exact VER we just published (replaces the "*" workspace
+        #    marker). Dist already built against the freshly compiled
+        #    pkg from the workspace link above; no reinstall needed.
         ( cd packages/pb-js \
           && npm pkg set "dependencies.@nocherry/pb-wasm=$$VER" \
+          && npm version "$$VER" --no-git-tag-version \
+          && npm publish --registry="https://$$REG/" )
+
+        # 3. Publish @nocherry/storage (no @nocherry deps; dist already
+        #    built above).
+        ( cd packages/storage \
+          && npm version "$$VER" --no-git-tag-version \
+          && npm publish --registry="https://$$REG/" )
+
+        # 4. Publish @nocherry/server. Pin both @nocherry/pb-wasm and
+        #    @nocherry/storage to VER. Dist already built; pb-node's
+        #    runtime better-sqlite3 dep stays as a regular semver range
+        #    so consumers compile it on install (or skip if they only
+        #    use the Postgres adapter).
+        ( cd packages/pb-node \
+          && npm pkg set "dependencies.@nocherry/pb-wasm=$$VER" \
+          && npm pkg set "dependencies.@nocherry/storage=$$VER" \
           && npm version "$$VER" --no-git-tag-version \
           && npm publish --registry="https://$$REG/" )
 
