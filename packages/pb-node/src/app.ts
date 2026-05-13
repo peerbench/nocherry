@@ -13,7 +13,12 @@ import * as wasm from '@nocherry/pb-wasm';
 import { registerWasm } from '../../../src/core/wasm-registry.js'
 import { initServerKey } from '../../../src/core/signing.js'
 export { initServerKey }
-import type { AppEnv, Config } from '../../../src/core/types.js'
+import type { AppEnv, Config, StorageInterface } from '../../../src/core/types.js'
+// Re-export the types referenced (directly or transitively) by createApp's
+// return signature `Hono<AppEnv, …>` so embedded consumers (e.g. pbfed
+// mounting nocherry as a sub-app) can emit their own .d.ts without
+// TS4058 "cannot be named" errors on Config / StorageInterface / AppEnv.
+export type { AppEnv, Config, StorageInterface }
 import { mountRoutes } from '../../../src/core/app.js';
 import { loadConfigFromEnv, type PbNodeConfig } from './config.js';
 export { loadConfigFromEnv, type PbNodeConfig }
