@@ -2,12 +2,12 @@
  * Commit-Reveal CLI — JS implementation using pb-wasm.
  *
  * Usage:
- *   pb-js go <dir> [-p <prob>]              Guided wizard (just hit Enter)
+ *   pb-js go <dir> [-p <prob>] [--no-anchor]  Guided wizard (just hit Enter)
  *   pb-js key generate
  *   pb-js key show
  *   pb-js hash file <path>
  *   pb-js hash dir <path>
- *   pb-js commit <dir> --probability <p> [--beacon drand]
+ *   pb-js commit <dir> --probability <p> [--beacon drand] [--no-anchor]
  *   pb-js verify <commitment.json>
  *   pb-js servers                         List known servers
  *   pb-js submit <dir|file> [-s <server>]  Submit commitment to server(s)
@@ -26,6 +26,10 @@ import { createInterface } from 'node:readline';
 import { randomBytes, randomInt } from 'node:crypto';
 import * as wasm from '@nocherry/pb-wasm';
 import { getServers, resolveServer, getRevealPublishers } from './registry.js';
+import {
+  createAnchoredCommitment, reanchorCommitment, submitCommitment, verifyReceiptAnchor,
+  type SubmitResult,
+} from './anchor.js';
 
 const KEY_DIR = join(homedir(), '.nocherry');
 const KEY_FILE = join(KEY_DIR, 'key.json');
@@ -49,6 +53,56 @@ function loadKey(): Record<string, any> {
     process.exit(1);
   }
   return JSON.parse(readFileSync(KEY_FILE, 'utf-8'));
+}
+
+/** Like loadKey, but returns null instead of exiting when no key is configured. */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function tryLoadKey(): Record<string, any> | null {
+  if (process.env.PB_SIGNING_KEY || existsSync(KEY_FILE)) return loadKey();
+  return null;
+}
+
+/**
+ * Re-sign callback for submitCommitment: a server only accepts an anchor
+ * round for a few seconds, so a commitment created earlier is re-signed with
+ * a fresh one at submit time. The new commitment replaces the file on disk.
+ */
+function reanchorAndSave(commitmentPath: string, log: (msg: string) => void) {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  return async (stale: Record<string, any>) => {
+    const key = tryLoadKey();
+    if (!key) {
+      throw new Error('anchor round is no longer fresh and no signing key is available to re-sign. Run: pb-js commit <dir>');
+    }
+    const fresh = await reanchorCommitment(stale, key.private_key_hex);
+    if (fresh.signing_key !== stale.signing_key) {
+      throw new Error('anchor round is no longer fresh and the available signing key is not the one that signed this commitment');
+    }
+    writeFileSync(commitmentPath, JSON.stringify(fresh, null, 2) + '\n');
+    log(`Re-signed with fresh anchor round ${fresh.beacon.anchor_round}`);
+    log(`New commitment hash: ${fresh.commitment_hash}`);
+    return fresh;
+  };
+}
+
+function describeFailure(r: SubmitResult): string {
+  if (r.status === 0) return r.error || 'request failed';
+  const body = typeof r.body === 'string' ? r.body : JSON.stringify(r.body);
+  const hint = r.status === 400 && /signature/i.test(body)
+    ? ' (if this server predates anchor_round, retry with: pb-js commit <dir> --no-anchor)'
+    : '';
+  return `${r.status} ${body}${hint}`;
+}
+
+/** Warn when a receipt for an anchored commitment fails the verifier's anchor checks. */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function warnOnAnchorChecks(serverName: string | null, receipt: any): void {
+  if (!receipt) return;
+  for (const check of verifyReceiptAnchor(receipt)) {
+    if (check.status === 'fail') {
+      console.error(`  WARNING ${serverName}: ${check.name} failed: ${check.detail}`);
+    }
+  }
 }
 
 function saveKey(kp: { did_key: string; private_key_hex: string; public_key_hex: string }) {
@@ -140,7 +194,7 @@ function cmdHashDir(dirPath: string): void {
   console.log(JSON.stringify({ hash: result.hash, items: result.manifest.length }, null, 2));
 }
 
-function cmdCommit(dirPath: string, probability: number, beacon: string): void {
+async function cmdCommit(dirPath: string, probability: number, beacon: string, anchor = true): Promise<void> {
   const key = loadKey();
   const dir = resolve(dirPath);
 
@@ -166,10 +220,7 @@ function cmdCommit(dirPath: string, probability: number, beacon: string): void {
     committed_at: new Date().toISOString(),
   };
 
-  const commitment = wasm.createCommitment(
-    JSON.stringify(params),
-    key.private_key_hex
-  );
+  const commitment = await createAnchoredCommitment(params, key.private_key_hex, { anchor });
 
   writeFileSync(join(dir, 'commitment.json'), JSON.stringify(commitment, null, 2) + '\n');
   console.error('Saved commitment.json');
@@ -232,28 +283,32 @@ async function cmdSubmitFile(commitmentPath: string, serverNameOrUrl?: string): 
   const commitment = JSON.parse(raw);
 
   const server = resolveServer(serverNameOrUrl);
-  const url = `${server.url.replace(/\/$/, '')}/v1/commitments`;
 
   console.log(`Submitting to ${server.name || server.url} ...`);
 
-  const res = await fetch(url, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(commitment),
-  });
+  let result: SubmitResult;
+  try {
+    const outcome = await submitCommitment([server], commitment, {
+      reanchor: reanchorAndSave(commitmentPath, (msg) => console.error(msg)),
+    });
+    result = outcome.results[0];
+  } catch (e: unknown) {
+    console.error(e instanceof Error ? e.message : String(e));
+    process.exit(1);
+  }
 
-  if (res.ok) {
-    const receipt = await res.json() as any;
+  if (result.status === 201) {
+    const receipt = result.body;
     console.log(`201 Created`);
     console.log(`  Server:       ${receipt.server_key}`);
     console.log(`  Registered:   ${receipt.registered_at}`);
     if (receipt.selection?.beacon_output) {
       console.log(`  Beacon Round: ${receipt.selection.beacon_output.round}`);
     }
+    warnOnAnchorChecks(server.name || server.url, receipt);
     console.log(JSON.stringify(receipt, null, 2));
   } else {
-    const body = await res.text();
-    console.error(`Server returned ${res.status}: ${body}`);
+    console.error(`Server returned ${describeFailure(result).replace(/^(\d+) /, '$1: ')}`);
     process.exit(1);
   }
 }
@@ -265,7 +320,7 @@ async function cmdSubmitDir(dir: string): Promise<void> {
     process.exit(1);
   }
 
-  const commitment = JSON.parse(readFileSync(commitmentPath, 'utf-8'));
+  let commitment = JSON.parse(readFileSync(commitmentPath, 'utf-8'));
   const servers = getServers();
   if (servers.length === 0) {
     console.error('No servers in registry.');
@@ -274,40 +329,38 @@ async function cmdSubmitDir(dir: string): Promise<void> {
 
   console.log(`Submitting to ${servers.length} server(s)...`);
 
-  const settled = await Promise.allSettled(
-    servers.map(async (server) => {
-      const url = `${server.url.replace(/\/$/, '')}/v1/commitments`;
-      const res = await fetch(url, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(commitment),
-      });
-      if (res.ok) {
-        const receipt = await res.json() as any;
-        return { server_name: server.name, server_url: server.url, receipt };
-      } else {
-        const body = await res.text();
-        throw new Error(`${server.name}: ${res.status} ${body}`);
-      }
-    })
-  );
+  let results: SubmitResult<typeof servers[number]>[];
+  try {
+    const outcome = await submitCommitment(servers, commitment, {
+      reanchor: reanchorAndSave(commitmentPath, (msg) => console.error(msg)),
+    });
+    commitment = outcome.commitment;
+    results = outcome.results;
+  } catch (e: unknown) {
+    console.error(e instanceof Error ? e.message : String(e));
+    process.exit(1);
+  }
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const receipts: { server_name: string | null; server_url: string; receipt: any }[] = [];
-  for (let i = 0; i < settled.length; i++) {
-    const result = settled[i];
-    if (result.status === 'fulfilled') {
-      const r = result.value;
-      console.log(`  ${r.server_name}: 201 Created (round ${r.receipt.selection?.beacon_output?.round || '?'})`);
-      receipts.push(r);
+  for (const r of results) {
+    if (r.status === 201) {
+      console.log(`  ${r.server.name}: 201 Created (round ${r.body.selection?.beacon_output?.round || '?'})`);
+      warnOnAnchorChecks(r.server.name, r.body);
+      receipts.push({ server_name: r.server.name, server_url: r.server.url, receipt: r.body });
     } else {
-      console.error(`  ${servers[i].name}: ${result.reason?.message || 'unknown error'}`);
+      console.error(`  ${r.server.name}: ${describeFailure(r)}`);
     }
   }
 
   if (receipts.length === 0) {
     console.error('All servers failed.');
     process.exit(1);
+  }
+
+  const rounds = new Set(receipts.map(r => r.receipt.selection?.beacon_output?.round).filter(r => r !== undefined));
+  if (rounds.size > 1) {
+    console.error(`  WARNING servers used different beacon rounds: ${[...rounds].join(', ')}`);
   }
 
   const serverReceipts = {
@@ -1106,7 +1159,7 @@ async function cmdPublishInteractive(dir: string): Promise<void> {
 
 // ── Go: Interactive Wizard ──
 
-async function cmdGo(dirPath: string, probability = 0.50): Promise<void> {
+async function cmdGo(dirPath: string, probability = 0.50, anchor = true): Promise<void> {
   const dir = resolve(dirPath);
   if (!existsSync(dir) || !statSync(dir).isDirectory()) {
     console.error(`Directory not found: ${dir}`);
@@ -1181,10 +1234,7 @@ async function cmdGo(dirPath: string, probability = 0.50): Promise<void> {
     committed_at: new Date().toISOString(),
   };
 
-  const commitment = wasm.createCommitment(
-    JSON.stringify(commitParams),
-    key.private_key_hex
-  );
+  let commitment = await createAnchoredCommitment(commitParams, key.private_key_hex, { anchor });
   writeFileSync(join(dir, 'commitment.json'), JSON.stringify(commitment, null, 2) + '\n');
 
   console.log(`  \u2713 Commitment: ${commitment.commitment_hash.slice(0, 16)}...${commitment.commitment_hash.slice(-6)}`);
@@ -1193,8 +1243,13 @@ async function cmdGo(dirPath: string, probability = 0.50): Promise<void> {
 
   // ── Step 3: Submit ──
   console.log('  Step 3 \u2014 Submit');
-  console.log('  Send to independent servers. Each waits for the next drand beacon (~3s)');
-  console.log('  to randomly select which files must be revealed.');
+  if (anchor) {
+    console.log('  Send to independent servers. All of them wait for the same drand round');
+    console.log('  (anchor round + 2, a few seconds) to randomly select which files must be revealed.');
+  } else {
+    console.log('  Send to independent servers. Each waits for the next drand beacon (~3s)');
+    console.log('  to randomly select which files must be revealed.');
+  }
   console.log();
   await waitForEnter();
 
@@ -1206,18 +1261,25 @@ async function cmdGo(dirPath: string, probability = 0.50): Promise<void> {
 
   const spinner = startSpinner('Waiting for drand beacon...');
 
+  const reanchorNotes: string[] = [];
+  let submitted: SubmitResult<typeof servers[number]>[];
+  try {
+    const outcome = await submitCommitment(servers, commitment, {
+      reanchor: reanchorAndSave(join(dir, 'commitment.json'), (msg) => reanchorNotes.push(msg)),
+    });
+    commitment = outcome.commitment;
+    submitted = outcome.results;
+  } catch (e: unknown) {
+    spinner.fail(e instanceof Error ? e.message : String(e));
+    process.exit(1);
+  }
+
   const settled = await Promise.allSettled(
-    servers.map(async (server) => {
-      const url = `${server.url.replace(/\/$/, '')}/v1/commitments`;
-      const res = await fetch(url, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(commitment),
-      });
-      if (res.ok) {
-        const receipt = await res.json() as any;
-        return { server_name: server.name, server_url: server.url, receipt, duplicate: false };
-      } else if (res.status === 409) {
+    submitted.map(async (r) => {
+      const server = r.server;
+      if (r.status === 201) {
+        return { server_name: server.name, server_url: server.url, receipt: r.body, duplicate: false };
+      } else if (r.status === 409) {
         // Commitment already exists — fetch the existing receipt
         const getUrl = `${server.url.replace(/\/$/, '')}/v1/commitments/${commitment.commitment_hash}`;
         const getRes = await fetch(getUrl);
@@ -1227,8 +1289,7 @@ async function cmdGo(dirPath: string, probability = 0.50): Promise<void> {
         }
         return { server_name: server.name, server_url: server.url, receipt: null, duplicate: true };
       } else {
-        const body = await res.text();
-        throw new Error(`${server.name}: ${res.status} ${body}`);
+        throw new Error(`${server.name}: ${describeFailure(r)}`);
       }
     })
   );
@@ -1255,6 +1316,9 @@ async function cmdGo(dirPath: string, probability = 0.50): Promise<void> {
     console.log('  \u2717 All servers failed.');
     process.exit(1);
   }
+
+  for (const note of reanchorNotes) console.log(`  ${note}`);
+  for (const r of receipts) warnOnAnchorChecks(r.server_name, r.receipt);
 
   if (duplicateCount > 0) {
     console.log();
@@ -1572,12 +1636,12 @@ function cmdGenerate(baseDir: string, count: number): void {
 
 function usage(): void {
   console.log(`Usage:
-  pb-js go <dir> [-p <prob>]                Guided wizard (just hit Enter)
+  pb-js go <dir> [-p <prob>] [--no-anchor]  Guided wizard (just hit Enter)
   pb-js key generate                        Generate Ed25519 keypair
   pb-js key show                            Show stored did:key
   pb-js hash file <path>                    Hash a file (SHA-256)
   pb-js hash dir <path>                     Hash a directory
-  pb-js commit <dir> -p <prob>              Create commitment from directory
+  pb-js commit <dir> -p <prob> [--no-anchor] Create commitment from directory
   pb-js verify <commitment.json>            Verify commitment signature
   pb-js servers                             List known servers
   pb-js submit <dir|file> [-s <srv>]         Submit commitment to server(s)
@@ -1585,7 +1649,12 @@ function usage(): void {
   pb-js publish github <dir> [--repo <r>]   Publish reveal to GitHub
   pb-js publish huggingface <dir> [--repo <r>]  Publish reveal to Hugging Face
   pb-js publish <dir>                       Interactive provider selection
-  pb-js generate-random-data [dir] [-n <n>] Generate random test data (default: random-sample/)`);
+  pb-js generate-random-data [dir] [-n <n>] Generate random test data (default: random-sample/)
+
+  Commitments name the current drand round as beacon.anchor_round, so every
+  server selects with the same round (anchor + 2). Use --no-anchor for servers
+  that predate this field. An anchor is only fresh for a few seconds: submit
+  re-signs commitment.json with a fresh anchor when needed.`);
   process.exit(1);
 }
 
@@ -1598,14 +1667,17 @@ async function main(): Promise<void> {
 
   if (cmd === 'go' && args[1]) {
     let probability = 0.50;
+    let anchor = true;
     const dirArg = args[1];
     for (let i = 2; i < args.length; i++) {
       if ((args[i] === '-p' || args[i] === '--probability') && args[i + 1]) {
         probability = parseFloat(args[i + 1]);
         i++;
+      } else if (args[i] === '--no-anchor') {
+        anchor = false;
       }
     }
-    await cmdGo(dirArg, probability);
+    await cmdGo(dirArg, probability, anchor);
   } else if (cmd === 'key' && sub === 'generate') {
     cmdKeyGenerate();
   } else if (cmd === 'key' && sub === 'show') {
@@ -1617,6 +1689,7 @@ async function main(): Promise<void> {
   } else if (cmd === 'commit' && args[1]) {
     let probability = 0.10;
     let beacon = 'drand';
+    let anchor = true;
     for (let i = 2; i < args.length; i++) {
       if ((args[i] === '-p' || args[i] === '--probability') && args[i + 1]) {
         probability = parseFloat(args[i + 1]);
@@ -1624,9 +1697,11 @@ async function main(): Promise<void> {
       } else if (args[i] === '--beacon' && args[i + 1]) {
         beacon = args[i + 1];
         i++;
+      } else if (args[i] === '--no-anchor') {
+        anchor = false;
       }
     }
-    cmdCommit(args[1], probability, beacon);
+    await cmdCommit(args[1], probability, beacon, anchor);
   } else if (cmd === 'verify' && args[1]) {
     cmdVerify(args[1]);
   } else if (cmd === 'servers') {

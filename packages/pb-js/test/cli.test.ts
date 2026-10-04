@@ -94,6 +94,35 @@ describe('JS CLI', () => {
     writeFileSync(join(tempDir, 'commitment.json'), output);
   });
 
+  it('commit anchors to the current drand round by default', () => {
+    const dir = join(tempDir, 'anchordir');
+    mkdirSync(dir);
+    writeFileSync(join(dir, 'a.txt'), 'anchored');
+
+    const before = Math.floor((Date.now() / 1000 - 1692803367) / 3) + 1;
+    const commitment = JSON.parse(run(['commit', dir, '-p', '0.50'], { env: { HOME: join(tempDir, 'home1') } }));
+    const after = Math.floor((Date.now() / 1000 - 1692803367) / 3) + 1;
+
+    const anchor = commitment.beacon.anchor_round;
+    assert.ok(Number.isInteger(anchor), `anchor_round should be an integer, got ${anchor}`);
+    // The relay may lag the local clock by a round or two.
+    assert.ok(anchor >= before - 3 && anchor <= after + 1, `anchor ${anchor} not near current round ${before}..${after}`);
+    assert.deepEqual(Object.keys(commitment.beacon), ['type', 'anchor_round', 'chain_hash']);
+
+    const saved = join(dir, 'commitment.json');
+    assert.ok(run(['verify', saved]).includes('VALID'));
+  });
+
+  it('commit --no-anchor omits anchor_round', () => {
+    const dir = join(tempDir, 'noanchordir');
+    mkdirSync(dir);
+    writeFileSync(join(dir, 'a.txt'), 'not anchored');
+
+    const commitment = JSON.parse(run(['commit', dir, '-p', '0.50', '--no-anchor'], { env: { HOME: join(tempDir, 'home1') } }));
+    assert.deepEqual(Object.keys(commitment.beacon), ['type', 'chain_hash']);
+    assert.ok(run(['verify', join(dir, 'commitment.json')]).includes('VALID'));
+  });
+
   it('verify checks a commitment', () => {
     const output = run(['verify', join(tempDir, 'commitment.json')]);
     assert.ok(output.includes('VALID'));
