@@ -22,3 +22,4 @@ supabase/
 secrets/
 dist/
 *.tsbuildinfo
+.worktrees/
