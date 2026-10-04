@@ -81,7 +81,8 @@ route.post('/', async (c) => {
     return c.json({ error: 'Commitment already exists' }, 409);
   }
 
-  const registeredAt = (config.now?.() ?? new Date()).toISOString();
+  // Embedded consumers may mount the routes without a config.
+  const registeredAt = (config?.now?.() ?? new Date()).toISOString();
 
   // Anchored commitments: all servers select with round anchor_round + 2, so
   // that round must still be unpublished now. Reject instead of registering.

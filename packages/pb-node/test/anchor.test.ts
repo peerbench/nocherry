@@ -276,6 +276,20 @@ describe('Anchored selection round: fixed clock', { skip: isRemote ? 'needs an i
     assert.equal(stored.selection.beacon_output.round, R + DELAY);
   });
 
+  it('an app mounted without a config falls back to the system clock', async () => {
+    const storage = createSqliteStorage(':memory:');
+    storages.push(storage);
+    await initServerKey(storage);
+    const app = createApp(storage, undefined as any);
+
+    const kp = wasm.generateKeypair();
+    const res = await post(app, makeCommitment(kp, freshItems(2), R));
+    assert.equal(res.status, 400);
+    const body = await res.json() as any;
+    assert.equal(body.error_code, 'anchor_selection_round_available');
+    assert.ok(Math.abs(Date.parse(body.server_time) - Date.now()) < 5000);
+  });
+
   it('selectionRoundFor ignores registered_at when anchored', () => {
     const anchored = { type: 'drand', chain_hash: DRAND_CHAIN_HASH, anchor_round: R };
     const plain = { type: 'drand', chain_hash: DRAND_CHAIN_HASH };
