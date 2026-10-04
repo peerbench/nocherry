@@ -8,7 +8,6 @@
 
 import { Hono } from 'hono';
 import type { KyselyStorage } from '@nocherry/storage';
-import { createSqliteStorage } from '@nocherry/storage/sqlite';
 import * as wasm from '@nocherry/pb-wasm';
 import { registerWasm } from '../../../src/core/wasm-registry.js'
 import { initServerKey } from '../../../src/core/signing.js'
@@ -49,6 +48,10 @@ export function createApp(storage: KyselyStorage, config: Config) {
  */
 export async function createDefaultApp() {
   const config = loadConfigFromEnv();
+  // Loaded on demand: better-sqlite3 is an optional peer, and embedded consumers
+  // that bring their own storage (e.g. Postgres) must be able to import this
+  // module without it installed.
+  const { createSqliteStorage } = await import('@nocherry/storage/sqlite');
   const storage = createSqliteStorage(config.dbPath);
   await initServerKey(storage);
   return { app: createApp(storage, config), storage, config };
