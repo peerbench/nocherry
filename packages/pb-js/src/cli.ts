@@ -19,13 +19,14 @@
  */
 
 import { readFileSync, writeFileSync, mkdirSync, readdirSync, statSync, existsSync, cpSync } from 'node:fs';
-import { join, basename, resolve } from 'node:path';
+import { join, resolve } from 'node:path';
 import { homedir } from 'node:os';
 import { execSync } from 'node:child_process';
 import { createInterface } from 'node:readline';
 import { randomBytes, randomInt } from 'node:crypto';
 import * as wasm from '@nocherry/pb-wasm';
 import { getServers, resolveServer, getRevealPublishers } from './registry.js';
+import { resolveSelectedFiles, copySelectedFiles, type SelectedFile } from './publish-select.js';
 
 const KEY_DIR = join(homedir(), '.nocherry');
 const KEY_FILE = join(KEY_DIR, 'key.json');
@@ -678,6 +679,16 @@ async function cmdPublishGithub(dir: string, repoName?: string): Promise<void> {
     process.exit(1);
   }
 
+  // Only beacon-selected files may leave the machine. Resolve them before any
+  // remote side effect so a missing selection aborts the publish.
+  let selectedFiles: SelectedFile[];
+  try {
+    selectedFiles = resolveSelectedFiles(srcDir);
+  } catch (e: any) {
+    console.error(e.message);
+    process.exit(1);
+  }
+
   // Check gh CLI
   if (!hasCommand('gh')) {
     console.error('GitHub CLI (gh) not found. Install it: https://cli.github.com');
@@ -725,13 +736,9 @@ async function cmdPublishGithub(dir: string, repoName?: string): Promise<void> {
   const destDir = join(cloneDir, revealFolder);
   mkdirSync(destDir, { recursive: true });
 
-  // Copy data (excluding protocol files from the data subfolder)
+  // Copy only the selected files into the data subfolder
   const dataDir = join(destDir, 'data');
-  cpSync(srcDir, dataDir, { recursive: true, filter: (src) => {
-    const name = basename(src);
-    if (src === srcDir) return true; // allow root
-    return !PROTOCOL_FILES.has(name);
-  }});
+  copySelectedFiles(srcDir, dataDir);
 
   // Copy all protocol files into reveal folder root
   const receipt = findReceipt(srcDir);
@@ -785,11 +792,8 @@ Each folder in \`reveals/\` contains data that was committed before evaluation, 
   let attestations: any[] = [];
   const fileUrls: Record<string, string> = {};
   if (receipt?.commitment_hash) {
-    const manifest = walkDir(srcDir);
-    for (const entry of manifest) {
-      if (entry.type === 'file') {
-        fileUrls[entry.hash] = `https://raw.githubusercontent.com/${fullRepo}/main/${revealFolder}/data/${entry.name}`;
-      }
+    for (const f of selectedFiles) {
+      fileUrls[f.hash] = `https://raw.githubusercontent.com/${fullRepo}/main/${revealFolder}/data/${f.path}`;
     }
     if (Object.keys(fileUrls).length > 0) {
       attestations = await verifyPublicationWithServers(receipt.commitment_hash, fileUrls);
@@ -819,6 +823,16 @@ async function cmdPublishHuggingface(dir: string, repoName?: string): Promise<vo
   const srcDir = resolve(dir);
   if (!existsSync(srcDir)) {
     console.error(`Directory not found: ${srcDir}`);
+    process.exit(1);
+  }
+
+  // Only beacon-selected files may leave the machine. Resolve them before any
+  // remote side effect so a missing selection aborts the publish.
+  let selectedFiles: SelectedFile[];
+  try {
+    selectedFiles = resolveSelectedFiles(srcDir);
+  } catch (e: any) {
+    console.error(e.message);
     process.exit(1);
   }
 
@@ -940,9 +954,9 @@ async function cmdPublishHuggingface(dir: string, repoName?: string): Promise<vo
   const destDir = join(cloneDir, revealFolder);
   mkdirSync(destDir, { recursive: true });
 
-  // Copy data
+  // Copy only the selected files into the data subfolder
   const dataDir = join(destDir, 'data');
-  cpSync(srcDir, dataDir, { recursive: true });
+  copySelectedFiles(srcDir, dataDir);
 
   // Copy receipt/commitment if present
   const receipt = findReceipt(srcDir);
@@ -1013,11 +1027,8 @@ npx cr verify reveals/<folder>/commitment.json
   let attestations: any[] = [];
   const fileUrls: Record<string, string> = {};
   if (receipt?.commitment_hash) {
-    const manifest = walkDir(srcDir);
-    for (const entry of manifest) {
-      if (entry.type === 'file') {
-        fileUrls[entry.hash] = `https://huggingface.co/datasets/${fullRepo}/resolve/main/${revealFolder}/data/${entry.name}`;
-      }
+    for (const f of selectedFiles) {
+      fileUrls[f.hash] = `https://huggingface.co/datasets/${fullRepo}/resolve/main/${revealFolder}/data/${f.path}`;
     }
     if (Object.keys(fileUrls).length > 0) {
       attestations = await verifyPublicationWithServers(receipt.commitment_hash, fileUrls);
@@ -1570,7 +1581,7 @@ function cmdGenerate(baseDir: string, count: number): void {
 
 // ── Argument parsing ──
 
-function usage(): void {
+function usage(exitCode = 1): never {
   console.log(`Usage:
   pb-js go <dir> [-p <prob>]                Guided wizard (just hit Enter)
   pb-js key generate                        Generate Ed25519 keypair
@@ -1586,12 +1597,13 @@ function usage(): void {
   pb-js publish huggingface <dir> [--repo <r>]  Publish reveal to Hugging Face
   pb-js publish <dir>                       Interactive provider selection
   pb-js generate-random-data [dir] [-n <n>] Generate random test data (default: random-sample/)`);
-  process.exit(1);
+  process.exit(exitCode);
 }
 
 async function main(): Promise<void> {
   const args = process.argv.slice(2);
   if (args.length === 0) usage();
+  if (args[0] === '--help' || args[0] === '-h' || args[0] === 'help') usage(0);
 
   const cmd = args[0];
   const sub = args[1];
