@@ -267,3 +267,43 @@ fn timestamp_helper_roundtrips() {
     let ts = at(ANCHOR, 250);
     assert_eq!(anchor::parse_rfc3339_ms(&ts), Some(anchor::round_time_ms(ANCHOR).unwrap() + 250));
 }
+
+// ── Spec Section 13.8 ──
+
+#[test]
+fn spec_13_8_registration_table() {
+    use anchor::AnchorRejection::{AnchorInFuture, SelectionRoundAvailable};
+    assert_eq!(drand::round_time(ANCHOR), 1_770_480_150);
+    assert_eq!(anchor::parse_rfc3339_ms("2026-02-07T16:02:30Z"), anchor::round_time_ms(ANCHOR));
+
+    let rows = [
+        ("2026-02-07T16:02:28.999Z", Err(AnchorInFuture)),
+        ("2026-02-07T16:02:29.000Z", Ok(ANCHOR + 2)),
+        ("2026-02-07T16:02:32.800Z", Ok(ANCHOR + 2)),
+        ("2026-02-07T16:02:33.200Z", Ok(ANCHOR + 2)),
+        ("2026-02-07T16:02:34.999Z", Ok(ANCHOR + 2)),
+        ("2026-02-07T16:02:35.000Z", Err(SelectionRoundAvailable)),
+        ("2026-02-07T16:02:36.000Z", Err(SelectionRoundAvailable)),
+    ];
+    for (registered_at, expected) in rows {
+        let ms = anchor::parse_rfc3339_ms(registered_at).unwrap();
+        assert_eq!(anchor::check_registration(ANCHOR, ms), expected, "{registered_at}");
+    }
+}
+
+#[test]
+fn spec_13_8_verifier_table() {
+    let rows = [
+        (ANCHOR + 2, Some("2026-02-07T16:02:31.500Z"), "pass", "pass"),
+        (ANCHOR + 1, Some("2026-02-07T16:02:31.500Z"), "fail", "pass"),
+        (ANCHOR + 2, Some("2026-02-07T16:02:36.000Z"), "pass", "fail"),
+        (ANCHOR + 2, None, "pass", "skip"),
+    ];
+    for (round, registered_at, round_status, time_status) in rows {
+        let checks = verify::check_anchor(ANCHOR, Some(round), registered_at);
+        assert_eq!(checks[0].name, CHECK_ANCHOR_SELECTION_ROUND);
+        assert_eq!(checks[0].status, round_status, "{round} {registered_at:?}");
+        assert_eq!(checks[1].name, CHECK_ANCHOR_REGISTRATION_TIME);
+        assert_eq!(checks[1].status, time_status, "{round} {registered_at:?}");
+    }
+}
