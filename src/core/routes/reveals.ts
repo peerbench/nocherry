@@ -7,32 +7,42 @@
  */
 
 import { Hono } from 'hono';
-import type { AppEnv } from '../types.ts'
+import type { AppEnv, Config } from '../types.ts'
 import { getWasm } from '../wasm-registry.ts'
 import { signResponse } from '../signing.ts'
 import { getArrivalBeacon } from '../beacon.ts'
+import { safeFetchBytes, UnsafeUrlError, ResponseTooLargeError } from '../safe-fetch.ts'
 
 const route = new Hono<AppEnv>();
 
 const HASH_RE = /^[0-9a-f]{64}$/;
 
-async function fetchAndVerify(url: string, itemHash: string) {
+async function fetchAndVerify(url: string, itemHash: string, config: Config) {
   const wasm = getWasm();
   for (let attempt = 0; attempt < 2; attempt++) {
     try {
-      const res = await fetch(url, { signal: AbortSignal.timeout(15000) });
+      const res = await safeFetchBytes(url, {
+        maxBytes: config.maxRevealFileBytes,
+        allowUnsafeUrls: config.allowUnsafeRevealUrls === true,
+      });
       if (!res.ok) {
         if (attempt === 0) { await new Promise(r => setTimeout(r, 2000)); continue; }
         return { hash: itemHash, url, status: 'fetch_error', detail: `HTTP ${res.status}` };
       }
-      const data = new Uint8Array(await res.arrayBuffer());
-      const computed = wasm.hashBytes(data);
+      const computed = wasm.hashBytes(res.data);
       if (computed === itemHash) {
         return { hash: itemHash, url, status: 'match' };
       }
       if (attempt === 0) { await new Promise(r => setTimeout(r, 2000)); continue; }
       return { hash: itemHash, url, status: 'mismatch', computed_hash: computed };
     } catch (e: any) {
+      // Policy rejections are final: retrying cannot make the URL acceptable.
+      if (e instanceof UnsafeUrlError) {
+        return { hash: itemHash, url, status: 'url_not_allowed', detail: e.message };
+      }
+      if (e instanceof ResponseTooLargeError) {
+        return { hash: itemHash, url, status: 'too_large', detail: e.message };
+      }
       if (attempt === 0) { await new Promise(r => setTimeout(r, 2000)); continue; }
       return { hash: itemHash, url, status: 'fetch_error', detail: e.message };
     }
@@ -99,6 +109,27 @@ route.post('/:hash/reveals', async (c) => {
     return c.json({ error: `Signature verification failed: ${e.message}` }, 400);
   }
 
+  // The reveal must declare exactly the items the beacon selected for this
+  // commitment. Without this check a committer could list items of their own
+  // choosing as "selected" and obtain a signed data_verified receipt for them.
+  if (!Array.isArray(body.selected_items) || !Array.isArray(body.voluntary_items)) {
+    return c.json({ error: 'selected_items and voluntary_items must be arrays' }, 400);
+  }
+  const selection = await storage.getSelection(hash);
+  if (!selection || !Array.isArray(selection.selected_items)) {
+    return c.json({ error: 'Selection not yet computed for this commitment; request /selection first' }, 409);
+  }
+  const expected = new Set<string>(selection.selected_items);
+  const declared = new Set<string>(body.selected_items);
+  if (declared.size !== body.selected_items.length ||
+      declared.size !== expected.size ||
+      [...declared].some((item) => !expected.has(item))) {
+    return c.json({ error: 'selected_items does not match the beacon selection for this commitment' }, 400);
+  }
+  if (body.voluntary_items.some((item: string) => expected.has(item))) {
+    return c.json({ error: 'voluntary_items must not contain beacon-selected items' }, 400);
+  }
+
   const verifyEnabled = config.verifyRevealData;
   const fileUrls = body.file_urls;
   let dataVerified = false;
@@ -120,7 +151,7 @@ route.post('/:hash/reveals', async (c) => {
         results.push({ hash: itemHash, status: 'missing_url' });
         continue;
       }
-      results.push(await fetchAndVerify(url, itemHash));
+      results.push(await fetchAndVerify(url, itemHash, config));
     }
 
     const matchCount = results.filter(r => r.status === 'match').length;
@@ -226,7 +257,7 @@ route.post('/:hash/verify-publication', async (c) => {
       results.push({ hash: itemHash, url, status: 'not_in_commitment' });
       continue;
     }
-    results.push(await fetchAndVerify(url as string, itemHash));
+    results.push(await fetchAndVerify(url as string, itemHash, c.get('config')));
   }
 
   const matchCount = results.filter(r => r.status === 'match').length;

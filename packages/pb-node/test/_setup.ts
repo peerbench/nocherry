@@ -43,7 +43,9 @@ export async function getApp(): Promise<AppLike> {
   } else {
     _storage = createSqliteStorage(':memory:');
     await initServerKey(_storage);
-    _app = createApp(_storage, loadConfigFromEnv());
+    // The e2e tests serve reveal files from a plain-HTTP server on 127.0.0.1,
+    // which the default URL policy rejects. safe-fetch.test.ts covers the default.
+    _app = createApp(_storage, { ...loadConfigFromEnv(), allowUnsafeRevealUrls: true });
   }
   return _app;
 }

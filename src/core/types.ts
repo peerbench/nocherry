@@ -17,6 +17,14 @@ export interface Config {
   version: string;
   activityWindows: string[];
   verifyRevealData: boolean;
+  /** Byte cap per fetched reveal file. Defaults to DEFAULT_MAX_FETCH_BYTES. */
+  maxRevealFileBytes?: number;
+  /**
+   * Skip the public-HTTPS checks on reveal `file_urls`. For local development
+   * and tests only (e.g. a file server on 127.0.0.1); never set in production,
+   * it re-opens server-side request forgery.
+   */
+  allowUnsafeRevealUrls?: boolean;
 }
 
 export interface StorageInterface {
