@@ -47,6 +47,10 @@ describe('Pure JS correctness (matches WASM)', () => {
 
   it('threshold matches', () => {
     assert.equal(pure.threshold(0.10), wasm.threshold(0.10));
+    for (const p of [0, 0.5, 1]) {
+      assert.equal(pure.threshold(p), wasm.threshold(p), `threshold(${p})`);
+    }
+    assert.equal(pure.threshold(1), '18446744073709551615');
   });
 
   it('selectPerItem matches', () => {

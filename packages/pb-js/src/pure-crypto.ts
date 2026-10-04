@@ -36,6 +36,9 @@ export function prngNext(seedHex: string, index: number): string {
 // ── Threshold ──
 
 export function threshold(p: number): string {
+  // Clamp like the Rust core: p >= 1 is u64::MAX (2^64 does not fit in a u64).
+  if (p >= 1) return '18446744073709551615';
+  if (!(p > 0)) return '0';
   const TWO_64 = 18446744073709551616n;
   const result = BigInt(Math.floor(p * Number(TWO_64)));
   return result.toString();
