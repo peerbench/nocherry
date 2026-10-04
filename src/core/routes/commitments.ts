@@ -8,7 +8,7 @@
 import { Hono } from 'hono';
 import type { AppEnv } from '../types.ts'
 import { getWasm } from '../wasm-registry.ts'
-import { getBeaconOutput, getArrivalBeacon, computeSelection } from '../beacon.ts'
+import { getBeaconOutput, getArrivalBeacon, computeSelection, hasAnchorRound, checkAnchor } from '../beacon.ts'
 import { signResponse } from '../signing.ts'
 import { resolveIdentity } from '../did-resolver.ts'
 
@@ -18,6 +18,7 @@ const HASH_RE = /^[0-9a-f]{64}$/;
 
 route.post('/', async (c) => {
   const storage = c.get('storage');
+  const config = c.get('config');
   const wasm = getWasm();
   let body: any;
   try {
@@ -80,7 +81,21 @@ route.post('/', async (c) => {
     return c.json({ error: 'Commitment already exists' }, 409);
   }
 
-  const registeredAt = new Date().toISOString();
+  const registeredAt = (config.now?.() ?? new Date()).toISOString();
+
+  // Anchored commitments: all servers select with round anchor_round + 2, so
+  // that round must still be unpublished now. Reject instead of registering.
+  if (hasAnchorRound(body.beacon)) {
+    const anchor = checkAnchor(body.beacon, registeredAt);
+    if (!anchor.ok) {
+      return c.json({
+        error: anchor.message,
+        error_code: anchor.code,
+        anchor_round: body.beacon.anchor_round,
+        server_time: registeredAt,
+      }, 400);
+    }
+  }
 
   try {
     await storage.putCommitment(body.commitment_hash, body, registeredAt);
