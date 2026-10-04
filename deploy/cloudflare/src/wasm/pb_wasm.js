@@ -1,11 +1,66 @@
 /* @ts-self-types="./pb_wasm.d.ts" */
 /**
  * ESM WASM glue for Cloudflare Workers.
- * Transformed from the CJS pkg/pb_wasm.js — replaces Node.js fs loading
+ * Transformed from the CJS pkg/pb_wasm.js - replaces Node.js fs loading
  * with ESM static import of compiled WASM module.
  */
 
 import wasmModule from './pb_wasm_bg.wasm';
+
+/**
+ * `ANCHOR_CLOCK_SKEW_ALLOWANCE_MS`.
+ * @returns {number}
+ */
+export function anchorClockSkewAllowanceMs() {
+    const ret = wasm.anchorClockSkewAllowanceMs();
+    return ret >>> 0;
+}
+
+/**
+ * `ANCHOR_SELECTION_DELAY`: selection round = anchor_round + this value.
+ * @returns {number}
+ */
+export function anchorSelectionDelay() {
+    const ret = wasm.anchorSelectionDelay();
+    return ret >>> 0;
+}
+
+/**
+ * `ANCHOR_SELECTION_SAFETY_MARGIN_MS`.
+ * @returns {number}
+ */
+export function anchorSelectionSafetyMarginMs() {
+    const ret = wasm.anchorClockSkewAllowanceMs();
+    return ret >>> 0;
+}
+
+/**
+ * Selection round for an anchored commitment.
+ * @param {bigint} anchor_round
+ * @returns {bigint}
+ */
+export function anchoredSelectionRound(anchor_round) {
+    const ret = wasm.anchoredSelectionRound(anchor_round);
+    if (ret[2]) {
+        throw takeFromExternrefTable0(ret[1]);
+    }
+    return BigInt.asUintN(64, ret[0]);
+}
+
+/**
+ * Registration rule for an anchored commitment.
+ * Returns `{ ok: true, selection_round }` or `{ ok: false, code, message }`.
+ * @param {bigint} anchor_round
+ * @param {bigint} registered_at_ms
+ * @returns {any}
+ */
+export function checkAnchorRegistration(anchor_round, registered_at_ms) {
+    const ret = wasm.checkAnchorRegistration(anchor_round, registered_at_ms);
+    if (ret[2]) {
+        throw takeFromExternrefTable0(ret[1]);
+    }
+    return takeFromExternrefTable0(ret[0]);
+}
 
 /**
  * @param {string} params_json
@@ -245,6 +300,24 @@ export function verifyCommitment(commitment_json) {
 }
 
 /**
+ * Verifier checks for a server receipt (`{ commitment, registered_at, selection }`).
+ * Returns `[]` when the commitment has no `anchor_round` or the receipt has
+ * no selection yet, otherwise the `anchor_selection_round` and
+ * `anchor_registration_time` checks as `{ name, status, detail? }`.
+ * @param {string} receipt_json
+ * @returns {any}
+ */
+export function verifyReceiptAnchor(receipt_json) {
+    const ptr0 = passStringToWasm0(receipt_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.verifyReceiptAnchor(ptr0, len0);
+    if (ret[2]) {
+        throw takeFromExternrefTable0(ret[1]);
+    }
+    return takeFromExternrefTable0(ret[0]);
+}
+
+/**
  * @param {string} did_key
  * @param {Uint8Array} message
  * @param {string} signature_hex
@@ -297,6 +370,14 @@ function __wbg_get_imports() {
             const ret = arg0 === undefined;
             return ret;
         },
+        __wbg___wbindgen_string_get_72fb696202c56729: function(arg0, arg1) {
+            const obj = arg1;
+            const ret = typeof(obj) === 'string' ? obj : undefined;
+            var ptr1 = isLikeNone(ret) ? 0 : passStringToWasm0(ret, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+            var len1 = WASM_VECTOR_LEN;
+            getDataViewMemory0().setInt32(arg0 + 4 * 1, len1, true);
+            getDataViewMemory0().setInt32(arg0 + 4 * 0, ptr1, true);
+        },
         __wbg___wbindgen_throw_be289d5034ed271b: function(arg0, arg1) {
             throw new Error(getStringFromWasm0(arg0, arg1));
         },
@@ -321,6 +402,10 @@ function __wbg_get_imports() {
         },
         __wbg_msCrypto_d562bbe83e0d4b91: function(arg0) {
             const ret = arg0.msCrypto;
+            return ret;
+        },
+        __wbg_new_0_73afc35eb544e539: function() {
+            const ret = new Date();
             return ret;
         },
         __wbg_new_361308b2356cecd0: function() {
@@ -391,27 +476,36 @@ function __wbg_get_imports() {
             const ret = arg0.subarray(arg1 >>> 0, arg2 >>> 0);
             return ret;
         },
+        __wbg_toISOString_c04e0b8b70650552: function(arg0) {
+            const ret = arg0.toISOString();
+            return ret;
+        },
         __wbg_versions_4e31226f5e8dc909: function(arg0) {
             const ret = arg0.versions;
             return ret;
         },
         __wbindgen_cast_0000000000000001: function(arg0) {
+            // Cast intrinsic for `F64 -> Externref`.
             const ret = arg0;
             return ret;
         },
         __wbindgen_cast_0000000000000002: function(arg0) {
+            // Cast intrinsic for `I64 -> Externref`.
             const ret = arg0;
             return ret;
         },
         __wbindgen_cast_0000000000000003: function(arg0, arg1) {
+            // Cast intrinsic for `Ref(Slice(U8)) -> NamedExternref("Uint8Array")`.
             const ret = getArrayU8FromWasm0(arg0, arg1);
             return ret;
         },
         __wbindgen_cast_0000000000000004: function(arg0, arg1) {
+            // Cast intrinsic for `Ref(String) -> Externref`.
             const ret = getStringFromWasm0(arg0, arg1);
             return ret;
         },
         __wbindgen_cast_0000000000000005: function(arg0) {
+            // Cast intrinsic for `U64 -> Externref`.
             const ret = BigInt.asUintN(64, arg0);
             return ret;
         },

@@ -1,6 +1,66 @@
 /* @ts-self-types="./pb_wasm.d.ts" */
 
 /**
+ * `ANCHOR_CLOCK_SKEW_ALLOWANCE_MS`.
+ * @returns {number}
+ */
+function anchorClockSkewAllowanceMs() {
+    const ret = wasm.anchorClockSkewAllowanceMs();
+    return ret >>> 0;
+}
+exports.anchorClockSkewAllowanceMs = anchorClockSkewAllowanceMs;
+
+/**
+ * `ANCHOR_SELECTION_DELAY`: selection round = anchor_round + this value.
+ * @returns {number}
+ */
+function anchorSelectionDelay() {
+    const ret = wasm.anchorSelectionDelay();
+    return ret >>> 0;
+}
+exports.anchorSelectionDelay = anchorSelectionDelay;
+
+/**
+ * `ANCHOR_SELECTION_SAFETY_MARGIN_MS`.
+ * @returns {number}
+ */
+function anchorSelectionSafetyMarginMs() {
+    const ret = wasm.anchorClockSkewAllowanceMs();
+    return ret >>> 0;
+}
+exports.anchorSelectionSafetyMarginMs = anchorSelectionSafetyMarginMs;
+
+/**
+ * Selection round for an anchored commitment.
+ * @param {bigint} anchor_round
+ * @returns {bigint}
+ */
+function anchoredSelectionRound(anchor_round) {
+    const ret = wasm.anchoredSelectionRound(anchor_round);
+    if (ret[2]) {
+        throw takeFromExternrefTable0(ret[1]);
+    }
+    return BigInt.asUintN(64, ret[0]);
+}
+exports.anchoredSelectionRound = anchoredSelectionRound;
+
+/**
+ * Registration rule for an anchored commitment.
+ * Returns `{ ok: true, selection_round }` or `{ ok: false, code, message }`.
+ * @param {bigint} anchor_round
+ * @param {bigint} registered_at_ms
+ * @returns {any}
+ */
+function checkAnchorRegistration(anchor_round, registered_at_ms) {
+    const ret = wasm.checkAnchorRegistration(anchor_round, registered_at_ms);
+    if (ret[2]) {
+        throw takeFromExternrefTable0(ret[1]);
+    }
+    return takeFromExternrefTable0(ret[0]);
+}
+exports.checkAnchorRegistration = checkAnchorRegistration;
+
+/**
  * @param {string} params_json
  * @param {string} private_key_hex
  * @returns {any}
@@ -252,6 +312,25 @@ function verifyCommitment(commitment_json) {
 exports.verifyCommitment = verifyCommitment;
 
 /**
+ * Verifier checks for a server receipt (`{ commitment, registered_at, selection }`).
+ * Returns `[]` when the commitment has no `anchor_round` or the receipt has
+ * no selection yet, otherwise the `anchor_selection_round` and
+ * `anchor_registration_time` checks as `{ name, status, detail? }`.
+ * @param {string} receipt_json
+ * @returns {any}
+ */
+function verifyReceiptAnchor(receipt_json) {
+    const ptr0 = passStringToWasm0(receipt_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.verifyReceiptAnchor(ptr0, len0);
+    if (ret[2]) {
+        throw takeFromExternrefTable0(ret[1]);
+    }
+    return takeFromExternrefTable0(ret[0]);
+}
+exports.verifyReceiptAnchor = verifyReceiptAnchor;
+
+/**
  * @param {string} did_key
  * @param {Uint8Array} message
  * @param {string} signature_hex
@@ -303,6 +382,14 @@ function __wbg_get_imports() {
             const ret = arg0 === undefined;
             return ret;
         },
+        __wbg___wbindgen_string_get_72fb696202c56729: function(arg0, arg1) {
+            const obj = arg1;
+            const ret = typeof(obj) === 'string' ? obj : undefined;
+            var ptr1 = isLikeNone(ret) ? 0 : passStringToWasm0(ret, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+            var len1 = WASM_VECTOR_LEN;
+            getDataViewMemory0().setInt32(arg0 + 4 * 1, len1, true);
+            getDataViewMemory0().setInt32(arg0 + 4 * 0, ptr1, true);
+        },
         __wbg___wbindgen_throw_be289d5034ed271b: function(arg0, arg1) {
             throw new Error(getStringFromWasm0(arg0, arg1));
         },
@@ -327,6 +414,10 @@ function __wbg_get_imports() {
         },
         __wbg_msCrypto_d562bbe83e0d4b91: function(arg0) {
             const ret = arg0.msCrypto;
+            return ret;
+        },
+        __wbg_new_0_73afc35eb544e539: function() {
+            const ret = new Date();
             return ret;
         },
         __wbg_new_361308b2356cecd0: function() {
@@ -395,6 +486,10 @@ function __wbg_get_imports() {
         },
         __wbg_subarray_a96e1fef17ed23cb: function(arg0, arg1, arg2) {
             const ret = arg0.subarray(arg1 >>> 0, arg2 >>> 0);
+            return ret;
+        },
+        __wbg_toISOString_c04e0b8b70650552: function(arg0) {
+            const ret = arg0.toISOString();
             return ret;
         },
         __wbg_versions_4e31226f5e8dc909: function(arg0) {

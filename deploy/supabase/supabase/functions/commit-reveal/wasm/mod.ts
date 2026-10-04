@@ -38,6 +38,11 @@ export async function initWasm(): Promise<void> {
 }
 
 // Re-export all WASM functions
+export const anchorClockSkewAllowanceMs = wasmExports.anchorClockSkewAllowanceMs;
+export const anchorSelectionDelay = wasmExports.anchorSelectionDelay;
+export const anchorSelectionSafetyMarginMs = wasmExports.anchorSelectionSafetyMarginMs;
+export const anchoredSelectionRound = wasmExports.anchoredSelectionRound;
+export const checkAnchorRegistration = wasmExports.checkAnchorRegistration;
 export const createCommitment = wasmExports.createCommitment;
 export const drandNextRoundAfter = wasmExports.drandNextRoundAfter;
 export const drandRoundTime = wasmExports.drandRoundTime;
@@ -52,4 +57,5 @@ export const selectPerItem = wasmExports.selectPerItem;
 export const signMessage = wasmExports.signMessage;
 export const threshold = wasmExports.threshold;
 export const verifyCommitment = wasmExports.verifyCommitment;
+export const verifyReceiptAnchor = wasmExports.verifyReceiptAnchor;
 export const verifySignature = wasmExports.verifySignature;
