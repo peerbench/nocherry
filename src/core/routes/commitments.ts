@@ -29,7 +29,7 @@ route.post('/', async (c) => {
     return c.json({ error: 'Request body must be a JSON object' }, 400);
   }
 
-  const required = ['spec_version', 'commitment_hash', 'items',
+  const required = ['spec_version', 'commitment_hash', 'items', 'item_count',
     'reveal_probability', 'beacon', 'committed_at', 'signing_key', 'signature'];
   for (const field of required) {
     if (body[field] === undefined) {
@@ -39,10 +39,6 @@ route.post('/', async (c) => {
 
   if (!Array.isArray(body.items) || body.items.length === 0) {
     return c.json({ error: 'items must be a non-empty array' }, 400);
-  }
-  // Derive item_count from items array if not provided
-  if (body.item_count === undefined) {
-    body.item_count = body.items.length;
   }
   if (body.items.length !== body.item_count) {
     return c.json({ error: 'item_count does not match items.length' }, 400);
