@@ -433,7 +433,8 @@ GET /v1/commitments/{id}/selection
 
   1. Look up commitment from storage
   2. Check if selection already cached → return it
-  3. Compute needed beacon round: first round after registered_at
+  3. Compute needed beacon round: anchor_round + 2 if the commitment has
+     beacon.anchor_round (spec 8.1.1), otherwise the first round after registered_at
   4. HTTP GET to drand relay (or NIST API) for that round (~100ms)
   5. Compute selection via pb-core WASM (~1ms)
   6. Cache the selection record in storage
