@@ -78,6 +78,12 @@ export async function createPostgresStorage(
     ...poolOptions,
   });
 
+  // An idle client that errors (server restart, network drop) emits on the pool.
+  // Without a listener Node treats it as an unhandled 'error' event and exits.
+  pool.on('error', (err) => {
+    console.error('[storage] idle postgres client error:', err.message);
+  });
+
   if (applySchema) {
     await pool.query(SCHEMA_SQL);
   }
