@@ -169,7 +169,7 @@ Fields:
 - **`items`** (array of strings): SHA-256 hashes (lowercase hex, 64 chars). At least 1 item. No duplicates. For single-item commits, this is a one-element array.
 - **`item_count`** (integer): length of `items`.
 - **`reveal_probability`** (number): the probability that any given item is selected for reveal. Range: (0.0, 1.0]. For example, 0.10 means ~10% of items will be selected. See Section 8 for how this is applied.
-- **`beacon`** (object): identifies the randomness source. See Section 9.
+- **`beacon`** (object): identifies the randomness source. See Section 9. May carry the optional `anchor_round` (Section 8.1.1), which pins the selection round for all servers.
 - **`metadata`** (object): arbitrary key-value data. Stored but not interpreted by the service. Not signed.
 - **`committed_at`** (string): ISO 8601 UTC timestamp, set by the committer.
 - **`signing_key`** (string): public key as `did:key`. Used to verify the signature.
@@ -180,6 +180,8 @@ Fields:
 The signature covers the **signing payload** — canonical JSON of the commitment with these fields only: `spec_version`, `items`, `item_count`, `reveal_probability`, `beacon`, `committed_at`, `signing_key`.
 
 Fields excluded from signing: `commitment_hash` (derived from the payload), `metadata`, `signature`.
+
+The whole `beacon` object is part of the payload, so `beacon.anchor_round` is signed when present. Optional fields that are absent are **omitted** from the payload, never written as `null`. A commitment without `anchor_round` therefore has exactly the signing payload, `commitment_hash`, and signature it had before the field was introduced (test vector 13.6).
 
 ```
 signing_payload = canonical_json({
@@ -220,6 +222,49 @@ The service waits for the **first beacon output whose timestamp is strictly afte
 ```
 beacon_output = first beacon where beacon.timestamp > commitment.registered_at
 ```
+
+This rule applies to commitments **without** `beacon.anchor_round`. Because each server uses its own `registered_at`, servers that receive the same commitment on opposite sides of a beacon tick use different rounds and compute different selections. Clients SHOULD set `anchor_round` (Section 8.1.1) so that all servers agree.
+
+### 8.1.1 Anchored Selection Round (`anchor_round`)
+
+`beacon.anchor_round` is an OPTIONAL unsigned integer. The client sets it to the current beacon round R, which is already public at signing time. It is covered by the commitment signature (Section 7.2).
+
+```
+ANCHOR_SELECTION_DELAY            = 2        // rounds
+ANCHOR_SELECTION_SAFETY_MARGIN_MS = 1000     // milliseconds
+ANCHOR_CLOCK_SKEW_ALLOWANCE_MS    = 1000     // milliseconds
+
+selection_round = anchor_round + ANCHOR_SELECTION_DELAY
+beacon_output   = beacon round selection_round
+```
+
+Every server that registers the commitment uses the same `selection_round`, regardless of its own `registered_at`.
+
+**Registration rule.** A server MUST reject an anchored commitment (HTTP 400, Section 12.2) unless both conditions hold at its `registered_at`:
+
+```
+1. round_time(anchor_round)     <= registered_at + ANCHOR_CLOCK_SKEW_ALLOWANCE_MS
+2. round_time(anchor_round + 2) >  registered_at + ANCHOR_SELECTION_SAFETY_MARGIN_MS
+```
+
+Condition 1: the anchor round is not in the future. The allowance tolerates a server clock that runs slightly behind the client's.
+
+Condition 2: **the selection round is not yet available.** This is the rule that keeps anchoring safe. Without it a client could wait until round `anchor_round + 2` is published, learn the selection randomness, and only then register a commitment built to its liking. A server that receives the commitment too late MUST reject it. It MUST NOT fall back to another round, and it MUST NOT accept the commitment and select with randomness that is already public. The safety margin covers a server clock that runs behind the beacon.
+
+Condition 2 also bounds how old an anchor can be, so there is no separate maximum anchor age. A "maximum age" check alone is not a substitute for condition 2: an anchor that is one or two rounds old can pass an age limit while its selection round is already public.
+
+With drand quicknet (3 s period) the two conditions leave a window of 6 seconds, from 1 s before `round_time(anchor_round)` to 1 s before `round_time(anchor_round + 2)`. A client that anchors to the round that just became public has between 2 and 5 seconds to reach every server.
+
+Additional requirements:
+
+- `anchor_round` MUST be a positive integer. A server rejects `0`, `null`, and non-integer values. To send no anchor, omit the field.
+- `anchor_round` is only defined for beacon types with a fixed round schedule. This version defines it for `drand`.
+- The server still records `registered_at` and `arrival_beacon` as for any commitment.
+- A commitment that is already registered is answered with 409 as before, whatever the time.
+
+**Client behavior.** When creating a commitment, the client fetches the latest beacon round, sets `anchor_round`, signs, and submits to all servers immediately. If a server rejects the anchor (error codes in Section 12.2), the client re-signs with a fresh `anchor_round` and retries once. Re-signing produces a different `commitment_hash`, so the client retries only if no server accepted the first attempt. Clients MAY omit `anchor_round` for compatibility with servers that do not support it. Support is advertised by `anchor_selection_delay` in `GET /v1/server-info`.
+
+**What this does and does not provide.** Anchoring makes all servers select with the same round, which removes the choice between diverging server receipts. It does not prevent a committer from registering several different commitments against the same future round and publishing only one of them. That is a separate problem (see `signer_activity`, Section 12.2).
 
 ### 8.2 Per-Item Selection (Single Item or Small Batches)
 
@@ -344,6 +389,16 @@ Every beacon type must provide:
 }
 ```
 
+With the optional anchor (Section 8.1.1):
+
+```json
+{
+  "type": "drand",
+  "anchor_round": 25892262,
+  "chain_hash": "52db9ba70e0cc0f6eaf7803dd07447a1f5477735fd3f661792ba94600c84e971"
+}
+```
+
 **Chain: quicknet**
 
 | Parameter | Value |
@@ -376,7 +431,7 @@ valid = BLS_Verify(chain_public_key, message, beacon_signature)
 randomness = SHA-256(beacon_signature)
 ```
 
-**Latency:** 3 seconds. A single-item commit waits at most 3 seconds for selection.
+**Latency:** 3 seconds. A single-item commit waits at most 3 seconds for selection. With `anchor_round` the wait is until `round_time(anchor_round + 2)`, between 1 and 7 seconds after registration.
 
 ### 9.3 Beacon Liveness
 
@@ -451,6 +506,12 @@ Given: commitment, selection record, reveal object, and actual data for each rev
 
 2. **Verify beacon.** Confirm the beacon output in the selection record is authentic (BLS verify for drand) and that its timestamp/round is after `commitment.registered_at`.
 
+   **2a. Verify the anchor**, if the commitment has `beacon.anchor_round`. Both checks are reported by name and each fails verification on its own:
+   - `anchor_selection_round`: `selection.beacon_output.round == anchor_round + ANCHOR_SELECTION_DELAY`.
+   - `anchor_registration_time`: the receipt's `registered_at` precedes `round_time(anchor_round + ANCHOR_SELECTION_DELAY)`. If the verifier has no `registered_at` (no receipt), this check is reported as skipped and the overall result is at most "partial", never "verified".
+
+   Without `anchor_round`, step 2a does not apply and verification is unchanged.
+
 3. **Verify selection.** Re-run the selection algorithm (Section 8) with the commitment's items and the beacon's randomness. Confirm the selection record's `selected_items` matches.
 
 4. **Verify reveal signature.** Ed25519 verify the reveal object.
@@ -493,7 +554,7 @@ Each server has its own Ed25519 signing key, used to sign responses (including `
 
 ### 11.4 Multi-Submit
 
-The client submits every commitment to **all known servers in parallel**. Every server receives the same `commitment_hash`. Each server independently records `registered_at`. Same `commitment_hash` in every receipt. The client stores all receipts. For later operations (get selection, submit reveal), the client can use any server. If a server goes down, the commitment is still recorded elsewhere.
+The client submits every commitment to **all known servers in parallel**. Every server receives the same `commitment_hash`. Each server independently records `registered_at`. Same `commitment_hash` in every receipt. With `beacon.anchor_round` (Section 8.1.1) every receipt also carries the same selection round and the same selected items; a server that receives the commitment too late rejects it instead of selecting with a different round. The client stores all receipts. For later operations (get selection, submit reveal), the client can use any server. If a server goes down, the commitment is still recorded elsewhere.
 
 A commitment is considered successfully registered if at least one server accepts it. The client SHOULD warn if fewer than 2 servers respond.
 
@@ -576,12 +637,32 @@ Response (201 Created):
 The server:
 1. Validates the user's signature
 2. Verifies `commitment_hash == SHA-256(signing_payload)`
-3. Records server-side `registered_at`
+3. Records server-side `registered_at`. If the commitment has `beacon.anchor_round`, applies the registration rule of Section 8.1.1 at this instant and rejects the commitment if it fails (see below)
 4. Records the `arrival_beacon` — the current beacon round at time of registration
-5. Waits for the next beacon output (holds connection)
+5. Waits for the selection beacon output (holds connection): round `anchor_round + 2` if anchored, otherwise the next round after `registered_at`
 6. Computes selection
 7. Signs the entire response
 8. Returns the complete receipt
+
+Anchor rejection (commitments with `beacon.anchor_round` only):
+
+```
+Response (400 Bad Request):
+{
+  "error": "selection round (anchor_round + 2) is already available or too close; re-sign with a fresh anchor_round",
+  "error_code": "anchor_selection_round_available",
+  "anchor_round": 25892262,
+  "server_time": "2026-02-07T16:02:36.120Z"
+}
+```
+
+| `error_code` | Meaning |
+|--------------|---------|
+| `anchor_round_invalid` | `anchor_round` is not a positive integer, or the beacon type does not support it |
+| `anchor_round_in_future` | Condition 1 of Section 8.1.1 failed: the anchor round is not yet published |
+| `anchor_selection_round_available` | Condition 2 failed: the selection round is already public or closer than the safety margin |
+
+A rejected commitment is not stored. The client re-signs with a fresh `anchor_round` and submits again.
 
 One call. The receipt contains everything needed for offline verification: the full commitment, the server's timestamp attestation, the beacon output, and the selection result.
 
@@ -846,6 +927,65 @@ selected = [
 ]
 ```
 
+### 13.6 Commitment Without `anchor_round`
+
+Signing key (Ed25519 secret, RFC 8032 section 7.1 test 1): `9d61b19deffd5a60ba844af492ec2cc44449c5697b326919703bac031cae7f60`
+
+```
+signing_payload (one line, no whitespace):
+{"spec_version":"0.2.0","items":["2f58b7d7725eac66c32ab446bb53a188688dc1d76fcc40cf31f5cf6509181ce8","32012c4c32888ee2c4ba4331e3c77ece9acd811a4b3abb708363123591abfea2"],"item_count":2,"reveal_probability":0.1,"beacon":{"type":"drand","chain_hash":"52db9ba70e0cc0f6eaf7803dd07447a1f5477735fd3f661792ba94600c84e971"},"committed_at":"2026-02-06T14:30:00Z","signing_key":"did:key:z6MktwupdmLXVVqTzCw4i46r4uGyosGXRnR3XjN4Zq7oMMsw"}
+
+commitment_hash = 39b23208e0f65e4e2e5c0cd52e7eacb26047aaf9b4d89bb1280c3b78a21b33ac
+signature       = 5516f721b6f71554c8bacc6b3458a2427db9fd4d2367a0722e6fa2e08366e1c59cc1aba2cec6563a61a80026a58b155746951b3e74fb662a3891dde4994aaa07
+```
+
+These values were produced by the implementation before `anchor_round` existed. An implementation that supports `anchor_round` MUST still produce them: the field is omitted when absent.
+
+### 13.7 Commitment With `anchor_round`
+
+The same commitment with `anchor_round = 25892262`. The only change to the payload is the added key, directly after `"type"`.
+
+```
+signing_payload (one line, no whitespace):
+{"spec_version":"0.2.0","items":["2f58b7d7725eac66c32ab446bb53a188688dc1d76fcc40cf31f5cf6509181ce8","32012c4c32888ee2c4ba4331e3c77ece9acd811a4b3abb708363123591abfea2"],"item_count":2,"reveal_probability":0.1,"beacon":{"type":"drand","anchor_round":25892262,"chain_hash":"52db9ba70e0cc0f6eaf7803dd07447a1f5477735fd3f661792ba94600c84e971"},"committed_at":"2026-02-06T14:30:00Z","signing_key":"did:key:z6MktwupdmLXVVqTzCw4i46r4uGyosGXRnR3XjN4Zq7oMMsw"}
+
+commitment_hash = d3e6d24523acbbae6c586378da650bbcf2b3419974a938e7fa3aeb5051d9a59b
+signature       = f52fd33cdedd906ba795aa06fe13e7b944bac5506d058846eae8407cbfa2c9dc452695f57c06035f8175bda4809a4bb2a96893de6b8ec48dc641984a570f5e07
+
+selection_round = 25892262 + 2 = 25892264
+```
+
+### 13.8 Anchor Registration Rule
+
+For `anchor_round = 25892262` on drand quicknet:
+
+```
+round_time(25892262) = 1770480150   (2026-02-07T16:02:30Z)
+round_time(25892263) = 1770480153   (2026-02-07T16:02:33Z)
+round_time(25892264) = 1770480156   (2026-02-07T16:02:36Z, selection round)
+```
+
+| `registered_at` | Result |
+|-----------------|--------|
+| 2026-02-07T16:02:28.999Z | reject, `anchor_round_in_future` |
+| 2026-02-07T16:02:29.000Z | accept, selection round 25892264 |
+| 2026-02-07T16:02:32.800Z | accept, selection round 25892264 |
+| 2026-02-07T16:02:33.200Z | accept, selection round 25892264 |
+| 2026-02-07T16:02:34.999Z | accept, selection round 25892264 |
+| 2026-02-07T16:02:35.000Z | reject, `anchor_selection_round_available` |
+| 2026-02-07T16:02:36.000Z | reject, `anchor_selection_round_available` |
+
+Rows 3 and 4 are two servers on opposite sides of the tick of round 25892263. Without `anchor_round` they would select with rounds 25892263 and 25892264. With it, both use 25892264.
+
+Verifier (Section 10.5, step 2a) for a receipt of this commitment:
+
+| `selection.beacon_output.round` | `registered_at` | `anchor_selection_round` | `anchor_registration_time` |
+|---------------------------------|-----------------|--------------------------|----------------------------|
+| 25892264 | 2026-02-07T16:02:31.500Z | pass | pass |
+| 25892263 | 2026-02-07T16:02:31.500Z | fail | pass |
+| 25892264 | 2026-02-07T16:02:36.000Z | pass | fail |
+| 25892264 | (not supplied) | pass | skip |
+
 ## 14. Security Properties
 
 ### 14.1 What This Proves
@@ -869,6 +1009,8 @@ selected = [
 | Committer cherry-picks which items to reveal | Beacon-seeded selection; committer cannot choose |
 | Committer modifies items after commitment | SHA-256 integrity check on reveal |
 | Committer creates commitment after seeing beacon | Temporal ordering: beacon must postdate server-recorded `registered_at` |
+| Committer picks the favorable receipt when servers used different rounds | `anchor_round`: all servers select with round `anchor_round + 2` (Section 8.1.1) |
+| Committer anchors to an old round whose selection round is already public | Servers reject unless `round_time(anchor_round + 2)` is after `registered_at` plus a safety margin; verifiers recheck round and time (Section 10.5, step 2a) |
 | Committer predicts beacon output | drand: requires compromising t-of-n League of Entropy nodes |
 | Service operator tampers with commitments | Commitments are signed by the committer; tampering breaks the signature |
 | Service operator backdates a commitment | `registered_at` is server-side; additionally, beacon round must postdate it |
@@ -890,6 +1032,8 @@ Key order per object type:
 
 **Commitment signing payload:** `spec_version`, `items`, `item_count`, `reveal_probability`, `beacon`, `committed_at`, `signing_key`
 
-**Beacon object:** `type`, then type-specific fields in alphabetical order
+**Beacon object:** `type`, then type-specific fields in alphabetical order. For drand: `type`, `anchor_round` (only if present), `chain_hash`
+
+Optional fields that are absent are omitted. They are never serialized as `null`.
 
 **Reveal signing payload:** `spec_version`, `commitment_hash`, `selected_items`, `voluntary_items`, `revealed_at`, `signing_key`

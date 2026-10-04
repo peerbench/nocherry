@@ -25,6 +25,8 @@ export interface Config {
    * it re-opens server-side request forgery.
    */
   allowUnsafeRevealUrls?: boolean;
+  /** Clock used for `registered_at`. Defaults to the system clock. */
+  now?: () => Date;
 }
 
 export interface StorageInterface {
@@ -49,6 +51,9 @@ export type AppEnv = {
 };
 
 export interface WasmInterface {
+  anchorSelectionDelay(): number;
+  anchoredSelectionRound(anchor_round: bigint): bigint;
+  checkAnchorRegistration(anchor_round: bigint, registered_at_ms: bigint): any;
   createCommitment(params_json: string, private_key_hex: string): any;
   drandNextRoundAfter(unix_time: bigint): bigint;
   drandRoundTime(round: bigint): bigint;

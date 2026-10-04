@@ -3,7 +3,8 @@
 
 use wasm_bindgen::prelude::*;
 use serde::Serialize;
-use pb_core::{hash, select, sign, commitment, beacon};
+use pb_core::{hash, select, sign, commitment, beacon, verify};
+use pb_core::beacon::anchor;
 
 // ── Hashing ──
 
@@ -195,4 +196,69 @@ pub fn drand_time_to_round(unix_time: i64) -> u64 {
 #[wasm_bindgen(js_name = "drandNextRoundAfter")]
 pub fn drand_next_round_after(unix_time: i64) -> u64 {
     beacon::drand::next_round_after(unix_time)
+}
+
+// ── Anchored selection round ──
+
+/// `ANCHOR_SELECTION_DELAY`: selection round = anchor_round + this value.
+#[wasm_bindgen(js_name = "anchorSelectionDelay")]
+pub fn anchor_selection_delay() -> u32 {
+    anchor::ANCHOR_SELECTION_DELAY as u32
+}
+
+/// `ANCHOR_SELECTION_SAFETY_MARGIN_MS`.
+#[wasm_bindgen(js_name = "anchorSelectionSafetyMarginMs")]
+pub fn anchor_selection_safety_margin_ms() -> u32 {
+    anchor::ANCHOR_SELECTION_SAFETY_MARGIN_MS as u32
+}
+
+/// `ANCHOR_CLOCK_SKEW_ALLOWANCE_MS`.
+#[wasm_bindgen(js_name = "anchorClockSkewAllowanceMs")]
+pub fn anchor_clock_skew_allowance_ms() -> u32 {
+    anchor::ANCHOR_CLOCK_SKEW_ALLOWANCE_MS as u32
+}
+
+/// Selection round for an anchored commitment.
+#[wasm_bindgen(js_name = "anchoredSelectionRound")]
+pub fn anchored_selection_round(anchor_round: u64) -> Result<u64, JsError> {
+    anchor::selection_round(anchor_round)
+        .ok_or_else(|| JsError::new(anchor::AnchorRejection::InvalidRound.message()))
+}
+
+/// Registration rule for an anchored commitment.
+/// Returns `{ ok: true, selection_round }` or `{ ok: false, code, message }`.
+#[wasm_bindgen(js_name = "checkAnchorRegistration")]
+pub fn check_anchor_registration(anchor_round: u64, registered_at_ms: i64) -> Result<JsValue, JsError> {
+    let result = match anchor::check_registration(anchor_round, registered_at_ms) {
+        Ok(round) => serde_json::json!({ "ok": true, "selection_round": round }),
+        Err(e) => serde_json::json!({ "ok": false, "code": e.code(), "message": e.message() }),
+    };
+    let serializer = serde_wasm_bindgen::Serializer::new().serialize_maps_as_objects(true);
+    result.serialize(&serializer)
+        .map_err(|e| JsError::new(&format!("{e}")))
+}
+
+/// Verifier checks for a server receipt (`{ commitment, registered_at, selection }`).
+/// Returns `[]` when the commitment has no `anchor_round` or the receipt has
+/// no selection yet, otherwise the `anchor_selection_round` and
+/// `anchor_registration_time` checks as `{ name, status, detail? }`.
+#[wasm_bindgen(js_name = "verifyReceiptAnchor")]
+pub fn verify_receipt_anchor(receipt_json: &str) -> Result<JsValue, JsError> {
+    let receipt: serde_json::Value = serde_json::from_str(receipt_json)
+        .map_err(|e| JsError::new(&format!("parse receipt: {e}")))?;
+    let beacon_ref: beacon::BeaconRef = serde_json::from_value(receipt["commitment"]["beacon"].clone())
+        .map_err(|e| JsError::new(&format!("parse commitment.beacon: {e}")))?;
+
+    let checks = match (beacon_ref.anchor_round, receipt.get("selection")) {
+        (Some(anchor_round), Some(selection)) if !selection.is_null() => verify::check_anchor(
+            anchor_round,
+            selection["beacon_output"]["round"].as_u64(),
+            receipt["registered_at"].as_str(),
+        ),
+        _ => vec![],
+    };
+
+    let serializer = serde_wasm_bindgen::Serializer::new().serialize_maps_as_objects(true);
+    checks.serialize(&serializer)
+        .map_err(|e| JsError::new(&format!("{e}")))
 }

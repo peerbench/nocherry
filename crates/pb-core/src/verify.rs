@@ -1,7 +1,7 @@
 //! Offline verification pipeline (Spec Section 6.4).
 
 use serde::Serialize;
-use crate::beacon::BeaconOutput;
+use crate::beacon::{anchor, BeaconOutput};
 use crate::commitment::{self, Commitment};
 use crate::reveal::{self, Reveal};
 use crate::select;
@@ -94,12 +94,87 @@ pub fn compute_selection(
     .map(|mut sr| { sr.selected_count = sr.selected_items.len(); sr })
 }
 
+/// Check name: selection used round `anchor_round + ANCHOR_SELECTION_DELAY`.
+pub const CHECK_ANCHOR_SELECTION_ROUND: &str = "anchor_selection_round";
+/// Check name: `registered_at` precedes the selection round's time.
+pub const CHECK_ANCHOR_REGISTRATION_TIME: &str = "anchor_registration_time";
+
+/// Anchor checks for a commitment with `beacon.anchor_round` (Spec Section 10.5, step 2a).
+///
+/// - `anchor_selection_round`: the beacon round used for selection must equal
+///   `anchor_round + ANCHOR_SELECTION_DELAY`.
+/// - `anchor_registration_time`: `registered_at` must precede the time of that
+///   round, otherwise the selection randomness was public at registration.
+///   Reported as "skip" when `registered_at` is not supplied.
+pub fn check_anchor(
+    anchor_round: u64,
+    beacon_round: Option<u64>,
+    registered_at: Option<&str>,
+) -> Vec<CheckResult> {
+    let check = |name: &str, status: &str, detail: Option<String>| CheckResult {
+        name: name.into(),
+        status: status.into(),
+        detail,
+    };
+
+    let Some(expected) = anchor::selection_round(anchor_round) else {
+        let detail = format!("anchor_round {anchor_round} is not a usable round number");
+        return vec![
+            check(CHECK_ANCHOR_SELECTION_ROUND, "fail", Some(detail.clone())),
+            check(CHECK_ANCHOR_REGISTRATION_TIME, "fail", Some(detail)),
+        ];
+    };
+
+    let round_check = match beacon_round {
+        Some(round) if round == expected => check(CHECK_ANCHOR_SELECTION_ROUND, "pass", None),
+        Some(round) => check(CHECK_ANCHOR_SELECTION_ROUND, "fail", Some(format!(
+            "selection used beacon round {round}, want anchor_round + {} = {expected}",
+            anchor::ANCHOR_SELECTION_DELAY
+        ))),
+        None => check(CHECK_ANCHOR_SELECTION_ROUND, "fail",
+            Some(format!("selection beacon output has no round, want {expected}"))),
+    };
+
+    let time_check = match registered_at {
+        None => check(CHECK_ANCHOR_REGISTRATION_TIME, "skip",
+            Some("registered_at not supplied".into())),
+        Some(ts) => match (anchor::parse_rfc3339_ms(ts), anchor::round_time_ms(expected)) {
+            (Some(registered_ms), Some(selection_ms)) if registered_ms < selection_ms =>
+                check(CHECK_ANCHOR_REGISTRATION_TIME, "pass", None),
+            (Some(_), Some(_)) => check(CHECK_ANCHOR_REGISTRATION_TIME, "fail", Some(format!(
+                "registered_at {ts} does not precede selection round {expected}"
+            ))),
+            _ => check(CHECK_ANCHOR_REGISTRATION_TIME, "fail",
+                Some(format!("cannot parse registered_at: {ts}"))),
+        },
+    };
+
+    vec![round_check, time_check]
+}
+
 /// Full verification pipeline (Spec Section 6.4).
+///
+/// For a commitment with `beacon.anchor_round` and a selection record, the
+/// anchor timing check is skipped because no `registered_at` is supplied, and
+/// the result is at best "partial". Use `verify_full_with_registration`.
 pub fn verify_full(
     c: &Commitment,
     sel: Option<&SelectionRecord>,
     rev: Option<&Reveal>,
     data: &[DataItem],
+) -> VerifyResult {
+    verify_full_with_registration(c, sel, rev, data, None)
+}
+
+/// Full verification pipeline with the server-attested `registered_at`
+/// (RFC 3339) from the receipt. Without `anchor_round` in the commitment,
+/// `registered_at` is unused and the result equals `verify_full`.
+pub fn verify_full_with_registration(
+    c: &Commitment,
+    sel: Option<&SelectionRecord>,
+    rev: Option<&Reveal>,
+    data: &[DataItem],
+    registered_at: Option<&str>,
 ) -> VerifyResult {
     let mut result = VerifyResult::new();
 
@@ -115,6 +190,19 @@ pub fn verify_full(
     // Step 2: Beacon verification (external).
     result.add("beacon_authentic", "skip",
         Some("beacon signature verification requires external library".into()));
+
+    // Step 2a: Anchored commitments pin the selection round.
+    let mut anchor_unchecked = false;
+    if let (Some(anchor_round), Some(sel)) = (c.beacon.anchor_round, sel) {
+        for check in check_anchor(anchor_round, sel.beacon_output.round, registered_at) {
+            match check.status.as_str() {
+                "fail" => result.status = "failed".into(),
+                "skip" => anchor_unchecked = true,
+                _ => {}
+            }
+            result.checks.push(check);
+        }
+    }
 
     // Step 3: Verify selection.
     if let Some(sel) = sel {
@@ -213,6 +301,11 @@ pub fn verify_full(
             result.add("completeness", "pass",
                 Some(format!("all {} selected items revealed", sel.selected_items.len())));
         }
+    }
+
+    // An anchored selection whose timing could not be checked is not fully verified.
+    if anchor_unchecked && result.status == "verified" {
+        result.status = "partial".into();
     }
 
     result

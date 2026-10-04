@@ -196,3 +196,16 @@ The `MAX_ANCHOR_AGE` of 3 rounds (9 seconds) gives comfortable buffer for:
 | E: Earliest-round-wins | Yes | Partially | No | TIEBREAKER |
 
 **The anchor round approach is the only strategy that is both fully deterministic AND cheat-proof.** All others either leave room for disagreement or can be gamed. The timing guard and earliest-round-wins serve as defense-in-depth layers.
+
+---
+
+## Implementation Status (2026-10-04)
+
+`beacon.anchor_round` is implemented, with two changes to Strategy A as written above:
+
+- Selection uses `anchor_round + 2` (`ANCHOR_SELECTION_DELAY`), not `anchor_round + 1`.
+- There is no `MAX_ANCHOR_AGE`. A server accepts an anchored commitment only if the selection round is not yet available at `registered_at`: `round_time(anchor_round + 2) > registered_at + 1 s`, and the anchor round is not in the future. An age limit alone would let a client register after the selection randomness is public.
+
+The normative text is Section 8.1.1 of `docs/nocherry-commit-reveal-spec-v0.4.md`, with test vectors in Sections 13.6 to 13.8. The field is optional: commitments without it keep the per-server `nextRoundAfter(registered_at)` behavior, including the disagreement described in this document.
+
+Anchoring does not stop a committer from registering several commitments against the same future round and publishing one. That needs a separate mechanism.

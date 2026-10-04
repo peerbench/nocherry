@@ -1,6 +1,32 @@
 /* tslint:disable */
 /* eslint-disable */
 
+/**
+ * `ANCHOR_CLOCK_SKEW_ALLOWANCE_MS`.
+ */
+export function anchorClockSkewAllowanceMs(): number;
+
+/**
+ * `ANCHOR_SELECTION_DELAY`: selection round = anchor_round + this value.
+ */
+export function anchorSelectionDelay(): number;
+
+/**
+ * `ANCHOR_SELECTION_SAFETY_MARGIN_MS`.
+ */
+export function anchorSelectionSafetyMarginMs(): number;
+
+/**
+ * Selection round for an anchored commitment.
+ */
+export function anchoredSelectionRound(anchor_round: bigint): bigint;
+
+/**
+ * Registration rule for an anchored commitment.
+ * Returns `{ ok: true, selection_round }` or `{ ok: false, code, message }`.
+ */
+export function checkAnchorRegistration(anchor_round: bigint, registered_at_ms: bigint): any;
+
 export function createCommitment(params_json: string, private_key_hex: string): any;
 
 export function drandNextRoundAfter(unix_time: bigint): bigint;
@@ -29,12 +55,24 @@ export function threshold(p: number): string;
 
 export function verifyCommitment(commitment_json: string): boolean;
 
+/**
+ * Verifier checks for a server receipt (`{ commitment, registered_at, selection }`).
+ * Returns `[]` when the commitment has no `anchor_round` or the receipt has
+ * no selection yet, otherwise the `anchor_selection_round` and
+ * `anchor_registration_time` checks as `{ name, status, detail? }`.
+ */
+export function verifyReceiptAnchor(receipt_json: string): any;
+
 export function verifySignature(did_key: string, message: Uint8Array, signature_hex: string): boolean;
 
 export type InitInput = RequestInfo | URL | Response | BufferSource | WebAssembly.Module;
 
 export interface InitOutput {
     readonly memory: WebAssembly.Memory;
+    readonly anchorClockSkewAllowanceMs: () => number;
+    readonly anchorSelectionDelay: () => number;
+    readonly anchoredSelectionRound: (a: bigint) => [bigint, number, number];
+    readonly checkAnchorRegistration: (a: bigint, b: bigint) => [number, number, number];
     readonly createCommitment: (a: number, b: number, c: number, d: number) => [number, number, number];
     readonly drandNextRoundAfter: (a: bigint) => bigint;
     readonly drandRoundTime: (a: bigint) => bigint;
@@ -49,7 +87,9 @@ export interface InitOutput {
     readonly signMessage: (a: number, b: number, c: number, d: number) => [number, number, number, number];
     readonly threshold: (a: number) => [number, number];
     readonly verifyCommitment: (a: number, b: number) => [number, number, number];
+    readonly verifyReceiptAnchor: (a: number, b: number) => [number, number, number];
     readonly verifySignature: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number, number];
+    readonly anchorSelectionSafetyMarginMs: () => number;
     readonly __wbindgen_malloc: (a: number, b: number) => number;
     readonly __wbindgen_realloc: (a: number, b: number, c: number, d: number) => number;
     readonly __wbindgen_exn_store: (a: number) => void;

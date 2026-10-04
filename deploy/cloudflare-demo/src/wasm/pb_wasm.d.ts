@@ -1,6 +1,32 @@
 /* tslint:disable */
 /* eslint-disable */
 
+/**
+ * `ANCHOR_CLOCK_SKEW_ALLOWANCE_MS`.
+ */
+export function anchorClockSkewAllowanceMs(): number;
+
+/**
+ * `ANCHOR_SELECTION_DELAY`: selection round = anchor_round + this value.
+ */
+export function anchorSelectionDelay(): number;
+
+/**
+ * `ANCHOR_SELECTION_SAFETY_MARGIN_MS`.
+ */
+export function anchorSelectionSafetyMarginMs(): number;
+
+/**
+ * Selection round for an anchored commitment.
+ */
+export function anchoredSelectionRound(anchor_round: bigint): bigint;
+
+/**
+ * Registration rule for an anchored commitment.
+ * Returns `{ ok: true, selection_round }` or `{ ok: false, code, message }`.
+ */
+export function checkAnchorRegistration(anchor_round: bigint, registered_at_ms: bigint): any;
+
 export function createCommitment(params_json: string, private_key_hex: string): any;
 
 export function drandNextRoundAfter(unix_time: bigint): bigint;
@@ -28,5 +54,13 @@ export function signMessage(private_key_hex: string, message: Uint8Array): strin
 export function threshold(p: number): string;
 
 export function verifyCommitment(commitment_json: string): boolean;
+
+/**
+ * Verifier checks for a server receipt (`{ commitment, registered_at, selection }`).
+ * Returns `[]` when the commitment has no `anchor_round` or the receipt has
+ * no selection yet, otherwise the `anchor_selection_round` and
+ * `anchor_registration_time` checks as `{ name, status, detail? }`.
+ */
+export function verifyReceiptAnchor(receipt_json: string): any;
 
 export function verifySignature(did_key: string, message: Uint8Array, signature_hex: string): boolean;

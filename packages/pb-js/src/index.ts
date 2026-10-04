@@ -23,6 +23,8 @@ export const verifyCommitment = wasm.verifyCommitment;
 export const drandRoundTime = wasm.drandRoundTime;
 export const drandTimeToRound = wasm.drandTimeToRound;
 export const drandNextRoundAfter = wasm.drandNextRoundAfter;
+export const anchoredSelectionRound = wasm.anchoredSelectionRound;
+export const checkAnchorRegistration = wasm.checkAnchorRegistration;
 
 /**
  * Hash a string (UTF-8 encoded).
@@ -30,6 +32,30 @@ export const drandNextRoundAfter = wasm.drandNextRoundAfter;
 export function hashString(s: string): string {
   return wasm.hashBytes(new TextEncoder().encode(s));
 }
+
+// Anchored selection round: create, submit with retry, verify receipts
+export {
+  ANCHOR_SELECTION_DELAY,
+  ANCHOR_ERROR_CODES,
+  fetchCurrentDrandRound,
+  clockDrandRound,
+  createAnchoredCommitment,
+  reanchorCommitment,
+  hasAnchor,
+  anchorIsFresh,
+  isAnchorRejection,
+  submitCommitment,
+  verifyReceiptAnchor,
+} from './anchor.js';
+export type {
+  AnchorOptions,
+  CurrentRoundOptions,
+  SubmitTarget,
+  SubmitResult,
+  SubmitOutcome,
+  SubmitOptions,
+  ReceiptAnchorCheck,
+} from './anchor.js';
 
 // Server registry
 export { loadRegistry, getServers, resolveServer } from './registry.js';

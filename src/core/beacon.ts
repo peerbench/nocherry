@@ -37,14 +37,57 @@ async function fetchDrandRound(round: number) {
   throw lastErr || new Error('All drand relays failed');
 }
 
-export async function getBeaconOutput(storage: StorageInterface, beacon: { type: string }, registeredAt: string, maxWaitMs: number = 15000) {
+export interface BeaconRef {
+  type: string;
+  anchor_round?: number;
+}
+
+export type AnchorCheck =
+  | { ok: true; selection_round: number }
+  | { ok: false; code: string; message: string };
+
+/** True when the commitment's beacon reference carries an `anchor_round`. */
+export function hasAnchorRound(beacon: BeaconRef): boolean {
+  return beacon != null && typeof beacon === 'object' && beacon.anchor_round !== undefined;
+}
+
+/**
+ * Registration rule for an anchored commitment (spec 8.1.1). The anchor round
+ * must not be in the future, and the selection round (anchor_round + 2) must
+ * not be available yet at `registeredAt`. A late commitment is rejected, never
+ * selected with randomness that is already public.
+ */
+export function checkAnchor(beacon: BeaconRef, registeredAt: string): AnchorCheck {
+  const anchorRound = beacon.anchor_round;
+  if (typeof anchorRound !== 'number' || !Number.isSafeInteger(anchorRound) || anchorRound < 1) {
+    return { ok: false, code: 'anchor_round_invalid', message: 'beacon.anchor_round must be a positive integer round number' };
+  }
+  if (beacon.type !== 'drand') {
+    return { ok: false, code: 'anchor_round_invalid', message: `beacon.anchor_round is not supported for beacon type: ${beacon.type}` };
+  }
+  const registeredMs = new Date(registeredAt).getTime();
+  return getWasm().checkAnchorRegistration(BigInt(anchorRound), BigInt(registeredMs));
+}
+
+/**
+ * Beacon round used for selection: `anchor_round + 2` when the commitment
+ * is anchored, otherwise the first round strictly after `registeredAt`.
+ */
+export function selectionRoundFor(beacon: BeaconRef, registeredAt: string): number {
+  const wasm = getWasm();
+  if (hasAnchorRound(beacon)) {
+    return Number(wasm.anchoredSelectionRound(BigInt(beacon.anchor_round!)));
+  }
+  const regUnix = Math.floor(new Date(registeredAt).getTime() / 1000);
+  return Number(wasm.drandNextRoundAfter(BigInt(regUnix)));
+}
+
+export async function getBeaconOutput(storage: StorageInterface, beacon: BeaconRef, registeredAt: string, maxWaitMs: number = 15000) {
   if (beacon.type !== 'drand') {
     throw new Error(`Unsupported beacon type: ${beacon.type}`);
   }
 
-  const wasm = getWasm();
-  const regUnix = Math.floor(new Date(registeredAt).getTime() / 1000);
-  const neededRound = Number(wasm.drandNextRoundAfter(BigInt(regUnix)));
+  const neededRound = selectionRoundFor(beacon, registeredAt);
 
   const cached = await storage.getCachedBeacon('drand', neededRound);
   if (cached) return cached;
