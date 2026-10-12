@@ -291,10 +291,17 @@ pub fn verify_full_with_registration(
     if let Some(sel) = sel {
         match sel.beacon_output.randomness_bytes() {
             Ok(randomness) => {
-                match select::select_auto(
-                    &randomness, &c.commitment_hash, &c.items, c.reveal_probability,
-                ) {
-                    Ok((recomputed, _mode)) => {
+                // The per-item / batch threshold is a deployment setting, so the
+                // mode comes from the selection record (Spec Section 8.4).
+                let recomputed = match sel.selection_mode.as_str() {
+                    "per_item" => Ok(select::select_per_item_batch(
+                        &randomness, &c.commitment_hash, &c.items, c.reveal_probability)),
+                    "batch" => select::select_batch_by_probability(
+                        &c.items, &randomness, c.reveal_probability),
+                    other => Err(format!("unknown selection_mode: {other}")),
+                };
+                match recomputed {
+                    Ok(recomputed) => {
                         if recomputed == sel.selected_items {
                             result.add("selection_correct", "pass", None);
                         } else {
@@ -592,5 +599,31 @@ mod tests {
         let result = verify_selection(&test_beacon_output(), None);
         assert_eq!(status_of(&result, CHECK_BEACON_AFTER_REGISTRATION), "skip");
         assert_eq!(result.status, "partial");
+    }
+
+    #[test]
+    fn selection_is_recomputed_in_the_recorded_mode() {
+        let kp = sign::generate_keypair();
+        let items: Vec<String> = (0..5u8).map(|i| hash::hash_bytes(&[i])).collect();
+        let c = make_commitment(&kp, items, 0.5);
+        let bo = test_beacon_output();
+        let randomness = bo.randomness_bytes().unwrap();
+        let mut sel = compute_selection(&c, &bo, "now").unwrap();
+        let verify = |sel: &SelectionRecord| status_of(
+            &verify_full_with_registration(&c, Some(sel), None, &[], Some(REGISTERED_BEFORE_ROUND_1000)),
+            "selection_correct").to_string();
+
+        assert_eq!(sel.selection_mode, "batch");
+        assert_eq!(verify(&sel), "pass");
+
+        // A server configured for per-item selection of small commitments.
+        sel.selection_mode = "per_item".into();
+        assert_eq!(verify(&sel), "fail", "batch result presented as per-item");
+        sel.selected_items = select::select_per_item_batch(
+            &randomness, &c.commitment_hash, &c.items, c.reveal_probability);
+        assert_eq!(verify(&sel), "pass");
+
+        sel.selection_mode = "favorite".into();
+        assert_eq!(verify(&sel), "fail");
     }
 }

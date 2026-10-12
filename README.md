@@ -75,12 +75,18 @@ Both methods are deterministic -- anyone with the beacon output and commitment c
 #### Verification checks
 
 1. **Commitment signature** -- Ed25519 verify the commitment using the signer's public key
-2. **Beacon temporal ordering** -- the drand round timestamp is after `registered_at`
+2. **Beacon authenticity and timing** -- the randomness equals `SHA-256(signature)`, the BLS signature verifies for the round under the quicknet public key, and the round is the first one after `registered_at`
    - For commitments with `beacon.anchor_round`: the selection used round `anchor_round + 2`, and `registered_at` precedes that round (spec 8.1.1). All servers then agree on the selection.
 3. **Selection recomputation** -- re-run the selection algorithm, confirm it matches
 4. **Reveal signature** -- Ed25519 verify the reveal object
 5. **Data integrity** -- SHA-256 hash revealed data, confirm it matches committed hashes
 6. **Completeness** -- all randomly-selected items are actually revealed
+
+Checks 1 to 3 and the server's signature run offline on a saved receipt:
+
+```bash
+pb-js verify receipt.json          # or server-receipts.json
+```
 
 #### Cryptographic primitives
 

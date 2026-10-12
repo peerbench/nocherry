@@ -8,7 +8,7 @@
  *   pb-js hash file <path>
  *   pb-js hash dir <path>
  *   pb-js commit <dir> --probability <p> [--beacon drand] [--no-anchor]
- *   pb-js verify <commitment.json>
+ *   pb-js verify <commitment.json | receipt.json | server-receipts.json>
  *   pb-js servers                         List known servers
  *   pb-js submit <dir|file> [-s <server>]  Submit commitment to server(s)
  *   pb-js reveal <dir>                           Create & submit reveal
@@ -31,6 +31,7 @@ import {
   createAnchoredCommitment, reanchorCommitment, submitCommitment, verifyReceiptAnchor,
   type SubmitResult,
 } from './anchor.js';
+import { verifyReceipt } from './receipt.js';
 
 const KEY_DIR = join(homedir(), '.nocherry');
 const KEY_FILE = join(KEY_DIR, 'key.json');
@@ -229,9 +230,36 @@ async function cmdCommit(dirPath: string, probability: number, beacon: string, a
   console.log(JSON.stringify(commitment, null, 2));
 }
 
+/** Print the offline checks of each receipt; exit 1 if any receipt fails. */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function cmdVerifyReceipts(receipts: { label: string; receipt: any }[]): never {
+  let failed = false;
+  for (const { label, receipt } of receipts) {
+    const result = verifyReceipt(receipt);
+    console.log(`Receipt ${label}: ${result.status.toUpperCase()}`);
+    console.log(`  Hash: ${receipt.commitment_hash}`);
+    for (const check of result.checks) {
+      console.log(`  ${check.status.padEnd(4)} ${check.name}${check.detail ? ` (${check.detail})` : ''}`);
+    }
+    if (result.status === 'failed') failed = true;
+  }
+  process.exit(failed ? 1 : 0);
+}
+
 function cmdVerify(commitmentPath: string): void {
   const raw = readFileSync(resolve(commitmentPath), 'utf-8');
   const commitment = JSON.parse(raw);
+
+  // server-receipts.json or a single receipt: verify the whole chain offline.
+  if (Array.isArray(commitment.receipts)) {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    cmdVerifyReceipts(commitment.receipts.map((r: any) => ({
+      label: r.server_name || r.server_url || 'unknown server', receipt: r.receipt,
+    })));
+  }
+  if (commitment.commitment && commitment.registered_at) {
+    cmdVerifyReceipts([{ label: commitment.server_key || 'unknown server', receipt: commitment }]);
+  }
 
   try {
     const valid = wasm.verifyCommitment(JSON.stringify(commitment));
@@ -1654,6 +1682,7 @@ function usage(exitCode = 1): never {
   pb-js hash dir <path>                     Hash a directory
   pb-js commit <dir> -p <prob> [--no-anchor] Create commitment from directory
   pb-js verify <commitment.json>            Verify commitment signature
+  pb-js verify <receipt.json>               Verify a server receipt offline (beacon, timing, selection)
   pb-js servers                             List known servers
   pb-js submit <dir|file> [-s <srv>]         Submit commitment to server(s)
   pb-js reveal <dir>                        Create & submit reveal

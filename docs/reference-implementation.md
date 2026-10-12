@@ -133,7 +133,7 @@ ed25519-dalek = "2"      # Ed25519 sign/verify
 p256 = "0.13"            # NIST P-256 sign/verify
 k256 = "0.13"            # secp256k1 sign/verify
 bs58 = "0.5"             # did:key base58btc encoding
-blst = "0.3"             # BLS12-381 for drand verification
+drand-verify = "0.6"     # BLS12-381 drand verification (optional feature drand-bls)
 serde = "1"              # JSON serialization
 serde_json = "1"         # JSON serialization
 ```
@@ -151,7 +151,7 @@ The crate is designed to compile cleanly to `wasm32-unknown-unknown`:
 
 - No `std::fs`, no `std::net` — all I/O via trait parameters
 - `hash.rs` takes `impl Read`, caller provides the bytes
-- `blst` has WASM support via `portable` feature
+- `drand-verify` is pure Rust and builds for `wasm32-unknown-unknown` without a C toolchain
 - `ed25519-dalek` compiles to WASM natively
 - All randomness comes from function parameters (beacon output), never from OS
 
@@ -233,7 +233,7 @@ pub fn verify_commitment(commitment_json: &str) -> JsValue { ... }
 // ... etc
 ```
 
-Target size: <500 KiB gzipped. The `blst` BLS library is the largest dependency (~200 KiB WASM).
+Target size: <500 KiB gzipped. BLS verification (`drand-verify`, feature `drand-bls`) is the largest dependency: it roughly doubles the binary, from about 310 KiB to about 640 KiB uncompressed. Servers never verify beacons, so server targets can be built with `--no-default-features`.
 
 ## 5. Python Bindings (`pb-python`)
 

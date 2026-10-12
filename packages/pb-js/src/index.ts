@@ -33,6 +33,10 @@ export function hashString(s: string): string {
   return wasm.hashBytes(new TextEncoder().encode(s));
 }
 
+// Offline receipt verification
+export { verifyReceipt } from './receipt.js';
+export type { ReceiptCheck, ReceiptVerification } from './receipt.js';
+
 // Anchored selection round: create, submit with retry, verify receipts
 export {
   ANCHOR_SELECTION_DELAY,

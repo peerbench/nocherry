@@ -164,7 +164,7 @@ Use case: a benchmark author has 500 test cases ready and commits them all at on
 
 Fields:
 
-- **`spec_version`** (string): version of this specification.
+- **`spec_version`** (string): version of the object format. It is `"0.2.0"` for objects defined by this document: the document version (0.4.0-draft) changed, the signed object formats did not. An implementation MUST NOT emit another value until a later version of this document changes a signing payload.
 - **`commitment_hash`** (string): `SHA-256(signing_payload)`, lowercase hex (64 chars). Computed by the client before submission. Deterministic: the same commitment always produces the same hash, on every server, on every machine. This is the canonical identifier for the commitment across all servers. Not part of the signed payload (it is derived from it).
 - **`items`** (array of strings): SHA-256 hashes (lowercase hex, 64 chars). At least 1 item. No duplicates. For single-item commits, this is a one-element array.
 - **`item_count`** (integer): length of `items`.
@@ -328,6 +328,8 @@ prng_next(seed, index):
   return le_uint64(mac[0..7])
 ```
 
+**Modulo bias.** Step 3b reduces a uniform 64-bit value modulo `range`, so the low residues are favored by at most `range / 2^64` per step (about 5 × 10^-14 for one million items). The bias is far below anything an audit can observe. Removing it by rejection sampling changes the selection output and the test vectors in Section 13, so it is deferred to the next version that changes the selection algorithm.
+
 ### 8.4 Which Mode to Use
 
 | Scenario | Selection mode | Rationale |
@@ -336,7 +338,9 @@ prng_next(seed, index):
 | Batch of 2–20 items | Per-item (8.2) | Probabilistic count is fine for small sets |
 | Batch of 21+ items | Batch (8.3) | Exact count via shuffle is more predictable |
 
-The boundary is at 20 items: commitments with 20 or fewer items use per-item selection; commitments with more than 20 items use batch selection (`item_count > 20`). The `selection_mode` is recorded in the selection record (Section 8.5) so verifiers know which algorithm was used. The threshold of 20 is a default that can be configured per-deployment.
+The boundary of 20 items is the default of this specification. It is a deployment setting: the reference server uses per-item selection only for single-item commitments and batch selection for two or more items. The mode that was used is recorded as `selection_mode` in the selection record (Section 8.5).
+
+A verifier MUST recompute the selection with the algorithm named by `selection_mode` and MUST fail the selection check for any other value than `per_item` or `batch`. A verifier MUST NOT assume a threshold. Because the server chooses the threshold, a relying party that wants one fixed mode for a commitment size should state it and compare it with `selection_mode`.
 
 ### 8.5 Selection Record
 
@@ -504,15 +508,18 @@ Given: commitment, selection record, reveal object, and actual data for each rev
 
 1. **Verify commitment signature.** Ed25519 verify against signing payload (Section 7.2).
 
-2. **Verify beacon.** Confirm the beacon output in the selection record is authentic (BLS verify for drand) and that its timestamp/round is after `commitment.registered_at`.
+2. **Verify beacon.** Confirm the beacon output in the selection record is authentic and bound to the registration time. For drand quicknet the checks are reported by name and each fails verification on its own:
+   - `beacon_randomness`: `randomness == SHA-256(signature)`.
+   - `beacon_authentic`: the output is from the chain named in `commitment.beacon`, and the BLS signature verifies for `round` under the chain's public key (Section 9.2). A verifier that cannot run this check reports it as skipped, and the overall result is at most "partial".
+   - `beacon_after_registration`, for a commitment without `beacon.anchor_round`: `round` is the first round strictly after the receipt's `registered_at`, taken at whole-second resolution (Section 8.1). An earlier round means the randomness was public at registration; a later round means the server did not use the round the rule prescribes. Without `registered_at` the check is skipped and the result is at most "partial".
 
    **2a. Verify the anchor**, if the commitment has `beacon.anchor_round`. Both checks are reported by name and each fails verification on its own:
    - `anchor_selection_round`: `selection.beacon_output.round == anchor_round + ANCHOR_SELECTION_DELAY`.
    - `anchor_registration_time`: the receipt's `registered_at` precedes `round_time(anchor_round + ANCHOR_SELECTION_DELAY)`. If the verifier has no `registered_at` (no receipt), this check is reported as skipped and the overall result is at most "partial", never "verified".
 
-   Without `anchor_round`, step 2a does not apply and verification is unchanged.
+   Without `anchor_round`, step 2a does not apply; `beacon_after_registration` takes its place.
 
-3. **Verify selection.** Re-run the selection algorithm (Section 8) with the commitment's items and the beacon's randomness. Confirm the selection record's `selected_items` matches.
+3. **Verify selection.** Re-run the selection algorithm named by `selection_mode` (Section 8.4) with the commitment's items and the beacon's randomness. Confirm the selection record's `selected_items` matches.
 
 4. **Verify reveal signature.** Ed25519 verify the reveal object.
 
@@ -1015,6 +1022,8 @@ Verifier (Section 10.5, step 2a) for a receipt of this commitment:
 | Service operator tampers with commitments | Commitments are signed by the committer; tampering breaks the signature |
 | Service operator backdates a commitment | `registered_at` is server-side; additionally, beacon round must postdate it |
 | Committer reveals only easy/favorable items voluntarily | Voluntary vs. selected reveals are distinguished in the reveal object; reviewers can weight accordingly |
+| Server issues a receipt with randomness of its choosing | Verifier checks `randomness == SHA-256(signature)` and the BLS signature for the round (Section 10.5, step 2) |
+| Committer registers several commitments and publishes one (with or without a colluding server) | Not prevented. A re-signed commitment over the same items has a new `commitment_hash` and is accepted; `signer_activity` reports a count, it is not a limit. A colluding server can also drop the records of unpublished attempts. Relying parties should require receipts from several independent servers and fix the expected `commitment_hash` or stream in advance |
 | SSRF via file_urls verification | Servers SHOULD restrict `file_urls` fetches to HTTPS with public IPs, rejecting private/internal network ranges |
 
 ## 15. Canonical JSON

@@ -262,3 +262,27 @@ pub fn verify_receipt_anchor(receipt_json: &str) -> Result<JsValue, JsError> {
     checks.serialize(&serializer)
         .map_err(|e| JsError::new(&format!("{e}")))
 }
+
+/// Offline verification of a server receipt (`{ commitment, registered_at, selection }`):
+/// commitment signature, beacon authenticity, selection round timing and the
+/// recomputed selection (Spec Section 10.5, steps 1 to 3). Returns
+/// `{ status, checks: [{ name, status, detail? }], ... }`.
+#[wasm_bindgen(js_name = "verifyReceipt")]
+pub fn verify_receipt(receipt_json: &str) -> Result<JsValue, JsError> {
+    let receipt: serde_json::Value = serde_json::from_str(receipt_json)
+        .map_err(|e| JsError::new(&format!("parse receipt: {e}")))?;
+    let c: commitment::Commitment = serde_json::from_value(receipt["commitment"].clone())
+        .map_err(|e| JsError::new(&format!("parse commitment: {e}")))?;
+    let selection: Option<verify::SelectionRecord> = match receipt.get("selection") {
+        Some(v) if !v.is_null() => Some(serde_json::from_value(v.clone())
+            .map_err(|e| JsError::new(&format!("parse selection: {e}")))?),
+        _ => None,
+    };
+
+    let result = verify::verify_full_with_registration(
+        &c, selection.as_ref(), None, &[], receipt["registered_at"].as_str(),
+    );
+    let serializer = serde_wasm_bindgen::Serializer::new().serialize_maps_as_objects(true);
+    result.serialize(&serializer)
+        .map_err(|e| JsError::new(&format!("{e}")))
+}
