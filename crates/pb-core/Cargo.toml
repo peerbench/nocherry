@@ -13,5 +13,11 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 rand = "0.8"
 hex = "0.4"
+drand-verify = { version = "0.6", optional = true }
+
+[features]
+default = ["drand-bls"]
+# BLS verification of drand beacon outputs. Offline verifiers need it; servers do not.
+drand-bls = ["dep:drand-verify"]
 
 [dev-dependencies]

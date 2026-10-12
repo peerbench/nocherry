@@ -1,14 +1,14 @@
 //! Offline verification pipeline (Spec Section 6.4).
 
-use serde::Serialize;
-use crate::beacon::{anchor, BeaconOutput};
+use serde::{Serialize, Deserialize};
+use crate::beacon::{anchor, drand, BeaconOutput, BeaconRef};
 use crate::commitment::{self, Commitment};
 use crate::reveal::{self, Reveal};
 use crate::select;
 use crate::hash;
 
 /// Selection record produced after beacon fires.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SelectionRecord {
     pub commitment_hash: String,
     pub beacon_output: BeaconOutput,
@@ -18,9 +18,9 @@ pub struct SelectionRecord {
     pub selected_count: usize,
     pub total_count: usize,
     pub computed_at: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub server_key: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub server_signature: Option<String>,
 }
 
@@ -94,6 +94,85 @@ pub fn compute_selection(
     .map(|mut sr| { sr.selected_count = sr.selected_items.len(); sr })
 }
 
+/// Check name: `randomness == SHA-256(signature)`.
+pub const CHECK_BEACON_RANDOMNESS: &str = "beacon_randomness";
+/// Check name: the beacon signature verifies under the chain's public key.
+pub const CHECK_BEACON_AUTHENTIC: &str = "beacon_authentic";
+/// Check name: selection used the first round after `registered_at`.
+pub const CHECK_BEACON_AFTER_REGISTRATION: &str = "beacon_after_registration";
+
+fn check(name: &str, status: &str, detail: Option<String>) -> CheckResult {
+    CheckResult { name: name.into(), status: status.into(), detail }
+}
+
+/// Beacon checks (Spec Section 10.5, step 2) for the output used in a selection.
+///
+/// Implemented for drand quicknet. For any other beacon `beacon_authentic` is
+/// reported as "skip". It is also "skip" when built without `drand-bls`.
+pub fn check_beacon(beacon_ref: &BeaconRef, out: &BeaconOutput) -> Vec<CheckResult> {
+    let same_chain = match (&beacon_ref.chain_hash, &out.chain_hash) {
+        (Some(want), Some(got)) => want.eq_ignore_ascii_case(got),
+        (Some(_), None) => false,
+        (None, _) => true,
+    };
+    if out.beacon_type != beacon_ref.beacon_type || !same_chain {
+        return vec![check(CHECK_BEACON_AUTHENTIC, "fail",
+            Some("beacon output is not from the beacon named in the commitment".into()))];
+    }
+    let is_quicknet = beacon_ref.beacon_type == "drand"
+        && beacon_ref.chain_hash.as_deref()
+            .is_some_and(|h| h.eq_ignore_ascii_case(drand::QUICKNET_CHAIN_HASH));
+    if !is_quicknet {
+        return vec![check(CHECK_BEACON_AUTHENTIC, "skip",
+            Some(format!("no verifier for beacon type {}", beacon_ref.beacon_type)))];
+    }
+
+    let randomness = match drand::randomness_from_signature(&out.signature) {
+        Ok(expected) if expected.eq_ignore_ascii_case(&out.randomness) =>
+            check(CHECK_BEACON_RANDOMNESS, "pass", None),
+        Ok(_) => check(CHECK_BEACON_RANDOMNESS, "fail",
+            Some("randomness is not SHA-256(signature)".into())),
+        Err(e) => check(CHECK_BEACON_RANDOMNESS, "fail", Some(e)),
+    };
+
+    #[cfg(feature = "drand-bls")]
+    let authentic = match out.round {
+        None => check(CHECK_BEACON_AUTHENTIC, "fail", Some("beacon output has no round".into())),
+        Some(round) => match drand::verify_signature(round, &out.signature) {
+            Ok(()) => check(CHECK_BEACON_AUTHENTIC, "pass", None),
+            Err(e) => check(CHECK_BEACON_AUTHENTIC, "fail", Some(e)),
+        },
+    };
+    #[cfg(not(feature = "drand-bls"))]
+    let authentic = check(CHECK_BEACON_AUTHENTIC, "skip",
+        Some("built without BLS verification (feature drand-bls)".into()));
+
+    vec![randomness, authentic]
+}
+
+/// Timing check for a commitment without `anchor_round` (Spec Section 8.1):
+/// the selection round is the first one strictly after `registered_at`,
+/// taken at whole-second resolution as servers do. Reported as "skip" when
+/// `registered_at` is not supplied.
+pub fn check_registration_round(beacon_round: Option<u64>, registered_at: Option<&str>) -> CheckResult {
+    let name = CHECK_BEACON_AFTER_REGISTRATION;
+    let Some(ts) = registered_at else {
+        return check(name, "skip", Some("registered_at not supplied".into()));
+    };
+    let Some(registered_ms) = anchor::parse_rfc3339_ms(ts) else {
+        return check(name, "fail", Some(format!("cannot parse registered_at: {ts}")));
+    };
+    let expected = drand::next_round_after(registered_ms.div_euclid(1000));
+    match beacon_round {
+        Some(round) if round == expected => check(name, "pass", None),
+        Some(round) if round < expected => check(name, "fail", Some(format!(
+            "selection round {round} was already public at registered_at {ts}"))),
+        Some(round) => check(name, "fail", Some(format!(
+            "selection round {round} is not the first round after registered_at {ts}, want {expected}"))),
+        None => check(name, "fail", Some(format!("selection beacon output has no round, want {expected}"))),
+    }
+}
+
 /// Check name: selection used round `anchor_round + ANCHOR_SELECTION_DELAY`.
 pub const CHECK_ANCHOR_SELECTION_ROUND: &str = "anchor_selection_round";
 /// Check name: `registered_at` precedes the selection round's time.
@@ -154,9 +233,9 @@ pub fn check_anchor(
 
 /// Full verification pipeline (Spec Section 6.4).
 ///
-/// For a commitment with `beacon.anchor_round` and a selection record, the
-/// anchor timing check is skipped because no `registered_at` is supplied, and
-/// the result is at best "partial". Use `verify_full_with_registration`.
+/// With a selection record the timing check is skipped because no
+/// `registered_at` is supplied, and the result is at best "partial". Use
+/// `verify_full_with_registration`.
 pub fn verify_full(
     c: &Commitment,
     sel: Option<&SelectionRecord>,
@@ -167,8 +246,7 @@ pub fn verify_full(
 }
 
 /// Full verification pipeline with the server-attested `registered_at`
-/// (RFC 3339) from the receipt. Without `anchor_round` in the commitment,
-/// `registered_at` is unused and the result equals `verify_full`.
+/// (RFC 3339) from the receipt.
 pub fn verify_full_with_registration(
     c: &Commitment,
     sel: Option<&SelectionRecord>,
@@ -187,17 +265,22 @@ pub fn verify_full_with_registration(
         }
     }
 
-    // Step 2: Beacon verification (external).
-    result.add("beacon_authentic", "skip",
-        Some("beacon signature verification requires external library".into()));
-
-    // Step 2a: Anchored commitments pin the selection round.
-    let mut anchor_unchecked = false;
-    if let (Some(anchor_round), Some(sel)) = (c.beacon.anchor_round, sel) {
-        for check in check_anchor(anchor_round, sel.beacon_output.round, registered_at) {
+    // Step 2: Beacon output is authentic.
+    let mut unchecked = false;
+    if let Some(sel) = sel {
+        let mut checks = check_beacon(&c.beacon, &sel.beacon_output);
+        // Step 2a: the selection round is the one the commitment was bound to.
+        match c.beacon.anchor_round {
+            Some(anchor_round) =>
+                checks.extend(check_anchor(anchor_round, sel.beacon_output.round, registered_at)),
+            None if c.beacon.beacon_type == "drand" =>
+                checks.push(check_registration_round(sel.beacon_output.round, registered_at)),
+            None => {}
+        }
+        for check in checks {
             match check.status.as_str() {
                 "fail" => result.status = "failed".into(),
-                "skip" => anchor_unchecked = true,
+                "skip" => unchecked = true,
                 _ => {}
             }
             result.checks.push(check);
@@ -303,8 +386,8 @@ pub fn verify_full_with_registration(
         }
     }
 
-    // An anchored selection whose timing could not be checked is not fully verified.
-    if anchor_unchecked && result.status == "verified" {
+    // A selection whose beacon or timing could not be checked is not fully verified.
+    if unchecked && result.status == "verified" {
         result.status = "partial".into();
     }
 
@@ -317,14 +400,33 @@ mod tests {
     use crate::sign;
     use crate::beacon::BeaconRef;
 
+    // Real quicknet round 1000, scheduled at 2023-08-23T15:59:24Z.
+    const REGISTERED_BEFORE_ROUND_1000: &str = "2023-08-23T15:59:23.400Z";
+
     fn test_beacon_output() -> BeaconOutput {
         BeaconOutput {
             beacon_type: "drand".into(),
             chain_hash: Some(crate::beacon::drand::QUICKNET_CHAIN_HASH.into()),
-            round: Some(1),
-            randomness: "f26a953dc50e6bf7608f7fc5c9cc3e382a9da0e3b6e3aa4fc8579fe13e08fbf6".into(),
-            signature: "abc".into(),
+            round: Some(1000),
+            randomness: "fe290beca10872ef2fb164d2aa4442de4566183ec51c56ff3cd603d930e54fdd".into(),
+            signature: "b44679b9a59af2ec876b1a6b1ad52ea9b1615fc3982b19576350f93447cb1125e342b73a8dd2bacbe47e4b6b63ed5e39".into(),
         }
+    }
+
+    /// Best status a selection can reach: without BLS the beacon check is skipped.
+    const CHECKED: &str = if cfg!(feature = "drand-bls") { "verified" } else { "partial" };
+
+    fn status_of<'a>(result: &'a VerifyResult, name: &str) -> &'a str {
+        result.checks.iter().find(|c| c.name == name)
+            .map(|c| c.status.as_str()).unwrap_or("absent")
+    }
+
+    /// Receipt-level verification of a one-item commitment with the given beacon output.
+    fn verify_selection(bo: &BeaconOutput, registered_at: Option<&str>) -> VerifyResult {
+        let kp = sign::generate_keypair();
+        let c = make_commitment(&kp, vec![hash::hash_bytes(b"data")], 1.0);
+        let sel = compute_selection(&c, bo, "now").unwrap();
+        verify_full_with_registration(&c, Some(&sel), None, &[], registered_at)
     }
 
     fn make_commitment(kp: &sign::KeyPair, items: Vec<String>, prob: f64) -> Commitment {
@@ -359,12 +461,12 @@ mod tests {
             revealed_at: "2026-02-07T10:00:00Z".into(),
         }, &kp).unwrap();
 
-        let result = verify_full(&c, Some(&sel), Some(&rev), &[
+        let result = verify_full_with_registration(&c, Some(&sel), Some(&rev), &[
             DataItem { hash: h1, data: data1 },
             DataItem { hash: h2, data: data2 },
-        ]);
+        ], Some(REGISTERED_BEFORE_ROUND_1000));
 
-        assert_eq!(result.status, "verified");
+        assert_eq!(result.status, CHECKED);
         assert_eq!(result.items_passed, 2);
         assert_eq!(result.items_failed, 0);
     }
@@ -413,5 +515,82 @@ mod tests {
         let sel1 = compute_selection(&c, &bo, "t1").unwrap();
         let sel2 = compute_selection(&c, &bo, "t2").unwrap();
         assert_eq!(sel1.selected_items, sel2.selected_items);
+    }
+
+    #[test]
+    fn beacon_checks_pass_for_real_round() {
+        let result = verify_selection(&test_beacon_output(), Some(REGISTERED_BEFORE_ROUND_1000));
+        assert_eq!(result.status, CHECKED);
+        assert_eq!(status_of(&result, CHECK_BEACON_RANDOMNESS), "pass");
+        assert_eq!(status_of(&result, CHECK_BEACON_AFTER_REGISTRATION), "pass");
+        #[cfg(feature = "drand-bls")]
+        assert_eq!(status_of(&result, CHECK_BEACON_AUTHENTIC), "pass");
+    }
+
+    #[test]
+    fn chosen_randomness_is_rejected() {
+        let mut bo = test_beacon_output();
+        bo.randomness = "00".repeat(32);
+        let result = verify_selection(&bo, Some(REGISTERED_BEFORE_ROUND_1000));
+        assert_eq!(result.status, "failed");
+        assert_eq!(status_of(&result, CHECK_BEACON_RANDOMNESS), "fail");
+    }
+
+    // Randomness consistent with a signature the beacon never produced.
+    #[cfg(feature = "drand-bls")]
+    #[test]
+    fn forged_signature_is_rejected() {
+        let mut bo = test_beacon_output();
+        bo.signature = "ab".repeat(48);
+        bo.randomness = drand::randomness_from_signature(&bo.signature).unwrap();
+        let result = verify_selection(&bo, Some(REGISTERED_BEFORE_ROUND_1000));
+        assert_eq!(result.status, "failed");
+        assert_eq!(status_of(&result, CHECK_BEACON_RANDOMNESS), "pass");
+        assert_eq!(status_of(&result, CHECK_BEACON_AUTHENTIC), "fail");
+    }
+
+    // A genuine output presented under another round number.
+    #[cfg(feature = "drand-bls")]
+    #[test]
+    fn signature_of_another_round_is_rejected() {
+        let mut bo = test_beacon_output();
+        bo.round = Some(1001);
+        let result = verify_selection(&bo, Some("2023-08-23T15:59:26Z"));
+        assert_eq!(result.status, "failed");
+        assert_eq!(status_of(&result, CHECK_BEACON_AUTHENTIC), "fail");
+    }
+
+    #[test]
+    fn beacon_of_another_chain_is_rejected() {
+        let mut bo = test_beacon_output();
+        bo.chain_hash = Some("00".repeat(32));
+        let result = verify_selection(&bo, Some(REGISTERED_BEFORE_ROUND_1000));
+        assert_eq!(result.status, "failed");
+        assert_eq!(status_of(&result, CHECK_BEACON_AUTHENTIC), "fail");
+    }
+
+    #[test]
+    fn registration_round_boundaries() {
+        let bo = test_beacon_output();
+        let cases = [
+            ("2023-08-23T15:59:21Z", "pass"),      // previous tick: round 1000 is next
+            ("2023-08-23T15:59:23.999Z", "pass"),
+            ("2023-08-23T15:59:24Z", "fail"),      // round 1000 is public at this instant
+            ("2023-08-23T17:59:30+02:00", "fail"), // registered after the round
+            ("2023-08-23T15:59:20.999Z", "fail"),  // round 999 was the first one after
+            ("not a time", "fail"),
+        ];
+        for (registered_at, want) in cases {
+            let result = verify_selection(&bo, Some(registered_at));
+            assert_eq!(status_of(&result, CHECK_BEACON_AFTER_REGISTRATION), want, "{registered_at}");
+            assert_eq!(result.status, if want == "pass" { CHECKED } else { "failed" }, "{registered_at}");
+        }
+    }
+
+    #[test]
+    fn missing_registered_at_is_partial() {
+        let result = verify_selection(&test_beacon_output(), None);
+        assert_eq!(status_of(&result, CHECK_BEACON_AFTER_REGISTRATION), "skip");
+        assert_eq!(result.status, "partial");
     }
 }

@@ -15,9 +15,10 @@ fn test_beacon_output() -> BeaconOutput {
     BeaconOutput {
         beacon_type: "drand".into(),
         chain_hash: Some("52db9ba70e0cc0f6eaf7803dd07447a1f5477735fd3f661792ba94600c84e971".into()),
+        // Real quicknet round 1, so that only the attack under test fails verification.
         round: Some(1),
-        randomness: "f26a953dc50e6bf7608f7fc5c9cc3e382a9da0e3b6e3aa4fc8579fe13e08fbf6".into(),
-        signature: "abc".into(),
+        randomness: "1466a6cd24e327188770752f6134001c64d6efcc590ccc26b721611ad96f165a".into(),
+        signature: "b55e7cb2d5c613ee0b2e28d6750aabbb78c39dcc96bd9d38c2c2e12198df95571de8e8e402a0cc48871c7089a2b3af4b".into(),
     }
 }
 

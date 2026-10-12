@@ -6,7 +6,9 @@ use pb_core::beacon::anchor::{self, ANCHOR_SELECTION_DELAY};
 use pb_core::beacon::{drand, BeaconOutput, BeaconRef};
 use pb_core::commitment::{self, Commitment, CreateParams};
 use pb_core::sign;
-use pb_core::verify::{self, CHECK_ANCHOR_REGISTRATION_TIME, CHECK_ANCHOR_SELECTION_ROUND};
+use pb_core::verify::{
+    self, CHECK_ANCHOR_REGISTRATION_TIME, CHECK_ANCHOR_SELECTION_ROUND, CHECK_BEACON_AFTER_REGISTRATION,
+};
 
 // RFC 8032 section 7.1 test 1 secret key.
 const TEST_KEY: &str = "9d61b19deffd5a60ba844af492ec2cc44449c5697b326919703bac031cae7f60";
@@ -43,13 +45,15 @@ fn vector_commitment(beacon: BeaconRef) -> Commitment {
     }, &test_kp()).unwrap()
 }
 
+/// Beacon output for `round`. Only round `ANCHOR + 2` carries the real
+/// quicknet signature; any other round fails `beacon_authentic`.
 fn beacon_output(round: u64) -> BeaconOutput {
     BeaconOutput {
         beacon_type: "drand".into(),
         chain_hash: Some(drand::QUICKNET_CHAIN_HASH.into()),
         round: Some(round),
-        randomness: "f26a953dc50e6bf7608f7fc5c9cc3e382a9da0e3b6e3aa4fc8579fe13e08fbf6".into(),
-        signature: "abc".into(),
+        randomness: "5c00d32a5dd9adf1f2f3ff730d16003ab3f9621d5c7ad64950001ee2ca153108".into(),
+        signature: "8f6c972e765d19007dd206108747b34e4caeb62e0e9c3cac48b2f60f7d53c61baa38b85c8a60b7b4cc41d757380724d8".into(),
     }
 }
 
@@ -71,6 +75,9 @@ fn at(round: u64, offset_ms: i64) -> String {
     format!("{year:04}-{month:02}-{day:02}T{:02}:{:02}:{:02}.{millis:03}Z",
         rem / 3600, rem % 3600 / 60, rem % 60)
 }
+
+/// Best status a selection can reach: without BLS the beacon check is skipped.
+const CHECKED: &str = if cfg!(feature = "drand-bls") { "verified" } else { "partial" };
 
 fn check<'a>(result: &'a verify::VerifyResult, name: &str) -> Option<&'a verify::CheckResult> {
     result.checks.iter().find(|c| c.name == name)
@@ -173,7 +180,7 @@ fn verifier_passes_anchored_receipt() {
     let registered_at = at(ANCHOR, 1_500);
 
     let result = verify::verify_full_with_registration(&c, Some(&sel), None, &[], Some(&registered_at));
-    assert_eq!(result.status, "verified");
+    assert_eq!(result.status, CHECKED);
     assert_eq!(check(&result, CHECK_ANCHOR_SELECTION_ROUND).unwrap().status, "pass");
     assert_eq!(check(&result, CHECK_ANCHOR_REGISTRATION_TIME).unwrap().status, "pass");
 }
@@ -239,18 +246,29 @@ fn verifier_without_registered_at_is_partial() {
 }
 
 #[test]
-fn verifier_unanchored_behavior_unchanged() {
+fn verifier_unanchored_checks_first_round_after_registration() {
     let c = vector_commitment(BeaconRef::drand_quicknet());
-    let sel = verify::compute_selection(&c, &beacon_output(1), "t").unwrap();
+    let round = ANCHOR + 2;
+    let sel = verify::compute_selection(&c, &beacon_output(round), "t").unwrap();
 
-    let plain = verify::verify_full(&c, Some(&sel), None, &[]);
-    let with_time = verify::verify_full_with_registration(&c, Some(&sel), None, &[], Some("garbage"));
-    for result in [&plain, &with_time] {
-        assert_eq!(result.status, "verified");
-        assert!(check(result, CHECK_ANCHOR_SELECTION_ROUND).is_none());
-        assert!(check(result, CHECK_ANCHOR_REGISTRATION_TIME).is_none());
-        let names: Vec<&str> = result.checks.iter().map(|c| c.name.as_str()).collect();
-        assert_eq!(names, ["commitment_signature", "beacon_authentic", "selection_correct"]);
+    let result = verify::verify_full_with_registration(&c, Some(&sel), None, &[], Some(&at(round, -500)));
+    assert_eq!(result.status, CHECKED);
+    assert!(check(&result, CHECK_ANCHOR_SELECTION_ROUND).is_none());
+    assert!(check(&result, CHECK_ANCHOR_REGISTRATION_TIME).is_none());
+    let names: Vec<&str> = result.checks.iter().map(|c| c.name.as_str()).collect();
+    assert_eq!(names, [
+        "commitment_signature", "beacon_randomness", "beacon_authentic",
+        "beacon_after_registration", "selection_correct",
+    ]);
+
+    let no_time = verify::verify_full(&c, Some(&sel), None, &[]);
+    assert_eq!(no_time.status, "partial");
+    assert_eq!(check(&no_time, CHECK_BEACON_AFTER_REGISTRATION).unwrap().status, "skip");
+
+    for registered_at in [at(round, 0), at(round, -3_001), "garbage".to_string()] {
+        let result = verify::verify_full_with_registration(&c, Some(&sel), None, &[], Some(&registered_at));
+        assert_eq!(result.status, "failed", "{registered_at}");
+        assert_eq!(check(&result, CHECK_BEACON_AFTER_REGISTRATION).unwrap().status, "fail");
     }
 }
 
