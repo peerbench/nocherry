@@ -69,7 +69,7 @@ function prettyName(filename) {
   return basename(filename, extname(filename))
     .replace(/[-_]/g, ' ')
     .replace(/\b\w/g, c => c.toUpperCase())
-    .replace(/V0\.4/i, 'v0.4');
+    .replace(/V0\.(\d)/i, 'v0.$1');
 }
 
 async function collectFiles(dir, section) {
