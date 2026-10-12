@@ -9,7 +9,7 @@
   },
   "scripts": {
     "build": "tsup",
-    "test": "tsx --test test/vectors.test.ts test/anchor.test.ts test/cli.test.ts test/publish-select.test.ts test/receipt.test.ts test/differential.test.ts test/v5.test.ts test/bench.test.ts",
+    "test": "tsx --test test/vectors.test.ts test/anchor.test.ts test/cli.test.ts test/publish-select.test.ts test/receipt.test.ts test/differential.test.ts test/v5.test.ts test/format.test.ts test/bench.test.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

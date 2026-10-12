@@ -256,3 +256,79 @@ describe('JS CLI', () => {
     }
   });
 });
+
+describe('JS CLI: object format 0.5.0', () => {
+  let dir: string;
+  let home: string;
+  before(() => {
+    dir = mkdtempSync(join(tmpdir(), 'pb-cli-v5-'));
+    home = join(dir, 'home');
+    mkdirSync(home, { recursive: true });
+    run(['key', 'generate'], { env: { HOME: home } });
+  });
+  after(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('commit --format 0.5.0 writes a secret, a manifest without plain hashes, and a 0.5.0 commitment', () => {
+    const data = join(dir, 'data');
+    mkdirSync(data);
+    writeFileSync(join(data, 'q1.json'), '{"q":"first"}');
+    writeFileSync(join(data, 'q2.json'), '{"q":"second"}');
+    const plain = [join(data, 'q1.json'), join(data, 'q2.json')].map((f) => run(['hash', 'file', f]));
+
+    const commitment = JSON.parse(run(['commit', data, '-p', '0.25', '--format', '0.5.0', '--stream', 'cli-bench', '--sequence', '3'], { env: { HOME: home } }));
+    assert.equal(commitment.spec_version, '0.5.0');
+    assert.equal(commitment.reveal_probability_ppm, 250000);
+    assert.equal(commitment.reveal_probability, undefined);
+    assert.equal(commitment.selection_mode, 'batch');
+    assert.equal(commitment.stream_id, 'cli-bench');
+    assert.equal(commitment.sequence, 3);
+    assert.deepEqual(commitment.metadata, {});
+    assert.ok(Number.isInteger(commitment.beacon.anchor_round));
+    assert.equal(commitment.item_count, 2);
+    for (const h of plain) assert.ok(!commitment.items.includes(h), 'items are commitments, not plain hashes');
+
+    const secret = JSON.parse(readFileSync(join(data, 'commitment-secret.json'), 'utf-8'));
+    assert.match(secret.item_secret, /^[0-9a-f]{64}$/);
+    const manifest = JSON.parse(readFileSync(join(data, 'manifest.json'), 'utf-8'));
+    assert.equal(manifest.spec_version, '0.5.0');
+    assert.deepEqual(manifest.items.map((e: any) => e.item), commitment.items);
+    const manifestText = readFileSync(join(data, 'manifest.json'), 'utf-8');
+    for (const h of plain) assert.ok(!manifestText.includes(h), 'manifest leaks a plain hash');
+
+    // The secret is not hashed as data: a second hash dir gives the same root.
+    const before = JSON.parse(run(['hash', 'dir', data])).hash;
+    assert.equal(JSON.parse(run(['hash', 'dir', data])).hash, before);
+
+    assert.match(run(['verify', join(data, 'commitment.json')], { env: { HOME: home } }), /VALID[\s\S]*Format: 0\.5\.0[\s\S]*Probability: 25%/);
+  });
+
+  it('commit --format 0.5.0 --mode per_item and PB_FORMAT are honored', () => {
+    const data = join(dir, 'data2');
+    mkdirSync(data);
+    writeFileSync(join(data, 'a.txt'), 'a');
+    const c = JSON.parse(run(['commit', data, '-p', '0.1', '--mode', 'per_item'], { env: { HOME: home, PB_FORMAT: '0.5.0' } }));
+    assert.equal(c.spec_version, '0.5.0');
+    assert.equal(c.selection_mode, 'per_item');
+  });
+
+  it('refuses 0.5.0 without an anchor, a stream without a sequence, and an unknown format', () => {
+    const data = join(dir, 'data3');
+    mkdirSync(data);
+    writeFileSync(join(data, 'a.txt'), 'a');
+    const fails = (args: string[], pattern: RegExp) => {
+      try {
+        run(args, { env: { HOME: home } });
+        assert.fail('should have exited');
+      } catch (e: unknown) {
+        const err = e as { status?: number; stderr?: string; message?: string };
+        assert.notEqual(err.status, 0);
+        assert.match((err.stderr ?? '') + (err.message ?? ''), pattern);
+      }
+    };
+    fails(['commit', data, '--format', '0.5.0', '--no-anchor'], /requires an anchor/);
+    fails(['commit', data, '--format', '0.5.0', '--stream', 'x'], /--stream and --sequence/);
+    fails(['commit', data, '--format', '0.4.0'], /unknown format/);
+  });
+});

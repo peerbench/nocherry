@@ -32,6 +32,10 @@ import {
   type SubmitResult,
 } from './anchor.js';
 import { verifyReceipt, verifyReveal } from './receipt.js';
+import {
+  FORMAT_V5, SECRET_FILE, parseFormat, planCommitment, planReveal, readSecret, writeSecret, manifestKey, describeProbability,
+  type Format,
+} from './format.js';
 
 const KEY_DIR = join(homedir(), '.nocherry');
 const KEY_FILE = join(KEY_DIR, 'key.json');
@@ -90,9 +94,14 @@ function reanchorAndSave(commitmentPath: string, log: (msg: string) => void) {
 function describeFailure(r: SubmitResult): string {
   if (r.status === 0) return r.error || 'request failed';
   const body = typeof r.body === 'string' ? r.body : JSON.stringify(r.body);
-  const hint = r.status === 400 && /signature/i.test(body)
-    ? ' (if this server predates anchor_round, retry with: pb-js commit <dir> --no-anchor)'
-    : '';
+  let hint = '';
+  if (r.status === 400 && /spec_version_unsupported|Missing required field: reveal_probability/.test(body)) {
+    hint = ' (this server does not accept object format 0.5.0 yet; retry with: pb-js commit <dir> --format 0.2.0)';
+  } else if (r.status === 400 && /signature/i.test(body)) {
+    hint = ' (if this server predates anchor_round, retry with: pb-js commit <dir> --no-anchor)';
+  } else if (r.status === 409 && /stream_sequence_taken/.test(body)) {
+    hint = ' (this server already holds another commitment for this stream_id and sequence; use the next sequence number)';
+  }
   return `${r.status} ${body}${hint}`;
 }
 
@@ -128,7 +137,7 @@ function hashFile(filePath: string): string {
 const PROTOCOL_FILES = new Set([
   'manifest.json', 'commitment.json', 'server-receipts.json',
   'reveal.json', 'reveal-receipts.json', 'publication.json',
-  'receipt.json', 'verify.sh', 'README.md',
+  'receipt.json', 'verify.sh', 'README.md', SECRET_FILE,
 ]);
 
 function walkDir(dirPath: string, prefix = ''): { name: string; type: string; hash: string }[] {
@@ -196,37 +205,62 @@ function cmdHashDir(dirPath: string): void {
   console.log(JSON.stringify({ hash: result.hash, items: result.manifest.length }, null, 2));
 }
 
-async function cmdCommit(dirPath: string, probability: number, beacon: string, anchor = true): Promise<void> {
-  const key = loadKey();
-  const dir = resolve(dirPath);
+interface CommitFlags {
+  format: Format;
+  anchor: boolean;
+  selectionMode?: 'per_item' | 'batch';
+  streamId?: string;
+  sequence?: number;
+}
 
-  // Hash all files
-  const manifest = walkDir(dir);
-  const itemHashes = manifest
-    .filter(e => e.type === 'file')
-    .map(e => e.hash);
-
-  if (itemHashes.length === 0) {
+/**
+ * Hash the directory, write manifest.json (and, for 0.5.0, the item secret),
+ * and return the signed commitment. Shared by `commit` and `go`.
+ */
+async function buildCommitment(dir: string, probability: number, beacon: string, flags: CommitFlags, key: Record<string, any>) {
+  const { manifest, hash: rootHash } = hashDir(dir);
+  const files = manifest.filter(e => e.type === 'file').map(e => ({ path: e.name, hash: e.hash }));
+  if (files.length === 0) {
     console.error('No files found in directory');
     process.exit(1);
   }
-
+  if (flags.format === FORMAT_V5 && !flags.anchor) {
+    console.error('Object format 0.5.0 requires an anchor round; drop --no-anchor or use --format 0.2.0');
+    process.exit(1);
+  }
+  if (flags.format === FORMAT_V5 && beacon !== 'drand') {
+    console.error('Object format 0.5.0 defines the drand beacon only');
+    process.exit(1);
+  }
   const beaconRef = beacon === 'drand'
     ? { type: 'drand', chain_hash: DRAND_CHAIN_HASH }
     : { type: beacon };
 
-  const params = {
-    items: itemHashes,
-    reveal_probability: probability,
-    beacon: beaconRef,
-    committed_at: new Date().toISOString(),
-  };
+  let itemSecret: string | undefined;
+  if (flags.format === FORMAT_V5) {
+    if (existsSync(join(dir, 'server-receipts.json')) || existsSync(join(dir, 'receipt.json'))) {
+      console.error(`Warning: ${dir} already holds server receipts; a new commitment gets a fresh item secret and the old ${SECRET_FILE} is replaced`);
+    }
+    itemSecret = writeSecret(dir).item_secret;
+    console.error(`Saved ${SECRET_FILE} (keep it private; it opens every item)`);
+  }
+  const plan = planCommitment(files, rootHash, {
+    format: flags.format, probability, beacon: beaconRef,
+    selectionMode: flags.selectionMode, streamId: flags.streamId, sequence: flags.sequence,
+  }, itemSecret);
+  writeFileSync(join(dir, 'manifest.json'), JSON.stringify(plan.manifest, null, 2) + '\n');
+  console.error('Saved manifest.json');
 
-  const commitment = await createAnchoredCommitment(params, key.private_key_hex, { anchor });
-
+  const commitment = await createAnchoredCommitment(plan.params, key.private_key_hex, { anchor: flags.anchor });
   writeFileSync(join(dir, 'commitment.json'), JSON.stringify(commitment, null, 2) + '\n');
   console.error('Saved commitment.json');
+  return { commitment, manifest: plan.manifest };
+}
 
+async function cmdCommit(dirPath: string, probability: number, beacon: string, flags: CommitFlags): Promise<void> {
+  const key = loadKey();
+  const dir = resolve(dirPath);
+  const { commitment } = await buildCommitment(dir, probability, beacon, flags, key);
   console.log(JSON.stringify(commitment, null, 2));
 }
 
@@ -267,7 +301,10 @@ function cmdVerifyFolder(dir: string): never {
   // Item hash -> file, from the manifest written at commit time.
   const pathOf = new Map<string, string>();
   if (existsSync(join(dir, 'manifest.json'))) {
-    for (const item of read('manifest.json').items ?? []) pathOf.set(item.hash, item.path);
+    for (const item of read('manifest.json').items ?? []) {
+      const itemKey = manifestKey(item);
+      if (itemKey) pathOf.set(itemKey, item.path);
+    }
   }
   const data: Record<string, Uint8Array> = {};
   for (const itemHash of [...(reveal.selected_items ?? []), ...(reveal.voluntary_items ?? [])]) {
@@ -315,7 +352,8 @@ function cmdVerify(commitmentPath: string): void {
       console.log(`  Hash: ${commitment.commitment_hash}`);
       console.log(`  Signer: ${commitment.signing_key}`);
       console.log(`  Items: ${commitment.item_count}`);
-      console.log(`  Probability: ${commitment.reveal_probability}`);
+      console.log(`  Format: ${commitment.spec_version}`);
+      console.log(`  Probability: ${describeProbability(commitment)}`);
       process.exit(0);
     } else {
       console.error('Commitment signature: INVALID');
@@ -457,6 +495,38 @@ async function cmdSubmitDir(dir: string): Promise<void> {
 
 // ── Reveal ──
 
+/**
+ * Signed reveal of `selectedItems` in the commitment's format. A 0.5.0 reveal
+ * recomputes each opening from the file and the item secret, so it fails if a
+ * file changed since the commitment.
+ */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function buildReveal(dir: string, commitment: Record<string, any>, selectedItems: string[], key: Record<string, any>) {
+  const manifestPath = join(dir, 'manifest.json');
+  const manifest = existsSync(manifestPath) ? (JSON.parse(readFileSync(manifestPath, 'utf-8')).items ?? []) : [];
+  let itemSecret: string | undefined;
+  if (commitment.spec_version === FORMAT_V5) {
+    try {
+      itemSecret = readSecret(dir).item_secret;
+    } catch (e: unknown) {
+      console.error(e instanceof Error ? e.message : String(e));
+      process.exit(1);
+    }
+  }
+  let params: Record<string, unknown>;
+  try {
+    params = planReveal({
+      commitment, selectedItems, manifest, itemSecret,
+      readFile: (rel) => new Uint8Array(readFileSync(join(dir, rel))),
+      signingKey: key.did || key.did_key,
+    });
+  } catch (e: unknown) {
+    console.error(e instanceof Error ? e.message : String(e));
+    process.exit(1);
+  }
+  return wasm.createReveal(JSON.stringify(params), key.private_key_hex);
+}
+
 async function cmdReveal(dirPath: string): Promise<void> {
   const dir = resolve(dirPath);
   const key = loadKey();
@@ -494,19 +564,7 @@ async function cmdReveal(dirPath: string): Promise<void> {
     process.exit(1);
   }
 
-  // Build reveal signing payload (canonical key order from spec)
-  const revealPayload = {
-    spec_version: '0.2.0',
-    commitment_hash: commitment.commitment_hash,
-    selected_items: selectedItems,
-    voluntary_items: [] as string[],
-    revealed_at: new Date().toISOString(),
-    signing_key: key.did || key.did_key,
-  };
-
-  const payloadBytes = new TextEncoder().encode(JSON.stringify(revealPayload));
-  const signature = wasm.signMessage(key.private_key_hex, payloadBytes);
-  const reveal = { ...revealPayload, signature };
+  const reveal = buildReveal(dir, commitment, selectedItems, key);
 
   // Save reveal.json
   writeFileSync(join(dir, 'reveal.json'), JSON.stringify(reveal, null, 2) + '\n');
@@ -755,7 +813,8 @@ function generateRevealReadme(srcDir: string, commitHash: string): string {
     md += `| Field | Value |\n|-------|-------|\n`;
     md += `| Hash | \`${c.commitment_hash}\` |\n`;
     md += `| Items | ${c.item_count} files |\n`;
-    md += `| Reveal probability | ${(c.reveal_probability * 100).toFixed(0)}% |\n`;
+    md += `| Format | ${c.spec_version} |\n`;
+    md += `| Reveal probability | ${describeProbability(c)} |\n`;
     md += `| Signing key | \`${c.signing_key}\` |\n`;
     md += `| Created | ${c.committed_at || 'N/A'} |\n\n`;
   }
@@ -783,11 +842,12 @@ function generateRevealReadme(srcDir: string, commitHash: string): string {
     const reveal = JSON.parse(readFileSync(revealPath, 'utf-8'));
     const selectedSet = new Set(reveal.selected_items || []);
     md += `### Random Selection\n`;
-    md += `| # | File | Hash | Selected? |\n|---|------|------|-----------|\n`;
+    md += `| # | File | Item | Selected? |\n|---|------|------|-----------|\n`;
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     manifest.items.forEach((item: any, i: number) => {
-      const sel = selectedSet.has(item.hash) ? 'Yes' : 'No';
-      md += `| ${i + 1} | ${item.path} | \`${item.hash.slice(0, 12)}...\` | ${sel} |\n`;
+      const itemKey = manifestKey(item) ?? '';
+      const sel = selectedSet.has(itemKey) ? 'Yes' : 'No';
+      md += `| ${i + 1} | ${item.path} | \`${itemKey}\` | ${sel} |\n`;
     });
     md += '\n';
   }
@@ -1245,7 +1305,7 @@ async function cmdPublishInteractive(dir: string): Promise<void> {
 
 // ── Go: Interactive Wizard ──
 
-async function cmdGo(dirPath: string, probability = 0.50, anchor = true): Promise<void> {
+async function cmdGo(dirPath: string, probability = 0.50, flags: CommitFlags = { format: parseFormat(undefined), anchor: true }): Promise<void> {
   const dir = resolve(dirPath);
   if (!existsSync(dir) || !statSync(dir).isDirectory()) {
     console.error(`Directory not found: ${dir}`);
@@ -1279,56 +1339,32 @@ async function cmdGo(dirPath: string, probability = 0.50, anchor = true): Promis
   console.log(`  Directory: ${dirPath} (${fileCount} file${fileCount !== 1 ? 's' : ''})`);
   console.log();
 
-  // ── Step 1: Hash ──
-  console.log('  Step 1 \u2014 Hash');
-  console.log('  SHA-256 hash each file to create a tamper-proof manifest.');
+  const anchor = flags.anchor;
+
+  // ── Step 1 and 2: Hash and Commit ──
+  console.log('  Step 1 \u2014 Hash and Commit');
+  if (flags.format === FORMAT_V5) {
+    console.log('  SHA-256 hash each file, derive a hiding commitment per file from a fresh secret,');
+    console.log(`  and sign a commitment over them at ${(probability * 100).toFixed(0)}% reveal probability (format 0.5.0).`);
+  } else {
+    console.log(`  SHA-256 hash each file and sign a commitment over the hashes at ${(probability * 100).toFixed(0)}% reveal probability (format 0.2.0).`);
+  }
   console.log();
   await waitForEnter();
 
-  const result = hashDir(dir);
-  const manifestData = {
-    spec_version: '0.2.0',
-    root_hash: result.hash,
-    items: result.manifest
-      .filter(e => e.type === 'file')
-      .map(e => ({ path: e.name, hash: e.hash })),
-    created_at: new Date().toISOString(),
-  };
-  writeFileSync(join(dir, 'manifest.json'), JSON.stringify(manifestData, null, 2) + '\n');
-
+  const built = await buildCommitment(dir, probability, 'drand', flags, key);
+  let commitment = built.commitment;
+  const manifestData = built.manifest;
   for (const item of manifestData.items) {
-    console.log(`    ${item.hash.slice(0, 16)}\u2026  ${item.path}`);
+    console.log(`    ${manifestKey(item)}  ${item.path}`);
   }
   console.log(`  \u2713 ${manifestData.items.length} files \u2192 manifest.json`);
-  console.log();
-
-  // ── Step 2: Commit ──
-  console.log('  Step 2 \u2014 Commit');
-  console.log(`  Sign a commitment locking in ${manifestData.items.length} file hashes at ${(probability * 100).toFixed(0)}% reveal probability.`);
-  console.log();
-  await waitForEnter();
-
-  const itemHashes = result.manifest
-    .filter(e => e.type === 'file')
-    .map(e => e.hash);
-
-  const beaconRef = { type: 'drand', chain_hash: DRAND_CHAIN_HASH };
-  const commitParams = {
-    items: itemHashes,
-    reveal_probability: probability,
-    beacon: beaconRef,
-    committed_at: new Date().toISOString(),
-  };
-
-  let commitment = await createAnchoredCommitment(commitParams, key.private_key_hex, { anchor });
-  writeFileSync(join(dir, 'commitment.json'), JSON.stringify(commitment, null, 2) + '\n');
-
-  console.log(`  \u2713 Commitment: ${commitment.commitment_hash.slice(0, 16)}...${commitment.commitment_hash.slice(-6)}`);
+  console.log(`  \u2713 Commitment: ${commitment.commitment_hash}`);
   console.log('  \u2713 Saved commitment.json');
   console.log();
 
-  // ── Step 3: Submit ──
-  console.log('  Step 3 \u2014 Submit');
+  // ── Step 2: Submit ──
+  console.log('  Step 2 \u2014 Submit');
   if (anchor) {
     console.log('  Send to independent servers. All of them wait for the same drand round');
     console.log('  (anchor round + 2, a few seconds) to randomly select which files must be revealed.');
@@ -1427,18 +1463,18 @@ async function cmdGo(dirPath: string, probability = 0.50, anchor = true): Promis
   const firstSelection = receipts.find(r => r.receipt?.selection?.selected_items)?.receipt?.selection;
   if (firstSelection) {
     console.log();
-    console.log(`  Beacon: ${firstSelection.beacon_output.randomness.slice(0, 24)}\u2026`);
+    console.log(`  Beacon: ${firstSelection.beacon_output.randomness}`);
     const selectedSet = new Set(firstSelection.selected_items);
     console.log(`  Selected ${firstSelection.selected_count} of ${firstSelection.total_count} for reveal:`);
     for (const item of manifestData.items) {
-      const sel = selectedSet.has(item.hash);
+      const sel = selectedSet.has(manifestKey(item));
       console.log(`    ${sel ? '\u2192' : ' '} ${item.path}`);
     }
   }
   console.log();
 
-  // ── Step 4: Publish ──
-  console.log('  Step 4 \u2014 Publish');
+  // ── Step 3: Publish ──
+  console.log('  Step 3 \u2014 Publish');
   console.log('  Publish the original data of selected files to GitHub or other public hosting.');
   console.log();
   await waitForEnter();
@@ -1521,8 +1557,8 @@ async function cmdGo(dirPath: string, probability = 0.50, anchor = true): Promis
 
   console.log();
 
-  // ── Step 5: Reveal ──
-  console.log('  Step 5 \u2014 Reveal');
+  // ── Step 4: Reveal ──
+  console.log('  Step 4 \u2014 Reveal');
   console.log('  Submit signed reveal to servers and get signed confirmation.');
   console.log();
   await waitForEnter();
@@ -1535,18 +1571,7 @@ async function cmdGo(dirPath: string, probability = 0.50, anchor = true): Promis
   }
   const selectedItems: string[] = firstReceipt.receipt.selection.selected_items;
 
-  const revealPayload = {
-    spec_version: '0.2.0',
-    commitment_hash: commitment.commitment_hash,
-    selected_items: selectedItems,
-    voluntary_items: [] as string[],
-    revealed_at: new Date().toISOString(),
-    signing_key: key.did || key.did_key,
-  };
-
-  const payloadBytes = new TextEncoder().encode(JSON.stringify(revealPayload));
-  const signature = wasm.signMessage(key.private_key_hex, payloadBytes);
-  const reveal = { ...revealPayload, signature };
+  const reveal = buildReveal(dir, commitment, selectedItems, key);
 
   writeFileSync(join(dir, 'reveal.json'), JSON.stringify(reveal, null, 2) + '\n');
 
@@ -1662,7 +1687,10 @@ async function cmdGo(dirPath: string, probability = 0.50, anchor = true): Promis
   // ── Summary ──
   console.log('  \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500');
   console.log(`  Done! Evidence chain in ${dirPath}:`);
-  console.log('    manifest.json        file hashes');
+  console.log(flags.format === FORMAT_V5
+    ? '    manifest.json        file paths and item commitments'
+    : '    manifest.json        file hashes');
+  if (flags.format === FORMAT_V5) console.log(`    ${SECRET_FILE} item secret (private, never publish)`);
   console.log('    commitment.json      signed commitment');
   console.log('    server-receipts.json server timestamps');
   console.log('    publication.json     publish receipts');
@@ -1722,12 +1750,13 @@ function cmdGenerate(baseDir: string, count: number): void {
 
 function usage(exitCode = 1): never {
   console.log(`Usage:
-  pb-js go <dir> [-p <prob>] [--no-anchor]  Guided wizard (just hit Enter)
+  pb-js go <dir> [-p <prob>] [--format <f>] [--no-anchor]  Guided wizard (just hit Enter)
   pb-js key generate                        Generate Ed25519 keypair
   pb-js key show                            Show stored did:key
   pb-js hash file <path>                    Hash a file (SHA-256)
   pb-js hash dir <path>                     Hash a directory
-  pb-js commit <dir> -p <prob> [--no-anchor] Create commitment from directory
+  pb-js commit <dir> -p <prob> [--format 0.2.0|0.5.0] [--mode batch|per_item]
+                 [--stream <id> --sequence <n>] [--no-anchor]   Create commitment from directory
   pb-js verify <commitment.json>            Verify commitment signature
   pb-js verify <receipt.json>               Verify a server receipt offline (beacon, timing, selection)
   pb-js verify <reveal-folder>              Verify receipts, signed reveal and revealed files offline
@@ -1742,8 +1771,47 @@ function usage(exitCode = 1): never {
   Commitments name the current drand round as beacon.anchor_round, so every
   server selects with the same round (anchor + 2). Use --no-anchor for servers
   that predate this field. An anchor is only fresh for a few seconds: submit
-  re-signs commitment.json with a fresh anchor when needed.`);
+  re-signs commitment.json with a fresh anchor when needed.
+
+  --format 0.5.0 (or PB_FORMAT=0.5.0) commits hiding item commitments instead
+  of plain hashes, signs the selection mode, stream id and sequence, and keeps
+  the item secret in commitment-secret.json. Servers list the formats they
+  accept as spec_versions_accepted in /v1/server-info.`);
   process.exit(exitCode);
+}
+
+/**
+ * Flags shared by `commit` and `go`. `extra` handles command-specific flags
+ * and returns how many arguments it consumed (0 when it did not match).
+ */
+function parseCommitFlags(rest: string[], extra: (i: number, rest: string[]) => number): { flags: CommitFlags } {
+  const flags: CommitFlags = { format: parseFormat(undefined), anchor: true };
+  for (let i = 0; i < rest.length; i++) {
+    const consumed = extra(i, rest);
+    if (consumed > 0) { i += consumed - 1; continue; }
+    if (rest[i] === '--format' && rest[i + 1]) {
+      try { flags.format = parseFormat(rest[i + 1]); } catch (e: unknown) { console.error(e instanceof Error ? e.message : String(e)); process.exit(1); }
+      i++;
+    } else if (rest[i] === '--mode' && rest[i + 1]) {
+      if (rest[i + 1] !== 'batch' && rest[i + 1] !== 'per_item') { console.error('--mode must be batch or per_item'); process.exit(1); }
+      flags.selectionMode = rest[i + 1] as 'batch' | 'per_item';
+      i++;
+    } else if (rest[i] === '--stream' && rest[i + 1]) {
+      flags.streamId = rest[i + 1];
+      i++;
+    } else if (rest[i] === '--sequence' && rest[i + 1]) {
+      flags.sequence = Number(rest[i + 1]);
+      if (!Number.isSafeInteger(flags.sequence) || flags.sequence < 0) { console.error('--sequence must be a non-negative integer'); process.exit(1); }
+      i++;
+    } else if (rest[i] === '--no-anchor') {
+      flags.anchor = false;
+    }
+  }
+  if ((flags.streamId === undefined) !== (flags.sequence === undefined)) {
+    console.error('--stream and --sequence go together');
+    process.exit(1);
+  }
+  return { flags };
 }
 
 async function main(): Promise<void> {
@@ -1756,17 +1824,12 @@ async function main(): Promise<void> {
 
   if (cmd === 'go' && args[1]) {
     let probability = 0.50;
-    let anchor = true;
     const dirArg = args[1];
-    for (let i = 2; i < args.length; i++) {
-      if ((args[i] === '-p' || args[i] === '--probability') && args[i + 1]) {
-        probability = parseFloat(args[i + 1]);
-        i++;
-      } else if (args[i] === '--no-anchor') {
-        anchor = false;
-      }
-    }
-    await cmdGo(dirArg, probability, anchor);
+    const { flags } = parseCommitFlags(args.slice(2), (i, rest) => {
+      if ((rest[i] === '-p' || rest[i] === '--probability') && rest[i + 1]) { probability = parseFloat(rest[i + 1]); return 2; }
+      return 0;
+    });
+    await cmdGo(dirArg, probability, flags);
   } else if (cmd === 'key' && sub === 'generate') {
     cmdKeyGenerate();
   } else if (cmd === 'key' && sub === 'show') {
@@ -1778,19 +1841,12 @@ async function main(): Promise<void> {
   } else if (cmd === 'commit' && args[1]) {
     let probability = 0.10;
     let beacon = 'drand';
-    let anchor = true;
-    for (let i = 2; i < args.length; i++) {
-      if ((args[i] === '-p' || args[i] === '--probability') && args[i + 1]) {
-        probability = parseFloat(args[i + 1]);
-        i++;
-      } else if (args[i] === '--beacon' && args[i + 1]) {
-        beacon = args[i + 1];
-        i++;
-      } else if (args[i] === '--no-anchor') {
-        anchor = false;
-      }
-    }
-    await cmdCommit(args[1], probability, beacon, anchor);
+    const { flags } = parseCommitFlags(args.slice(2), (i, rest) => {
+      if ((rest[i] === '-p' || rest[i] === '--probability') && rest[i + 1]) { probability = parseFloat(rest[i + 1]); return 2; }
+      if (rest[i] === '--beacon' && rest[i + 1]) { beacon = rest[i + 1]; return 2; }
+      return 0;
+    });
+    await cmdCommit(args[1], probability, beacon, flags);
   } else if (cmd === 'verify' && args[1]) {
     cmdVerify(args[1]);
   } else if (cmd === 'servers') {

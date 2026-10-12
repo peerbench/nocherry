@@ -11,6 +11,7 @@ import { join, dirname, resolve, sep } from 'node:path';
 
 export interface SelectedFile {
   path: string;
+  /** The item as the commitment names it: plain hash (0.2.0) or item commitment (0.5.0). */
   hash: string;
 }
 
@@ -61,12 +62,14 @@ export function resolveSelectedFiles(dir: string): SelectedFile[] {
   const selectedSet = new Set(selected);
   const files: SelectedFile[] = [];
   for (const item of readJson(manifestPath).items || []) {
-    if (!selectedSet.has(item.hash)) continue;
+    // 0.5.0 manifests name items by item commitment, 0.2.0 by plain hash.
+    const key: string | undefined = item.item ?? item.hash;
+    if (key === undefined || !selectedSet.has(key)) continue;
     const abs = resolve(root, item.path);
     if (abs !== root && !abs.startsWith(root + sep)) {
       throw new Error(`Manifest path escapes the directory: ${item.path}`);
     }
-    files.push({ path: item.path, hash: item.hash });
+    files.push({ path: item.path, hash: key });
   }
   return files;
 }

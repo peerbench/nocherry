@@ -26,6 +26,29 @@ export const drandNextRoundAfter = wasm.drandNextRoundAfter;
 export const anchoredSelectionRound = wasm.anchoredSelectionRound;
 export const checkAnchorRegistration = wasm.checkAnchorRegistration;
 
+// Object format 0.5.0 (spec v0.5)
+export const itemCommitment = wasm.itemCommitment;
+export const deriveItemSalt = wasm.deriveItemSalt;
+export const generateItemSecret = wasm.generateItemSecret;
+export const commitItems = wasm.commitItems;
+export const canonicalMetadata = wasm.canonicalMetadata;
+export const thresholdPpm = wasm.thresholdPpm;
+export const batchCount = wasm.batchCount;
+export const selectPerItemV5 = wasm.selectPerItemV5;
+export const selectBatchV5 = wasm.selectBatchV5;
+export const computeSelectionRecord = wasm.computeSelectionRecord;
+export const createReveal = wasm.createReveal;
+export const validateCommitment = wasm.validateCommitment;
+export const verifyRevealObject = wasm.verifyRevealObject;
+export const commitmentSigningPayload = wasm.commitmentSigningPayload;
+export const revealSigningPayload = wasm.revealSigningPayload;
+export const supportedSpecVersions = wasm.supportedSpecVersions;
+export {
+  FORMAT_LEGACY, FORMAT_V5, FORMATS, DEFAULT_FORMAT, SECRET_FILE,
+  parseFormat, probabilityToPpm, planCommitment, planReveal, manifestKey, describeProbability,
+} from './format.js';
+export type { Format, CommitOptions, CommitPlan, RevealInput, ManifestEntry } from './format.js';
+
 /**
  * Hash a string (UTF-8 encoded).
  */

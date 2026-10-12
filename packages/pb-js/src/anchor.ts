@@ -110,11 +110,15 @@ export async function reanchorCommitment(
   const { anchor_round: _stale, ...beacon } = commitment.beacon;
   const params: Commitment = {
     items: commitment.items,
-    reveal_probability: commitment.reveal_probability,
     beacon,
     committed_at: new Date().toISOString(),
   };
-  for (const key of ['metadata', 'stream_id', 'identity']) {
+  // Every signed field of either format is carried over; only the anchor and
+  // committed_at change, so the items (and in 0.5.0 their salts) stay valid.
+  const carried = commitment.spec_version === '0.5.0'
+    ? ['spec_version', 'reveal_probability_ppm', 'selection_mode', 'metadata', 'stream_id', 'sequence', 'identity']
+    : ['reveal_probability', 'metadata', 'stream_id', 'identity'];
+  for (const key of carried) {
     if (commitment[key] !== undefined && commitment[key] !== null) params[key] = commitment[key];
   }
   return createAnchoredCommitment(params, privateKeyHex, { anchor: true, currentRound: opts.currentRound });
