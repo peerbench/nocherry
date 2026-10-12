@@ -44,24 +44,60 @@ function checkServerSignature(receipt: any): ReceiptCheck {
  */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export function verifyReceipt(receipt: any): ReceiptVerification {
+  return withReceiptChecks(receipt, () => wasm.verifyReceipt(JSON.stringify(receipt)));
+}
+
+export interface RevealVerification extends ReceiptVerification {
+  items_checked: number;
+  items_passed: number;
+  items_failed: number;
+  items_missing: number;
+}
+
+/**
+ * Verify a receipt together with a signed reveal and the revealed data
+ * (spec 10.5, all steps). `data` maps each revealed item hash to the bytes of
+ * that item; an item without an entry counts as missing data. On top of
+ * `verifyReceipt` this checks the reveal signature, that the reveal names
+ * this commitment and only committed items, that only selected items are
+ * listed as selected, that each item's bytes hash to its item hash, and that
+ * every selected item is revealed. Missing data or missing selected items
+ * give `partial`.
+ */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export function verifyReveal(receipt: any, reveal: any, data: Record<string, Uint8Array>): RevealVerification {
+  const computed: Record<string, string> = {};
+  for (const [itemHash, bytes] of Object.entries(data)) computed[itemHash] = wasm.hashBytes(bytes);
+  const counts = { items_checked: 0, items_passed: 0, items_failed: 0, items_missing: 0 };
+  const result = withReceiptChecks(receipt, () => {
+    const core = wasm.verifyReveal(JSON.stringify(receipt), JSON.stringify(reveal), JSON.stringify(computed));
+    for (const key of Object.keys(counts) as (keyof typeof counts)[]) counts[key] = core[key];
+    return core;
+  });
+  return { ...result, ...counts };
+}
+
+/** Run the core verification and add the checks that need the receipt as the server sent it. */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function withReceiptChecks(receipt: any, runCore: () => ReceiptVerification): ReceiptVerification {
   let core: ReceiptVerification;
   try {
-    core = wasm.verifyReceipt(JSON.stringify(receipt));
+    core = runCore();
   } catch (e: unknown) {
     const detail = e instanceof Error ? e.message : String(e);
     return { status: 'failed', checks: [{ name: 'receipt_parse', status: 'fail', detail }] };
   }
-  const checks: ReceiptCheck[] = [...core.checks];
+  const added: ReceiptCheck[] = [];
   if (receipt.commitment_hash !== undefined && receipt.commitment_hash !== receipt.commitment?.commitment_hash) {
-    checks.push({ name: 'receipt_commitment_hash', status: 'fail', detail: 'receipt names another commitment than it contains' });
+    added.push({ name: 'receipt_commitment_hash', status: 'fail', detail: 'receipt names another commitment than it contains' });
   }
   if (!receipt.selection) {
-    checks.push({ name: 'selection_present', status: 'skip', detail: 'receipt has no selection' });
+    added.push({ name: 'selection_present', status: 'skip', detail: 'receipt has no selection' });
   }
-  checks.push(checkServerSignature(receipt));
+  added.push(checkServerSignature(receipt));
 
   let status: ReceiptVerification['status'] = core.status;
-  if (checks.some((c) => c.status === 'fail')) status = 'failed';
-  else if (status === 'verified' && checks.some((c) => c.status === 'skip')) status = 'partial';
-  return { status, checks };
+  if (added.some((c) => c.status === 'fail')) status = 'failed';
+  else if (status === 'verified' && added.some((c) => c.status === 'skip')) status = 'partial';
+  return { status, checks: [...core.checks, ...added] };
 }

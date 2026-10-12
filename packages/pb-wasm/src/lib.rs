@@ -3,7 +3,7 @@
 
 use wasm_bindgen::prelude::*;
 use serde::Serialize;
-use pb_core::{hash, select, sign, commitment, beacon, verify};
+use pb_core::{hash, select, sign, commitment, beacon, reveal, verify};
 use pb_core::beacon::anchor;
 
 // ── Hashing ──
@@ -281,6 +281,34 @@ pub fn verify_receipt(receipt_json: &str) -> Result<JsValue, JsError> {
 
     let result = verify::verify_full_with_registration(
         &c, selection.as_ref(), None, &[], receipt["registered_at"].as_str(),
+    );
+    let serializer = serde_wasm_bindgen::Serializer::new().serialize_maps_as_objects(true);
+    result.serialize(&serializer)
+        .map_err(|e| JsError::new(&format!("{e}")))
+}
+
+/// Offline verification of a receipt together with a reveal and the revealed
+/// data (Spec Section 10.5, steps 1 to 6). `computed_hashes_json` is an object
+/// mapping each revealed item hash to the hash the caller computed from the
+/// data it holds; an item without an entry counts as missing data.
+#[wasm_bindgen(js_name = "verifyReveal")]
+pub fn verify_reveal(receipt_json: &str, reveal_json: &str, computed_hashes_json: &str) -> Result<JsValue, JsError> {
+    let receipt: serde_json::Value = serde_json::from_str(receipt_json)
+        .map_err(|e| JsError::new(&format!("parse receipt: {e}")))?;
+    let c: commitment::Commitment = serde_json::from_value(receipt["commitment"].clone())
+        .map_err(|e| JsError::new(&format!("parse commitment: {e}")))?;
+    let selection: Option<verify::SelectionRecord> = match receipt.get("selection") {
+        Some(v) if !v.is_null() => Some(serde_json::from_value(v.clone())
+            .map_err(|e| JsError::new(&format!("parse selection: {e}")))?),
+        _ => None,
+    };
+    let rev: reveal::Reveal = serde_json::from_str(reveal_json)
+        .map_err(|e| JsError::new(&format!("parse reveal: {e}")))?;
+    let computed: std::collections::HashMap<String, String> = serde_json::from_str(computed_hashes_json)
+        .map_err(|e| JsError::new(&format!("parse computed hashes: {e}")))?;
+
+    let result = verify::verify_full_with_hashes(
+        &c, selection.as_ref(), Some(&rev), &computed, receipt["registered_at"].as_str(),
     );
     let serializer = serde_wasm_bindgen::Serializer::new().serialize_maps_as_objects(true);
     result.serialize(&serializer)

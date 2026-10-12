@@ -282,6 +282,23 @@ pub fn verify_full_with_registration(
     data: &[DataItem],
     registered_at: Option<&str>,
 ) -> VerifyResult {
+    let computed: std::collections::HashMap<String, String> = data.iter()
+        .map(|d| (d.hash.clone(), hash::hash_bytes(d.data)))
+        .collect();
+    verify_full_with_hashes(c, sel, rev, &computed, registered_at)
+}
+
+/// Like `verify_full_with_registration`, for callers that hash the revealed
+/// data themselves: `computed` maps each revealed item hash to the hash the
+/// caller computed from the data it holds (file bytes, or a directory
+/// manifest). An item hash without an entry counts as missing data.
+pub fn verify_full_with_hashes(
+    c: &Commitment,
+    sel: Option<&SelectionRecord>,
+    rev: Option<&Reveal>,
+    computed: &std::collections::HashMap<String, String>,
+    registered_at: Option<&str>,
+) -> VerifyResult {
     let mut result = VerifyResult::new();
 
     // Step 1: Verify commitment signature.
@@ -395,29 +412,13 @@ pub fn verify_full_with_registration(
     }
 
     // Step 5: Verify data integrity.
-    let data_map: std::collections::HashMap<&str, &[u8]> =
-        data.iter().map(|d| (d.hash.as_str(), d.data)).collect();
-
     if let Some(rev) = rev {
-        let all_items: Vec<&str> = rev.selected_items.iter()
-            .chain(rev.voluntary_items.iter())
-            .map(|s| s.as_str())
-            .collect();
-
-        for item_hash in &all_items {
+        for item_hash in rev.selected_items.iter().chain(rev.voluntary_items.iter()) {
             result.items_checked += 1;
-            match data_map.get(item_hash) {
-                Some(bytes) => {
-                    let computed = hash::hash_bytes(bytes);
-                    if computed == *item_hash {
-                        result.items_passed += 1;
-                    } else {
-                        result.items_failed += 1;
-                    }
-                }
-                None => {
-                    result.items_missing += 1;
-                }
+            match computed.get(item_hash) {
+                Some(actual) if actual.eq_ignore_ascii_case(item_hash) => result.items_passed += 1,
+                Some(_) => result.items_failed += 1,
+                None => result.items_missing += 1,
             }
         }
 

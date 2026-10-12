@@ -19,7 +19,7 @@
  */
 
 import { readFileSync, writeFileSync, mkdirSync, readdirSync, statSync, existsSync, cpSync } from 'node:fs';
-import { join, resolve } from 'node:path';
+import { join, resolve, sep } from 'node:path';
 import { homedir } from 'node:os';
 import { execSync } from 'node:child_process';
 import { createInterface } from 'node:readline';
@@ -31,7 +31,7 @@ import {
   createAnchoredCommitment, reanchorCommitment, submitCommitment, verifyReceiptAnchor,
   type SubmitResult,
 } from './anchor.js';
-import { verifyReceipt } from './receipt.js';
+import { verifyReceipt, verifyReveal } from './receipt.js';
 
 const KEY_DIR = join(homedir(), '.nocherry');
 const KEY_FILE = join(KEY_DIR, 'key.json');
@@ -246,7 +246,54 @@ function cmdVerifyReceipts(receipts: { label: string; receipt: any }[]): never {
   process.exit(failed ? 1 : 0);
 }
 
+/**
+ * Verify a reveal folder offline: receipts, signed reveal, and the revealed
+ * files named in manifest.json. Exit 1 if any receipt fails, 2 if the result
+ * is only partial (data or selected items missing).
+ */
+function cmdVerifyFolder(dir: string): never {
+  const read = (name: string) => JSON.parse(readFileSync(join(dir, name), 'utf-8'));
+  if (!existsSync(join(dir, 'reveal.json'))) {
+    console.error('No reveal.json in folder. To check receipts only: pb-js verify <dir>/server-receipts.json');
+    process.exit(1);
+  }
+  const reveal = read('reveal.json');
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const receipts: { label: string; receipt: any }[] = existsSync(join(dir, 'server-receipts.json'))
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    ? read('server-receipts.json').receipts.map((r: any) => ({ label: r.server_name || r.server_url || 'unknown server', receipt: r.receipt }))
+    : [{ label: 'receipt.json', receipt: read('receipt.json') }];
+
+  // Item hash -> file, from the manifest written at commit time.
+  const pathOf = new Map<string, string>();
+  if (existsSync(join(dir, 'manifest.json'))) {
+    for (const item of read('manifest.json').items ?? []) pathOf.set(item.hash, item.path);
+  }
+  const data: Record<string, Uint8Array> = {};
+  for (const itemHash of [...(reveal.selected_items ?? []), ...(reveal.voluntary_items ?? [])]) {
+    const rel = pathOf.get(itemHash);
+    const file = rel === undefined ? undefined : resolve(dir, rel);
+    // Only files inside the folder count as revealed data.
+    if (file && file.startsWith(dir + sep) && existsSync(file) && statSync(file).isFile()) {
+      data[itemHash] = new Uint8Array(readFileSync(file));
+    }
+  }
+
+  const statuses: string[] = [];
+  for (const { label, receipt } of receipts) {
+    const result = verifyReveal(receipt, reveal, data);
+    console.log(`Reveal against receipt ${label}: ${result.status.toUpperCase()}`);
+    console.log(`  Hash: ${receipt.commitment_hash}`);
+    for (const check of result.checks) {
+      console.log(`  ${check.status.padEnd(4)} ${check.name}${check.detail ? ` (${check.detail})` : ''}`);
+    }
+    statuses.push(result.status);
+  }
+  process.exit(statuses.includes('failed') ? 1 : statuses.includes('partial') ? 2 : 0);
+}
+
 function cmdVerify(commitmentPath: string): void {
+  if (statSync(resolve(commitmentPath)).isDirectory()) cmdVerifyFolder(resolve(commitmentPath));
   const raw = readFileSync(resolve(commitmentPath), 'utf-8');
   const commitment = JSON.parse(raw);
 
@@ -1683,6 +1730,7 @@ function usage(exitCode = 1): never {
   pb-js commit <dir> -p <prob> [--no-anchor] Create commitment from directory
   pb-js verify <commitment.json>            Verify commitment signature
   pb-js verify <receipt.json>               Verify a server receipt offline (beacon, timing, selection)
+  pb-js verify <reveal-folder>              Verify receipts, signed reveal and revealed files offline
   pb-js servers                             List known servers
   pb-js submit <dir|file> [-s <srv>]         Submit commitment to server(s)
   pb-js reveal <dir>                        Create & submit reveal

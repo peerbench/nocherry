@@ -531,7 +531,7 @@ Given: commitment, selection record, reveal object, and actual data for each rev
 
 6. **Check completeness.** Note which items from the selection record are present in the reveal's `selected_items` vs. missing. Missing items weaken trust.
 
-Steps 1-5 can be performed entirely offline. Commit-reveal servers do **not** perform full verification — they store reveal metadata and optionally verify data integrity via `file_urls` (see Section 12.3). Full verification is done by the end user via CLI tooling.
+Steps 1-6 can be performed entirely offline. The reference CLI runs them with `pb-js verify <reveal-folder>`; for directory items the verifier compares the directory's manifest hash (Section 5) instead of a file hash. Commit-reveal servers do **not** perform full verification — they store reveal metadata and optionally verify data integrity via `file_urls` (see Section 12.3). Full verification is done by the end user via CLI tooling.
 
 ### 10.6 Where Reveal Data Lives
 
