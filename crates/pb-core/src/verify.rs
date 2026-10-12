@@ -179,6 +179,10 @@ pub fn check_registration_round(beacon_round: Option<u64>, registered_at: Option
     }
 }
 
+/// Check name: the reveal names this commitment, only committed items, and
+/// labels as selected only items that were selected.
+pub const CHECK_REVEAL_MATCHES_COMMITMENT: &str = "reveal_matches_commitment";
+
 /// Check name: the recorded `selection_mode` is the reference rule's mode.
 pub const CHECK_SELECTION_MODE_DEFAULT: &str = "selection_mode_default";
 
@@ -358,6 +362,33 @@ pub fn verify_full_with_registration(
             Ok(()) => result.add("reveal_signature", "pass", None),
             Err(e) => {
                 result.add("reveal_signature", "fail", Some(e));
+                result.status = "failed".into();
+            }
+        }
+    }
+
+    // Step 4a: The reveal is about this commitment and its items.
+    if let Some(rev) = rev {
+        let committed: std::collections::HashSet<&str> = c.items.iter().map(|s| s.as_str()).collect();
+        let uncommitted = rev.selected_items.iter().chain(rev.voluntary_items.iter())
+            .filter(|h| !committed.contains(h.as_str()))
+            .count();
+        let not_selected = sel.map_or(0, |sel| rev.selected_items.iter()
+            .filter(|h| !sel.selected_items.contains(h))
+            .count());
+        let problem = if rev.commitment_hash != c.commitment_hash {
+            Some(format!("reveal is for commitment {}", rev.commitment_hash))
+        } else if uncommitted > 0 {
+            Some(format!("{uncommitted} revealed items are not in the commitment"))
+        } else if not_selected > 0 {
+            Some(format!("{not_selected} items are listed as selected but were not selected"))
+        } else {
+            None
+        };
+        match problem {
+            None => result.add(CHECK_REVEAL_MATCHES_COMMITMENT, "pass", None),
+            Some(detail) => {
+                result.add(CHECK_REVEAL_MATCHES_COMMITMENT, "fail", Some(detail));
                 result.status = "failed".into();
             }
         }

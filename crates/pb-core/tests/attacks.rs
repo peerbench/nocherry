@@ -400,18 +400,68 @@ fn attack_reveal_with_fabricated_items() {
         revealed_at: "2026-02-07T10:00:00Z".into(),
     }, &kp).unwrap();
 
-    // The data integrity check should fail because the fake item's data
-    // won't be provided (or if provided, won't match a committed item)
-    let _result = verify::verify_full(&c, Some(&sel), Some(&rev), &[
-        DataItem { hash: h_real, data: b"real-item" },
-        // Provide fake data for fake hash
+    // The fake item's data hashes correctly, so data integrity alone would pass.
+    let result = verify::verify_full_with_registration(&c, Some(&sel), Some(&rev), &[
+        DataItem { hash: h_real.clone(), data: b"real-item" },
         DataItem { hash: h_fake.clone(), data: b"fake-item-not-in-commitment" },
-    ]);
+    ], Some(REGISTERED_BEFORE_ROUND_1));
 
-    // The verify_full function doesn't check if revealed items are in the commitment.
-    // This is a potential gap — the server-side validation does this check (reveals.js:43-48).
-    // At the protocol level, data integrity passes because hashes match their data.
-    // Note: this documents a limitation of offline verification.
+    assert_eq!(result.status, "failed");
+    let check = |name: &str| result.checks.iter().find(|c| c.name == name).unwrap().status.clone();
+    assert_eq!(check("reveal_matches_commitment"), "fail");
+    assert_eq!(check("data_integrity"), "pass");
+}
+
+#[test]
+fn attack_reveal_voluntary_item_labeled_as_selected() {
+    // Attack: present a favorable, unselected item as if the beacon had selected it.
+    let kp = sign::generate_keypair();
+    let items: Vec<String> = (0..10).map(|i| hash_str(&format!("item-{i}"))).collect();
+    let c = make_commitment(&kp, items.clone(), 0.2);
+    let sel = verify::compute_selection(&c, &test_beacon_output(), "now").unwrap();
+    assert_eq!(sel.selected_items.len(), 2);
+    let unselected = items.iter().find(|h| !sel.selected_items.contains(h)).unwrap().clone();
+
+    let reveal_with = |selected: Vec<String>, voluntary: Vec<String>| reveal::create(reveal::CreateParams {
+        commitment_hash: c.commitment_hash.clone(),
+        selected_items: selected,
+        voluntary_items: voluntary,
+        data_url: None,
+        revealed_at: "2026-02-07T10:00:00Z".into(),
+    }, &kp).unwrap();
+    let status = |rev: &reveal::Reveal| {
+        let result = verify::verify_full_with_registration(
+            &c, Some(&sel), Some(rev), &[], Some(REGISTERED_BEFORE_ROUND_1));
+        result.checks.iter().find(|c| c.name == "reveal_matches_commitment").unwrap().status.clone()
+    };
+
+    let mut mislabeled = sel.selected_items.clone();
+    mislabeled.push(unselected.clone());
+    assert_eq!(status(&reveal_with(mislabeled, vec![])), "fail");
+    // The same item revealed as voluntary is fine.
+    assert_eq!(status(&reveal_with(sel.selected_items.clone(), vec![unselected])), "pass");
+}
+
+#[test]
+fn attack_reveal_of_another_commitment() {
+    // Attack: answer the selection with a reveal signed for a different commitment.
+    let kp = sign::generate_keypair();
+    let h = hash_str("data");
+    let c = make_commitment(&kp, vec![h.clone()], 1.0);
+    let sel = verify::compute_selection(&c, &test_beacon_output(), "now").unwrap();
+    let rev = reveal::create(reveal::CreateParams {
+        commitment_hash: "00".repeat(32),
+        selected_items: sel.selected_items.clone(),
+        voluntary_items: vec![],
+        data_url: None,
+        revealed_at: "2026-02-07T10:00:00Z".into(),
+    }, &kp).unwrap();
+
+    let result = verify::verify_full_with_registration(&c, Some(&sel), Some(&rev), &[
+        DataItem { hash: h, data: b"data" },
+    ], Some(REGISTERED_BEFORE_ROUND_1));
+    assert_eq!(result.status, "failed");
+    assert_eq!(result.checks.iter().find(|c| c.name == "reveal_matches_commitment").unwrap().status, "fail");
 }
 
 #[test]

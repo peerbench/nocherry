@@ -525,6 +525,8 @@ Given: commitment, selection record, reveal object, and actual data for each rev
 
 4. **Verify reveal signature.** Ed25519 verify the reveal object.
 
+   **4a. Verify the reveal matches the commitment** (`reveal_matches_commitment`): the reveal's `commitment_hash` is the commitment's, every hash in `selected_items` and `voluntary_items` is one of the commitment's `items`, and every hash in the reveal's `selected_items` is in the selection record's `selected_items`. Without this check a reveal could present data that was never committed, or present a voluntary item as a randomly selected one.
+
 5. **Verify data integrity.** For each item in `selected_items` ∪ `voluntary_items`: hash the provided data with SHA-256 and confirm it matches.
 
 6. **Check completeness.** Note which items from the selection record are present in the reveal's `selected_items` vs. missing. Missing items weaken trust.
