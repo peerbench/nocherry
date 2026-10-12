@@ -7,6 +7,15 @@
         { "fieldPath": "signing_key", "order": "ASCENDING" },
         { "fieldPath": "registered_at", "order": "ASCENDING" }
       ]
+    },
+    {
+      "collectionGroup": "streams",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "signing_key", "order": "ASCENDING" },
+        { "fieldPath": "stream_id", "order": "ASCENDING" },
+        { "fieldPath": "sequence", "order": "ASCENDING" }
+      ]
     }
   ],
   "fieldOverrides": []

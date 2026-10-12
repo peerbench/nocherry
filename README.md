@@ -245,7 +245,8 @@ The server runs anywhere Hono runs:
 
 ## Documentation
 
-- [**Technical Spec v0.4**](docs/nocherry-commit-reveal-spec-v0.4.md) -- complete protocol specification: hashing, commitment format, selection algorithms, beacon interface, verification pipeline, HTTP API, test vectors
+- [**Technical Spec v0.5**](docs/nocherry-commit-reveal-spec-v0.5.md) -- object format 0.5.0: hiding item commitments, signed selection mode, stream id and metadata, integer probabilities, commitment-bound selection seed, per-stream uniqueness, test vectors; rollout in [deploy/ROLLOUT-0.5.0.md](deploy/ROLLOUT-0.5.0.md)
+- [**Technical Spec v0.4**](docs/nocherry-commit-reveal-spec-v0.4.md) -- object format 0.2.0 (still accepted and verified): hashing, commitment format, selection algorithms, beacon interface, verification pipeline, HTTP API, test vectors
 - [**Use Cases**](docs/use-cases.md) -- AI benchmarks, test fairness, training data provenance, compliance audits
 
 ## License

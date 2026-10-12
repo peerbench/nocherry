@@ -52,17 +52,12 @@ info "wasm-pack found"
 # ── 2. Build WASM with --target web ──
 
 echo
-echo "Building WASM (--target web)..."
-cd "$WASM_CRATE"
-wasm-pack build --target web --release --out-dir "$WASM_OUT/build"
+echo "Regenerating WASM glue for every deployment target (--target web for this one)..."
+# Writes pb_wasm.js, pb_wasm.d.ts, pb_wasm_bg.wasm, the base64 pb_wasm_bg.ts and
+# the export list in mod.ts under $WASM_OUT, built without BLS verification.
+node "$MONO_ROOT/deploy/scripts/regen-wasm.mjs"
 
-# Copy artifacts into the function's wasm/ directory
-cp "$WASM_OUT/build/pb_wasm_bg.wasm" "$WASM_OUT/pb_wasm_bg.wasm"
-cp "$WASM_OUT/build/pb_wasm.js"      "$WASM_OUT/pb_wasm.js"
-cp "$WASM_OUT/build/pb_wasm.d.ts"    "$WASM_OUT/pb_wasm.d.ts"
-rm -rf "$WASM_OUT/build"
-
-info "WASM artifacts copied to function directory"
+info "WASM artifacts regenerated in $WASM_OUT"
 
 # ── 2b. Ensure shared core symlink exists ──
 
