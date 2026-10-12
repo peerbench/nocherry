@@ -6,11 +6,11 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import * as wasm from '@nocherry/pb-wasm';
-import { verifyReceipt } from '../src/receipt.js';
+import { verifyReceipt, verifyReveal } from '../src/receipt.js';
 
 const CHAIN = '52db9ba70e0cc0f6eaf7803dd07447a1f5477735fd3f661792ba94600c84e971';
 // RFC 8032 section 7.1 tests 1 and 2 secret keys.
@@ -29,7 +29,7 @@ const BEACON = {
 };
 const NEXT_ROUND_SIGNATURE = 'a1b4b3885bbeaf23047dfd38ed5b64a9141e96de4f8de30b16be4fff9ff8a0eb6682a7cf95c26e9a035b1630728258d7';
 
-const ITEMS = [
+const DEFAULT_ITEMS = [
   '2f58b7d7725eac66c32ab446bb53a188688dc1d76fcc40cf31f5cf6509181ce8',
   '32012c4c32888ee2c4ba4331e3c77ece9acd811a4b3abb708363123591abfea2',
 ];
@@ -37,14 +37,15 @@ const ITEMS = [
 function serverDid(): string {
   // did:key of SERVER_KEY, derived by signing nothing: read it from a throwaway commitment.
   return wasm.createCommitment(JSON.stringify({
-    items: ITEMS, reveal_probability: 0.5, beacon: { type: 'drand', chain_hash: CHAIN },
+    items: DEFAULT_ITEMS, reveal_probability: 0.5, beacon: { type: 'drand', chain_hash: CHAIN },
     committed_at: '2026-02-06T14:30:00Z',
   }), SERVER_KEY).signing_key;
 }
 
 /** A receipt as the server builds it (src/core/routes/commitments.ts, signing.ts). */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-function makeReceipt(opts: { anchorRound?: number; registeredAt?: string; beacon?: any; noSelection?: boolean } = {}) {
+function makeReceipt(opts: { anchorRound?: number; registeredAt?: string; beacon?: any; noSelection?: boolean; items?: string[] } = {}) {
+  const ITEMS = opts.items ?? DEFAULT_ITEMS;
   const beaconRef = opts.anchorRound === undefined
     ? { type: 'drand', chain_hash: CHAIN }
     : { type: 'drand', anchor_round: opts.anchorRound, chain_hash: CHAIN };
@@ -52,7 +53,7 @@ function makeReceipt(opts: { anchorRound?: number; registeredAt?: string; beacon
     items: ITEMS, reveal_probability: 0.5, beacon: beaconRef, committed_at: '2026-02-06T14:30:00Z',
   }), COMMITTER_KEY);
   const beacon = opts.beacon ?? BEACON;
-  const selected = wasm.selectBatch(JSON.stringify(ITEMS), beacon.randomness, 1);
+  const selected = wasm.selectBatch(JSON.stringify(ITEMS), beacon.randomness, Math.ceil(0.5 * ITEMS.length));
   const body = {
     commitment,
     commitment_hash: commitment.commitment_hash,
@@ -148,7 +149,7 @@ describe('verifyReceipt', () => {
 
   it('rejects a selection that does not follow from the beacon output', () => {
     const receipt = makeReceipt();
-    receipt.selection.selected_items = ITEMS.filter((h) => !receipt.selection.selected_items.includes(h));
+    receipt.selection.selected_items = DEFAULT_ITEMS.filter((h) => !receipt.selection.selected_items.includes(h));
     const result = verifyReceipt(receipt);
     assert.equal(result.status, 'failed');
     assert.equal(statusOf(result, 'selection_correct'), 'fail');
@@ -264,6 +265,142 @@ describe('verifyReceipt on production receipts', () => {
       walk(original, []);
     }
     assert.ok(mutations > 100, `only ${mutations} mutations`);
+  });
+});
+
+// A committer with four files, of which the beacon selects two.
+const FILES: Record<string, Uint8Array> = Object.fromEntries(
+  ['alpha', 'beta', 'gamma', 'delta'].map((name) => [`${name}.txt`, new TextEncoder().encode(`contents of ${name}\n`)]));
+const FILE_HASHES = Object.values(FILES).map((bytes) => wasm.hashBytes(bytes));
+const bytesOf = (itemHash: string) => Object.values(FILES)[FILE_HASHES.indexOf(itemHash)];
+
+function makeReveal(commitmentHash: string, selected: string[], voluntary: string[] = []) {
+  const committer = wasm.createCommitment(JSON.stringify({
+    items: DEFAULT_ITEMS, reveal_probability: 0.5, beacon: { type: 'drand', chain_hash: CHAIN },
+    committed_at: '2026-02-06T14:30:00Z',
+  }), COMMITTER_KEY).signing_key;
+  const payload = {
+    spec_version: '0.2.0',
+    commitment_hash: commitmentHash,
+    selected_items: selected,
+    voluntary_items: voluntary,
+    revealed_at: '2026-02-08T10:00:00.000Z',
+    signing_key: committer,
+  };
+  const signature = wasm.signMessage(COMMITTER_KEY, new TextEncoder().encode(JSON.stringify(payload)));
+  return { ...payload, signature };
+}
+
+describe('verifyReveal', () => {
+  const receipt = makeReceipt({ items: FILE_HASHES });
+  const selected: string[] = receipt.selection.selected_items;
+  const unselected = FILE_HASHES.filter((h) => !selected.includes(h));
+  const dataFor = (hashes: string[]) => Object.fromEntries(hashes.map((h) => [h, bytesOf(h)]));
+  const hash = receipt.commitment_hash;
+
+  it('verifies selected items with their data', () => {
+    assert.equal(selected.length, 2);
+    const result = verifyReveal(receipt, makeReveal(hash, selected), dataFor(selected));
+    assert.equal(result.status, 'verified', JSON.stringify(result.checks));
+    assert.deepEqual([result.items_checked, result.items_passed, result.items_failed, result.items_missing], [2, 2, 0, 0]);
+    for (const name of ['reveal_signature', 'reveal_matches_commitment', 'data_integrity', 'completeness', 'server_signature']) {
+      assert.equal(statusOf(result, name), 'pass', name);
+    }
+  });
+
+  it('accepts a voluntary item that is labeled as voluntary', () => {
+    const result = verifyReveal(receipt, makeReveal(hash, selected, [unselected[0]]), dataFor([...selected, unselected[0]]));
+    assert.equal(result.status, 'verified');
+    assert.equal(result.items_passed, 3);
+  });
+
+  it('fails when the data of an item was changed', () => {
+    const data = dataFor(selected);
+    data[selected[0]] = new TextEncoder().encode('something else');
+    const result = verifyReveal(receipt, makeReveal(hash, selected), data);
+    assert.equal(result.status, 'failed');
+    assert.equal(statusOf(result, 'data_integrity'), 'fail');
+    assert.equal(result.items_failed, 1);
+  });
+
+  it('is partial when the data of a selected item is not provided', () => {
+    const result = verifyReveal(receipt, makeReveal(hash, selected), dataFor([selected[0]]));
+    assert.equal(result.status, 'partial');
+    assert.equal(result.items_missing, 1);
+  });
+
+  it('is partial when a selected item is left out of the reveal', () => {
+    const result = verifyReveal(receipt, makeReveal(hash, [selected[0]]), dataFor([selected[0]]));
+    assert.equal(result.status, 'partial');
+    assert.equal(statusOf(result, 'completeness'), 'fail');
+  });
+
+  it('fails when an unselected item is presented as selected', () => {
+    const all = [...selected, unselected[0]];
+    const result = verifyReveal(receipt, makeReveal(hash, all), dataFor(all));
+    assert.equal(result.status, 'failed');
+    assert.equal(statusOf(result, 'reveal_matches_commitment'), 'fail');
+  });
+
+  it('fails when the reveal contains an item that was never committed', () => {
+    const bytes = new TextEncoder().encode('never committed');
+    const extra = wasm.hashBytes(bytes);
+    const result = verifyReveal(receipt, makeReveal(hash, selected, [extra]), { ...dataFor(selected), [extra]: bytes });
+    assert.equal(result.status, 'failed');
+    assert.equal(statusOf(result, 'reveal_matches_commitment'), 'fail');
+    assert.equal(statusOf(result, 'data_integrity'), 'pass');
+  });
+
+  it('fails for a reveal of another commitment or with a changed signature', () => {
+    const other = verifyReveal(receipt, makeReveal('00'.repeat(32), selected), dataFor(selected));
+    assert.equal(other.status, 'failed');
+    assert.equal(statusOf(other, 'reveal_matches_commitment'), 'fail');
+
+    const tampered = makeReveal(hash, selected);
+    tampered.revealed_at = '2026-02-09T10:00:00.000Z';
+    const result = verifyReveal(receipt, tampered, dataFor(selected));
+    assert.equal(result.status, 'failed');
+    assert.equal(statusOf(result, 'reveal_signature'), 'fail');
+  });
+
+  it('fails for a malformed reveal instead of throwing', () => {
+    assert.equal(verifyReveal(receipt, { selected_items: 'all' }, {}).status, 'failed');
+  });
+});
+
+describe('pb-js verify <reveal folder>', () => {
+  const CLI = join(import.meta.dirname, '..', 'src', 'cli.ts');
+  const receipt = makeReceipt({ items: FILE_HASHES });
+  const selected: string[] = receipt.selection.selected_items;
+
+  function makeFolder(skip?: string): string {
+    const dir = mkdtempSync(join(tmpdir(), 'pb-reveal-folder-'));
+    mkdirSync(dir, { recursive: true });
+    const names = Object.keys(FILES);
+    writeFileSync(join(dir, 'manifest.json'), JSON.stringify({
+      items: names.map((name, i) => ({ path: name, hash: FILE_HASHES[i] })),
+    }));
+    writeFileSync(join(dir, 'server-receipts.json'), JSON.stringify({ receipts: [{ server_name: 'local', receipt }] }));
+    writeFileSync(join(dir, 'reveal.json'), JSON.stringify(makeReveal(receipt.commitment_hash, selected)));
+    for (const [i, name] of names.entries()) {
+      // Publish only the selected files, as a committer would.
+      if (selected.includes(FILE_HASHES[i]) && FILE_HASHES[i] !== skip) writeFileSync(join(dir, name), FILES[name]);
+    }
+    return dir;
+  }
+  const run = (dir: string) => execFileSync('npx', ['tsx', CLI, 'verify', dir], { encoding: 'utf-8', timeout: 30000 });
+
+  it('exits 0 when receipts, reveal and files check out', () => {
+    const out = run(makeFolder());
+    assert.match(out, /Reveal against receipt local: VERIFIED/);
+    assert.match(out, /pass data_integrity \(2\/2 items verified\)/);
+  });
+
+  it('exits 2 when a selected file is missing from the folder', () => {
+    assert.throws(() => run(makeFolder(selected[0])), (e: unknown) => {
+      const err = e as { status?: number; stdout?: string };
+      return err.status === 2 && /PARTIAL/.test(err.stdout ?? '');
+    });
   });
 });
 

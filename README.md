@@ -82,11 +82,14 @@ Both methods are deterministic -- anyone with the beacon output and commitment c
 5. **Data integrity** -- SHA-256 hash revealed data, confirm it matches committed hashes
 6. **Completeness** -- all randomly-selected items are actually revealed
 
-Checks 1 to 3 and the server's signature run offline on a saved receipt:
+All checks run offline with the CLI:
 
 ```bash
-pb-js verify receipt.json          # or server-receipts.json
+pb-js verify receipt.json          # checks 1 to 3 and the server's signature; also server-receipts.json
+pb-js verify <reveal-folder>       # all checks: receipts, reveal.json, and the revealed files in manifest.json
 ```
+
+Exit code 0 means verified, 1 failed, 2 partial (a selected item or its data is missing).
 
 #### Cryptographic primitives
 
