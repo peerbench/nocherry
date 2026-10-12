@@ -325,7 +325,7 @@ fn cmd_verify(path: &Path) -> Result<(), String> {
     eprintln!("  did:key   = {}", c.signing_key);
     eprintln!("  hash      = {}", c.commitment_hash);
     eprintln!("  items     = {}", c.item_count);
-    eprintln!("  p         = {}", c.reveal_probability);
+    eprintln!("  p (ppm)   = {}", c.probability_ppm().unwrap_or(0));
     eprintln!("  beacon    = {}", c.beacon.beacon_type);
     eprintln!("  committed = {}", c.committed_at);
     Ok(())

@@ -227,7 +227,7 @@ fn attack_change_probability_after_signing() {
     // Attack: Lower probability after signing to avoid revealing items.
     let kp = sign::generate_keypair();
     let mut c = make_commitment(&kp, vec![hash_str("item1")], 0.90);
-    c.reveal_probability = 0.01; // Lower after signing
+    c.reveal_probability = Some(0.01); // Lower after signing
 
     assert!(commitment::verify_signature(&c).is_err(),
         "Changed probability must invalidate signature");

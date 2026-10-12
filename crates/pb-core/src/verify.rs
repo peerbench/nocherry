@@ -1,10 +1,14 @@
-//! Offline verification pipeline (Spec Section 6.4).
+//! Offline verification pipeline (Spec v0.4 Section 10.5 for 0.2.0 objects,
+//! Spec v0.5 Section 10.5 for 0.5.0 objects). The verifier dispatches on the
+//! commitment's `spec_version`; the 0.2.0 path is unchanged.
 
 use serde::{Serialize, Deserialize};
 use crate::beacon::{anchor, drand, BeaconOutput, BeaconRef};
 use crate::commitment::{self, Commitment};
 use crate::reveal::{self, Reveal};
 use crate::select;
+use crate::select_v5;
+use crate::sign;
 use crate::hash;
 
 /// Selection record produced after beacon fires.
@@ -13,7 +17,12 @@ pub struct SelectionRecord {
     pub commitment_hash: String,
     pub beacon_output: BeaconOutput,
     pub selection_mode: String,
-    pub reveal_probability: f64,
+    /// 0.2.0 records.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reveal_probability: Option<f64>,
+    /// 0.5.0 records.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reveal_probability_ppm: Option<u64>,
     pub selected_items: Vec<String>,
     pub selected_count: usize,
     pub total_count: usize,
@@ -62,6 +71,25 @@ impl VerifyResult {
             detail,
         });
     }
+    fn fail(&mut self, name: &str, detail: String) {
+        self.add(name, "fail", Some(detail));
+        self.status = "failed".into();
+    }
+    fn pass(&mut self, name: &str) {
+        self.add(name, "pass", None);
+    }
+    fn partial(&mut self) {
+        if self.status != "failed" { self.status = "partial".into(); }
+    }
+    /// Record a check and fold its status into the result.
+    fn push(&mut self, check: CheckResult) {
+        match check.status.as_str() {
+            "fail" => self.status = "failed".into(),
+            "skip" => self.partial(),
+            _ => {}
+        }
+        self.checks.push(check);
+    }
 }
 
 /// Data item: hash + actual bytes.
@@ -70,38 +98,55 @@ pub struct DataItem<'a> {
     pub data: &'a [u8],
 }
 
-/// Recompute the selection for a commitment given a beacon output.
+/// Recompute the selection for a commitment given a beacon output, in the
+/// format and (for 0.5.0) the mode of the commitment.
 pub fn compute_selection(
     c: &Commitment,
     beacon_out: &BeaconOutput,
     computed_at: &str,
 ) -> Result<SelectionRecord, String> {
     let randomness = beacon_out.randomness_bytes()?;
-    let (selected, mode) = select::select_auto(
-        &randomness, &c.commitment_hash, &c.items, c.reveal_probability,
-    )?;
+    let (selected, mode) = if c.is_v5() {
+        commitment::validate_v5(c)?;
+        let mode = c.selection_mode.clone().expect("validated");
+        let ppm = c.reveal_probability_ppm.expect("validated") as u32;
+        let hc = crate::item::decode_hash32(&c.commitment_hash, "commitment_hash")?;
+        (select_v5::select(&mode, &randomness, &hc, &c.items, ppm)?, mode)
+    } else {
+        let p = c.reveal_probability.ok_or("0.2.0 commitment has no reveal_probability")?;
+        let (selected, mode) = select::select_auto(&randomness, &c.commitment_hash, &c.items, p)?;
+        (selected, mode.to_string())
+    };
 
     Ok(SelectionRecord {
         commitment_hash: c.commitment_hash.clone(),
         beacon_output: beacon_out.clone(),
-        selection_mode: mode.into(),
-        reveal_probability: c.reveal_probability,
+        selection_mode: mode,
+        reveal_probability: if c.is_v5() { None } else { c.reveal_probability },
+        reveal_probability_ppm: if c.is_v5() { c.reveal_probability_ppm } else { None },
+        selected_count: selected.len(),
         selected_items: selected,
-        selected_count: 0, // filled below
         total_count: c.item_count,
         computed_at: computed_at.into(),
         server_key: None,
         server_signature: None,
     })
-    .map(|mut sr| { sr.selected_count = sr.selected_items.len(); sr })
 }
 
+/// Check name: the commitment's `spec_version` is one this verifier knows.
+pub const CHECK_SPEC_VERSION: &str = "spec_version";
+/// Check name: a 0.5.0 commitment satisfies Spec v0.5 Section 7.5.
+pub const CHECK_COMMITMENT_WELLFORMED: &str = "commitment_wellformed";
 /// Check name: `randomness == SHA-256(signature)`.
 pub const CHECK_BEACON_RANDOMNESS: &str = "beacon_randomness";
 /// Check name: the beacon signature verifies under the chain's public key.
 pub const CHECK_BEACON_AUTHENTIC: &str = "beacon_authentic";
 /// Check name: selection used the first round after `registered_at`.
 pub const CHECK_BEACON_AFTER_REGISTRATION: &str = "beacon_after_registration";
+/// Check name (0.5.0): the record's mode is the commitment's signed mode.
+pub const CHECK_SELECTION_MODE: &str = "selection_mode";
+/// Check name (0.5.0): every revealed item has a valid opening.
+pub const CHECK_ITEM_OPENINGS: &str = "item_openings";
 
 fn check(name: &str, status: &str, detail: Option<String>) -> CheckResult {
     CheckResult { name: name.into(), status: status.into(), detail }
@@ -289,10 +334,31 @@ pub fn verify_full_with_registration(
 }
 
 /// Like `verify_full_with_registration`, for callers that hash the revealed
-/// data themselves: `computed` maps each revealed item hash to the hash the
-/// caller computed from the data it holds (file bytes, or a directory
-/// manifest). An item hash without an entry counts as missing data.
+/// data themselves: `computed` maps each revealed item (the plain item hash in
+/// 0.2.0, the item commitment in 0.5.0) to the hash the caller computed from
+/// the data it holds (file bytes, or a directory manifest). An item without an
+/// entry counts as missing data.
 pub fn verify_full_with_hashes(
+    c: &Commitment,
+    sel: Option<&SelectionRecord>,
+    rev: Option<&Reveal>,
+    computed: &std::collections::HashMap<String, String>,
+    registered_at: Option<&str>,
+) -> VerifyResult {
+    match c.spec_version.as_str() {
+        commitment::SPEC_VERSION => verify_v2(c, sel, rev, computed, registered_at),
+        commitment::SPEC_VERSION_V5 => verify_v5(c, sel, rev, computed, registered_at),
+        other => {
+            let mut result = VerifyResult::new();
+            result.fail(CHECK_SPEC_VERSION, format!("unsupported spec_version {other}; this verifier knows {}",
+                commitment::SUPPORTED_SPEC_VERSIONS.join(", ")));
+            result
+        }
+    }
+}
+
+/// The 0.2.0 pipeline (Spec v0.4 Section 10.5), unchanged.
+fn verify_v2(
     c: &Commitment,
     sel: Option<&SelectionRecord>,
     rev: Option<&Reveal>,
@@ -339,15 +405,15 @@ pub fn verify_full_with_hashes(
         result.status = "failed".into();
     } else if let Some(sel) = sel {
         result.checks.push(check_selection_mode(&sel.selection_mode, c.items.len()));
-        match sel.beacon_output.randomness_bytes() {
-            Ok(randomness) => {
+        match (sel.beacon_output.randomness_bytes(), c.reveal_probability) {
+            (Ok(randomness), Some(p)) => {
                 // The per-item / batch threshold is a deployment setting, so the
                 // mode comes from the selection record (Spec Section 8.4).
                 let recomputed = match sel.selection_mode.as_str() {
                     "per_item" => Ok(select::select_per_item_batch(
-                        &randomness, &c.commitment_hash, &c.items, c.reveal_probability)),
+                        &randomness, &c.commitment_hash, &c.items, p)),
                     "batch" => select::select_batch_by_probability(
-                        &c.items, &randomness, c.reveal_probability),
+                        &c.items, &randomness, p),
                     other => Err(format!("unknown selection_mode: {other}")),
                 };
                 match recomputed {
@@ -366,8 +432,12 @@ pub fn verify_full_with_hashes(
                     }
                 }
             }
-            Err(e) => {
+            (Err(e), _) => {
                 result.add("selection_correct", "fail", Some(e));
+                result.status = "failed".into();
+            }
+            (Ok(_), None) => {
+                result.add("selection_correct", "fail", Some("0.2.0 commitment has no reveal_probability".into()));
                 result.status = "failed".into();
             }
         }
@@ -421,42 +491,182 @@ pub fn verify_full_with_hashes(
                 None => result.items_missing += 1,
             }
         }
-
-        if result.items_failed > 0 {
-            result.add("data_integrity", "fail",
-                Some(format!("{}/{} items failed hash check", result.items_failed, result.items_checked)));
-            result.status = "failed".into();
-        } else if result.items_missing > 0 {
-            result.add("data_integrity", "fail",
-                Some(format!("{}/{} items missing data", result.items_missing, result.items_checked)));
-            if result.status != "failed" { result.status = "partial".into(); }
-        } else if result.items_checked > 0 {
-            result.add("data_integrity", "pass",
-                Some(format!("{}/{} items verified", result.items_passed, result.items_checked)));
-        }
+        data_integrity_summary(&mut result);
     }
 
     // Step 6: Check completeness.
     if let (Some(sel), Some(rev)) = (sel, rev) {
-        let revealed: std::collections::HashSet<&str> =
-            rev.selected_items.iter().map(|s| s.as_str()).collect();
-        let missing: usize = sel.selected_items.iter()
-            .filter(|h| !revealed.contains(h.as_str()))
-            .count();
-
-        if missing > 0 {
-            result.add("completeness", "fail",
-                Some(format!("{}/{} selected items not revealed", missing, sel.selected_items.len())));
-            if result.status != "failed" { result.status = "partial".into(); }
-        } else {
-            result.add("completeness", "pass",
-                Some(format!("all {} selected items revealed", sel.selected_items.len())));
-        }
+        completeness(&mut result, sel, rev);
     }
 
     // A selection whose beacon or timing could not be checked is not fully verified.
     if unchecked && result.status == "verified" {
         result.status = "partial".into();
+    }
+
+    result
+}
+
+fn data_integrity_summary(result: &mut VerifyResult) {
+    if result.items_failed > 0 {
+        result.add("data_integrity", "fail",
+            Some(format!("{}/{} items failed hash check", result.items_failed, result.items_checked)));
+        result.status = "failed".into();
+    } else if result.items_missing > 0 {
+        result.add("data_integrity", "fail",
+            Some(format!("{}/{} items missing data", result.items_missing, result.items_checked)));
+        result.partial();
+    } else if result.items_checked > 0 {
+        result.add("data_integrity", "pass",
+            Some(format!("{}/{} items verified", result.items_passed, result.items_checked)));
+    }
+}
+
+fn completeness(result: &mut VerifyResult, sel: &SelectionRecord, rev: &Reveal) {
+    let revealed: std::collections::HashSet<&str> =
+        rev.selected_items.iter().map(|s| s.as_str()).collect();
+    let missing: usize = sel.selected_items.iter()
+        .filter(|h| !revealed.contains(h.as_str()))
+        .count();
+
+    if missing > 0 {
+        result.add("completeness", "fail",
+            Some(format!("{}/{} selected items not revealed", missing, sel.selected_items.len())));
+        result.partial();
+    } else {
+        result.add("completeness", "pass",
+            Some(format!("all {} selected items revealed", sel.selected_items.len())));
+    }
+}
+
+/// The 0.5.0 pipeline (Spec v0.5 Section 10.5).
+fn verify_v5(
+    c: &Commitment,
+    sel: Option<&SelectionRecord>,
+    rev: Option<&Reveal>,
+    computed: &std::collections::HashMap<String, String>,
+    registered_at: Option<&str>,
+) -> VerifyResult {
+    let mut result = VerifyResult::new();
+
+    // Step 1: well formed. The remaining steps use the fields it checked, so a
+    // malformed commitment also fails them; nothing else is attempted on it.
+    let wellformed = match commitment::validate_v5(c) {
+        Ok(()) => { result.pass(CHECK_COMMITMENT_WELLFORMED); true }
+        Err(e) => { result.fail(CHECK_COMMITMENT_WELLFORMED, e); false }
+    };
+
+    // Step 2: committer signature and commitment hash.
+    match commitment::verify_signature(c) {
+        Ok(()) => result.pass("commitment_signature"),
+        Err(e) => result.fail("commitment_signature", e),
+    }
+
+    if let Some(sel) = sel {
+        // Steps 3 and 4: beacon output and anchor.
+        for check in check_beacon(&c.beacon, &sel.beacon_output) {
+            result.push(check);
+        }
+        match c.beacon.anchor_round {
+            Some(anchor_round) => for check in check_anchor(anchor_round, sel.beacon_output.round, registered_at) {
+                result.push(check);
+            },
+            None => {
+                result.fail(CHECK_ANCHOR_SELECTION_ROUND, "0.5.0 commitment has no anchor_round".into());
+                result.fail(CHECK_ANCHOR_REGISTRATION_TIME, "0.5.0 commitment has no anchor_round".into());
+            }
+        }
+
+        // Step 5: the record uses the signed mode.
+        let mode = c.selection_mode.clone().unwrap_or_default();
+        if sel.selection_mode == mode {
+            result.pass(CHECK_SELECTION_MODE);
+        } else {
+            result.fail(CHECK_SELECTION_MODE, format!(
+                "selection record uses {} but the commitment signs {}", sel.selection_mode, mode));
+        }
+
+        // Step 6: recompute in the commitment's mode.
+        if sel.commitment_hash != c.commitment_hash {
+            result.fail("selection_correct", format!("selection record is for commitment {}", sel.commitment_hash));
+        } else if !wellformed {
+            result.fail("selection_correct", "commitment is malformed".into());
+        } else {
+            let recomputed = sel.beacon_output.randomness_bytes().and_then(|randomness| {
+                let hc = crate::item::decode_hash32(&c.commitment_hash, "commitment_hash")?;
+                let ppm = c.reveal_probability_ppm.expect("validated") as u32;
+                select_v5::select(&mode, &randomness, &hc, &c.items, ppm)
+            });
+            match recomputed {
+                Ok(items) if items == sel.selected_items => result.pass("selection_correct"),
+                Ok(_) => result.fail("selection_correct", "recomputed selection does not match".into()),
+                Err(e) => result.fail("selection_correct", e),
+            }
+        }
+    }
+
+    if let Some(rev) = rev {
+        // Step 7: reveal signature over the reveal's own payload.
+        let signed = match reveal::signing_payload(rev)
+            .and_then(|payload| sign::verify(&rev.signing_key, &payload, &rev.signature)) {
+            Ok(()) => { result.pass("reveal_signature"); true }
+            Err(e) => { result.fail("reveal_signature", e); false }
+        };
+
+        // Step 8: the reveal is about this commitment and its items.
+        let committed: std::collections::HashSet<&str> = c.items.iter().map(|s| s.as_str()).collect();
+        let uncommitted = rev.revealed_items().filter(|h| !committed.contains(h.as_str())).count();
+        let selected_set: std::collections::HashSet<&str> = rev.selected_items.iter().map(|s| s.as_str()).collect();
+        let overlap = rev.voluntary_items.iter().filter(|h| selected_set.contains(h.as_str())).count();
+        let not_selected = sel.map_or(0, |sel| rev.selected_items.iter()
+            .filter(|h| !sel.selected_items.contains(h))
+            .count());
+        let problem = if rev.commitment_hash != c.commitment_hash {
+            Some(format!("reveal is for commitment {}", rev.commitment_hash))
+        } else if uncommitted > 0 {
+            Some(format!("{uncommitted} revealed items are not in the commitment"))
+        } else if overlap > 0 {
+            Some(format!("{overlap} items are listed both as selected and as voluntary"))
+        } else if not_selected > 0 {
+            Some(format!("{not_selected} items are listed as selected but were not selected"))
+        } else {
+            None
+        };
+        match problem {
+            None => result.pass(CHECK_REVEAL_MATCHES_COMMITMENT),
+            Some(detail) => result.fail(CHECK_REVEAL_MATCHES_COMMITMENT, detail),
+        }
+
+        // Step 9: openings.
+        let openings_ok = if !rev.is_v5() {
+            result.fail(CHECK_ITEM_OPENINGS, format!(
+                "reveal is format {}; a 0.5.0 commitment needs a 0.5.0 reveal with openings", rev.spec_version));
+            false
+        } else {
+            match reveal::validate_v5(rev) {
+                Ok(()) => { result.pass(CHECK_ITEM_OPENINGS); true }
+                Err(e) => { result.fail(CHECK_ITEM_OPENINGS, e); false }
+            }
+        };
+        let _ = signed;
+
+        // Step 10: data integrity against the opened plain hashes.
+        for item in rev.revealed_items() {
+            result.items_checked += 1;
+            let expected = if openings_ok { rev.opening_of(item).map(|o| o.hash.as_str()) } else { None };
+            match (computed.get(item), expected) {
+                (Some(actual), Some(want)) if actual.eq_ignore_ascii_case(want) => result.items_passed += 1,
+                (Some(_), Some(_)) => result.items_failed += 1,
+                (Some(_), None) => result.items_failed += 1,
+                (None, _) => result.items_missing += 1,
+            }
+        }
+        data_integrity_summary(&mut result);
+    }
+
+    // Step 11: completeness.
+    if let (Some(sel), Some(rev)) = (sel, rev) {
+        completeness(&mut result, sel, rev);
     }
 
     result
@@ -544,7 +754,7 @@ mod tests {
         let kp = sign::generate_keypair();
         let h = hash::hash_bytes(b"data");
         let mut c = make_commitment(&kp, vec![h], 1.0);
-        c.reveal_probability = 0.5;
+        c.reveal_probability = Some(0.5);
 
         let result = verify_full(&c, None, None, &[]);
         assert_eq!(result.status, "failed");
@@ -681,7 +891,7 @@ mod tests {
         sel.selection_mode = "per_item".into();
         assert_eq!(verify(&sel), "fail", "batch result presented as per-item");
         sel.selected_items = select::select_per_item_batch(
-            &randomness, &c.commitment_hash, &c.items, c.reveal_probability);
+            &randomness, &c.commitment_hash, &c.items, c.reveal_probability.unwrap());
         assert_eq!(verify(&sel), "pass");
 
         sel.selection_mode = "favorite".into();
@@ -715,7 +925,7 @@ mod tests {
 
         sel.selection_mode = "per_item".into();
         sel.selected_items = select::select_per_item_batch(
-            &bo.randomness_bytes().unwrap(), &c.commitment_hash, &c.items, c.reveal_probability);
+            &bo.randomness_bytes().unwrap(), &c.commitment_hash, &c.items, c.reveal_probability.unwrap());
         let result = run(&sel);
         assert_eq!(status_of(&result, CHECK_SELECTION_MODE_DEFAULT), "warn");
         assert_eq!(status_of(&result, "selection_correct"), "pass");
@@ -773,5 +983,346 @@ mod tests {
         assert_eq!(result.status, "partial");
         let detail = result.checks.iter().find(|c| c.name == CHECK_BEACON_AUTHENTIC).unwrap().detail.clone().unwrap();
         assert!(detail.contains("chain_hash"), "{detail}");
+    }
+
+    // ── 0.5.0 ──
+
+    // Real quicknet rounds 25892263 to 25892265 (2026-02-07T16:02:33Z, 36Z, 39Z).
+    fn round(n: u64) -> BeaconOutput {
+        let (randomness, signature) = match n {
+            25892263 => ("cb5e3ee37912e328e8497cef8e845e7ea5e12f23e679e993bc63427a8dbfecf5", "89d9074bd1ad018acd9b85fd99dba90b784fc9b62632f3b762cf7078c417e4c72895804e372e1a8cb201eb2c9e60a51d"),
+            25892264 => ("5c00d32a5dd9adf1f2f3ff730d16003ab3f9621d5c7ad64950001ee2ca153108", "8f6c972e765d19007dd206108747b34e4caeb62e0e9c3cac48b2f60f7d53c61baa38b85c8a60b7b4cc41d757380724d8"),
+            25892265 => ("981853163a6078ace4ab02d83913000181990ec0042b7de1752c31bb25fcd4c0", "a1b4b3885bbeaf23047dfd38ed5b64a9141e96de4f8de30b16be4fff9ff8a0eb6682a7cf95c26e9a035b1630728258d7"),
+            _ => panic!("no fixture for round {n}"),
+        };
+        BeaconOutput {
+            beacon_type: "drand".into(),
+            chain_hash: Some(drand::QUICKNET_CHAIN_HASH.into()),
+            round: Some(n),
+            randomness: randomness.into(),
+            signature: signature.into(),
+        }
+    }
+    const ANCHOR: u64 = 25892262;
+    const REGISTERED_OK: &str = "2026-02-07T16:02:31.500Z";
+
+    fn rfc8032_kp() -> sign::KeyPair {
+        let bytes: [u8; 32] = hex::decode("9d61b19deffd5a60ba844af492ec2cc44449c5697b326919703bac031cae7f60").unwrap().try_into().unwrap();
+        let signing_key = ed25519_dalek::SigningKey::from_bytes(&bytes);
+        let verifying_key = signing_key.verifying_key();
+        sign::KeyPair { signing_key, verifying_key, did_key: sign::encode_did_key(&verifying_key) }
+    }
+
+    /// Five files, their plain hashes, salts and item commitments under one secret.
+    struct Fixture {
+        kp: sign::KeyPair,
+        data: Vec<Vec<u8>>,
+        hashes: Vec<String>,
+        salts: Vec<String>,
+        items: Vec<String>,
+    }
+
+    fn fixture() -> Fixture {
+        let kp = rfc8032_kp();
+        let data: Vec<Vec<u8>> = (0..5u8).map(|i| format!("question {i}\n").into_bytes()).collect();
+        let hashes: Vec<String> = data.iter().map(|d| hash::hash_bytes(d)).collect();
+        let secret = [7u8; 32];
+        let (items, salts) = commitment::commit_items(&secret, &hashes).unwrap();
+        Fixture { kp, data, hashes, salts, items }
+    }
+
+    fn make_v5(f: &Fixture, mode: &str, ppm: u64) -> Commitment {
+        commitment::create_v5(commitment::CreateParamsV5 {
+            items: f.items.clone(),
+            reveal_probability_ppm: ppm,
+            selection_mode: mode.into(),
+            anchor_round: ANCHOR,
+            stream_id: Some("bench".into()),
+            sequence: Some(1),
+            metadata: Some(serde_json::json!({"set": "law-2026"})),
+            committed_at: "2026-02-07T16:02:30Z".into(),
+            identity: None,
+        }, &f.kp).unwrap()
+    }
+
+    fn opening(f: &Fixture, item: &str) -> reveal::Opening {
+        let i = f.items.iter().position(|x| x == item).unwrap();
+        reveal::Opening { item: item.into(), salt: f.salts[i].clone(), hash: f.hashes[i].clone() }
+    }
+
+    fn make_reveal(f: &Fixture, c: &Commitment, selected: &[String], voluntary: &[String]) -> Reveal {
+        let openings = selected.iter().chain(voluntary.iter()).map(|it| opening(f, it)).collect();
+        reveal::create_v5(reveal::CreateParamsV5 {
+            commitment_hash: c.commitment_hash.clone(),
+            selected_items: selected.to_vec(),
+            voluntary_items: voluntary.to_vec(),
+            openings,
+            data_url: None,
+            revealed_at: "2026-02-08T10:00:00Z".into(),
+        }, &f.kp).unwrap()
+    }
+
+    /// `computed` map as a CLI would build it: item commitment to the hash of the file it holds.
+    fn computed_for(f: &Fixture, items: &[String]) -> std::collections::HashMap<String, String> {
+        items.iter().map(|it| {
+            let i = f.items.iter().position(|x| x == it).unwrap();
+            (it.clone(), hash::hash_bytes(&f.data[i]))
+        }).collect()
+    }
+
+    fn v5_check_names(result: &VerifyResult) -> Vec<&str> {
+        result.checks.iter().map(|c| c.name.as_str()).collect()
+    }
+
+    #[test]
+    fn v5_receipt_verifies_in_batch_mode() {
+        let f = fixture();
+        let c = make_v5(&f, "batch", 400000);
+        let sel = compute_selection(&c, &round(ANCHOR + 2), "now").unwrap();
+        assert_eq!(sel.selection_mode, "batch");
+        assert_eq!(sel.selected_items.len(), 2);
+        assert_eq!(sel.reveal_probability_ppm, Some(400000));
+        assert!(sel.reveal_probability.is_none());
+        let result = verify_full_with_hashes(&c, Some(&sel), None, &Default::default(), Some(REGISTERED_OK));
+        assert_eq!(result.status, CHECKED, "{:?}", result.checks);
+        assert_eq!(v5_check_names(&result), vec![
+            CHECK_COMMITMENT_WELLFORMED, "commitment_signature", CHECK_BEACON_RANDOMNESS, CHECK_BEACON_AUTHENTIC,
+            CHECK_ANCHOR_SELECTION_ROUND, CHECK_ANCHOR_REGISTRATION_TIME, CHECK_SELECTION_MODE, "selection_correct",
+        ]);
+    }
+
+    #[test]
+    fn v5_receipt_verifies_in_per_item_mode() {
+        let f = fixture();
+        let c = make_v5(&f, "per_item", 500000);
+        let sel = compute_selection(&c, &round(ANCHOR + 2), "now").unwrap();
+        assert_eq!(sel.selection_mode, "per_item");
+        let result = verify_full_with_hashes(&c, Some(&sel), None, &Default::default(), Some(REGISTERED_OK));
+        assert_eq!(result.status, CHECKED, "{:?}", result.checks);
+    }
+
+    #[test]
+    fn v5_server_cannot_pick_the_other_mode() {
+        // The attack 0.2.0 only warned about: a server computes the selection in
+        // the mode that suits it. In 0.5.0 the mode is signed.
+        let f = fixture();
+        let c = make_v5(&f, "batch", 400000);
+        let bo = round(ANCHOR + 2);
+        let mut sel = compute_selection(&c, &bo, "now").unwrap();
+        let hc = crate::item::decode_hash32(&c.commitment_hash, "hc").unwrap();
+        sel.selection_mode = "per_item".into();
+        sel.selected_items = select_v5::select("per_item", &bo.randomness_bytes().unwrap(), &hc, &c.items, 400000).unwrap();
+        sel.selected_count = sel.selected_items.len();
+        let result = verify_full_with_hashes(&c, Some(&sel), None, &Default::default(), Some(REGISTERED_OK));
+        assert_eq!(result.status, "failed");
+        assert_eq!(status_of(&result, CHECK_SELECTION_MODE), "fail");
+        assert_eq!(status_of(&result, "selection_correct"), "fail", "recomputed in the signed mode");
+        assert_eq!(status_of(&result, CHECK_SELECTION_MODE_DEFAULT), "absent", "no warn-only check in 0.5.0");
+    }
+
+    #[test]
+    fn v5_selection_of_another_round_or_items_fails() {
+        let f = fixture();
+        let c = make_v5(&f, "batch", 400000);
+        let other = compute_selection(&c, &round(ANCHOR + 3), "now").unwrap();
+        let mut sel = compute_selection(&c, &round(ANCHOR + 2), "now").unwrap();
+        // Round a+3 output presented as the selection: wrong round.
+        let result = verify_full_with_hashes(&c, Some(&other), None, &Default::default(), Some(REGISTERED_OK));
+        assert_eq!(status_of(&result, CHECK_ANCHOR_SELECTION_ROUND), "fail");
+        // Right round, but the items of the other round's shuffle.
+        sel.selected_items = other.selected_items.clone();
+        let result = verify_full_with_hashes(&c, Some(&sel), None, &Default::default(), Some(REGISTERED_OK));
+        assert_eq!(status_of(&result, "selection_correct"), "fail");
+        assert_eq!(result.status, "failed");
+    }
+
+    #[test]
+    fn v5_registration_after_the_round_fails() {
+        let f = fixture();
+        let c = make_v5(&f, "batch", 400000);
+        let sel = compute_selection(&c, &round(ANCHOR + 2), "now").unwrap();
+        let result = verify_full_with_hashes(&c, Some(&sel), None, &Default::default(), Some("2026-02-07T16:02:36.000Z"));
+        assert_eq!(status_of(&result, CHECK_ANCHOR_REGISTRATION_TIME), "fail");
+        assert_eq!(result.status, "failed");
+        let result = verify_full_with_hashes(&c, Some(&sel), None, &Default::default(), None);
+        assert_eq!(status_of(&result, CHECK_ANCHOR_REGISTRATION_TIME), "skip");
+        assert_eq!(result.status, "partial");
+    }
+
+    #[test]
+    fn v5_malformed_commitment_fails_wellformed_and_nothing_panics() {
+        let f = fixture();
+        let mut c = make_v5(&f, "batch", 400000);
+        let sel = compute_selection(&c, &round(ANCHOR + 2), "now").unwrap();
+        c.beacon.anchor_round = None;
+        let result = verify_full_with_hashes(&c, Some(&sel), None, &Default::default(), Some(REGISTERED_OK));
+        assert_eq!(result.status, "failed");
+        assert_eq!(status_of(&result, CHECK_COMMITMENT_WELLFORMED), "fail");
+        assert_eq!(status_of(&result, "commitment_signature"), "fail");
+        assert_eq!(status_of(&result, CHECK_ANCHOR_SELECTION_ROUND), "fail");
+        assert_eq!(status_of(&result, "selection_correct"), "fail");
+
+        let mut c = make_v5(&f, "batch", 400000);
+        c.reveal_probability_ppm = Some(0);
+        let result = verify_full_with_hashes(&c, Some(&sel), None, &Default::default(), Some(REGISTERED_OK));
+        assert_eq!(status_of(&result, CHECK_COMMITMENT_WELLFORMED), "fail");
+    }
+
+    #[test]
+    fn v5_unknown_version_fails_spec_version() {
+        let f = fixture();
+        let mut c = make_v5(&f, "batch", 400000);
+        c.spec_version = "0.3.0".into();
+        let result = verify_full_with_hashes(&c, None, None, &Default::default(), None);
+        assert_eq!(result.status, "failed");
+        assert_eq!(status_of(&result, CHECK_SPEC_VERSION), "fail");
+    }
+
+    #[test]
+    fn v5_reveal_bundle_verifies_end_to_end() {
+        let f = fixture();
+        let c = make_v5(&f, "batch", 400000);
+        let sel = compute_selection(&c, &round(ANCHOR + 2), "now").unwrap();
+        let voluntary: Vec<String> = f.items.iter().filter(|it| !sel.selected_items.contains(it)).take(1).cloned().collect();
+        let rev = make_reveal(&f, &c, &sel.selected_items, &voluntary);
+        let revealed: Vec<String> = rev.revealed_items().cloned().collect();
+        let result = verify_full_with_hashes(&c, Some(&sel), Some(&rev), &computed_for(&f, &revealed), Some(REGISTERED_OK));
+        assert_eq!(result.status, CHECKED, "{:?}", result.checks);
+        assert_eq!((result.items_checked, result.items_passed), (3, 3));
+        for name in ["reveal_signature", CHECK_REVEAL_MATCHES_COMMITMENT, CHECK_ITEM_OPENINGS, "data_integrity", "completeness"] {
+            assert_eq!(status_of(&result, name), "pass", "{name}");
+        }
+    }
+
+    #[test]
+    fn v5_wrong_opening_fails_item_openings_not_data() {
+        // The committer reveals a file whose hash does not open the commitment:
+        // caught by the opening check, whatever bytes are supplied.
+        let f = fixture();
+        let c = make_v5(&f, "batch", 400000);
+        let sel = compute_selection(&c, &round(ANCHOR + 2), "now").unwrap();
+        let mut rev = make_reveal(&f, &c, &sel.selected_items, &[]);
+        let unselected = f.items.iter().position(|it| !sel.selected_items.contains(it)).unwrap();
+        // Swap in the hash of another (unselected) file with the right salt for that file.
+        let o = &mut rev.openings.as_mut().unwrap()[0];
+        o.hash = f.hashes[unselected].clone();
+        o.salt = f.salts[unselected].clone();
+        rev.signature = sign::sign(&f.kp.signing_key, &reveal::signing_payload(&rev).unwrap());
+        let mut computed = computed_for(&f, &sel.selected_items);
+        computed.insert(sel.selected_items[0].clone(), f.hashes[unselected].clone());
+        let result = verify_full_with_hashes(&c, Some(&sel), Some(&rev), &computed, Some(REGISTERED_OK));
+        assert_eq!(result.status, "failed");
+        assert_eq!(status_of(&result, "reveal_signature"), "pass", "the committer did sign it");
+        assert_eq!(status_of(&result, CHECK_ITEM_OPENINGS), "fail");
+    }
+
+    #[test]
+    fn v5_changed_data_fails_data_integrity() {
+        let f = fixture();
+        let c = make_v5(&f, "batch", 400000);
+        let sel = compute_selection(&c, &round(ANCHOR + 2), "now").unwrap();
+        let rev = make_reveal(&f, &c, &sel.selected_items, &[]);
+        let mut computed = computed_for(&f, &sel.selected_items);
+        computed.insert(sel.selected_items[0].clone(), hash::hash_bytes(b"other bytes"));
+        let result = verify_full_with_hashes(&c, Some(&sel), Some(&rev), &computed, Some(REGISTERED_OK));
+        assert_eq!(result.status, "failed");
+        assert_eq!(status_of(&result, CHECK_ITEM_OPENINGS), "pass");
+        assert_eq!(status_of(&result, "data_integrity"), "fail");
+        assert_eq!(result.items_failed, 1);
+    }
+
+    #[test]
+    fn v5_missing_data_and_missing_items_are_partial() {
+        let f = fixture();
+        let c = make_v5(&f, "batch", 400000);
+        let sel = compute_selection(&c, &round(ANCHOR + 2), "now").unwrap();
+        let rev = make_reveal(&f, &c, &sel.selected_items, &[]);
+        let result = verify_full_with_hashes(&c, Some(&sel), Some(&rev), &computed_for(&f, &sel.selected_items[..1]), Some(REGISTERED_OK));
+        assert_eq!(result.status, "partial");
+        assert_eq!(result.items_missing, 1);
+
+        let rev = make_reveal(&f, &c, &sel.selected_items[..1], &[]);
+        let result = verify_full_with_hashes(&c, Some(&sel), Some(&rev), &computed_for(&f, &sel.selected_items[..1]), Some(REGISTERED_OK));
+        assert_eq!(result.status, "partial");
+        assert_eq!(status_of(&result, "completeness"), "fail");
+    }
+
+    #[test]
+    fn v5_unselected_item_as_selected_and_uncommitted_items_fail() {
+        let f = fixture();
+        let c = make_v5(&f, "batch", 400000);
+        let sel = compute_selection(&c, &round(ANCHOR + 2), "now").unwrap();
+        let unselected: Vec<String> = f.items.iter().filter(|it| !sel.selected_items.contains(it)).take(1).cloned().collect();
+        let mut all = sel.selected_items.clone();
+        all.extend(unselected.clone());
+        let rev = make_reveal(&f, &c, &all, &[]);
+        let result = verify_full_with_hashes(&c, Some(&sel), Some(&rev), &computed_for(&f, &all), Some(REGISTERED_OK));
+        assert_eq!(result.status, "failed");
+        assert_eq!(status_of(&result, CHECK_REVEAL_MATCHES_COMMITMENT), "fail");
+
+        // An item that was never committed, with a valid opening of its own.
+        let bytes = b"never committed".to_vec();
+        let h = hash::hash_bytes(&bytes);
+        let salt = hex::encode([9u8; 32]);
+        let extra = crate::item::item_commitment_hex(&salt, &h).unwrap();
+        let mut openings: Vec<reveal::Opening> = sel.selected_items.iter().map(|it| opening(&f, it)).collect();
+        openings.push(reveal::Opening { item: extra.clone(), salt, hash: h.clone() });
+        let rev = reveal::create_v5(reveal::CreateParamsV5 {
+            commitment_hash: c.commitment_hash.clone(),
+            selected_items: sel.selected_items.clone(),
+            voluntary_items: vec![extra.clone()],
+            openings,
+            data_url: None,
+            revealed_at: "2026-02-08T10:00:00Z".into(),
+        }, &f.kp).unwrap();
+        let mut computed = computed_for(&f, &sel.selected_items);
+        computed.insert(extra, h);
+        let result = verify_full_with_hashes(&c, Some(&sel), Some(&rev), &computed, Some(REGISTERED_OK));
+        assert_eq!(result.status, "failed");
+        assert_eq!(status_of(&result, CHECK_REVEAL_MATCHES_COMMITMENT), "fail");
+        assert_eq!(status_of(&result, CHECK_ITEM_OPENINGS), "pass");
+    }
+
+    #[test]
+    fn v5_commitment_needs_a_v5_reveal() {
+        let f = fixture();
+        let c = make_v5(&f, "batch", 400000);
+        let sel = compute_selection(&c, &round(ANCHOR + 2), "now").unwrap();
+        let rev = reveal::create(reveal::CreateParams {
+            commitment_hash: c.commitment_hash.clone(),
+            selected_items: sel.selected_items.clone(),
+            voluntary_items: vec![],
+            data_url: None,
+            revealed_at: "2026-02-08T10:00:00Z".into(),
+        }, &f.kp).unwrap();
+        let result = verify_full_with_hashes(&c, Some(&sel), Some(&rev), &computed_for(&f, &sel.selected_items), Some(REGISTERED_OK));
+        assert_eq!(result.status, "failed");
+        assert_eq!(status_of(&result, CHECK_ITEM_OPENINGS), "fail");
+    }
+
+    #[test]
+    fn v5_published_commitment_does_not_leak_item_hashes() {
+        // The membership test of 0.2.0: hash a guessed item and look for it.
+        let f = fixture();
+        let c = make_v5(&f, "batch", 400000);
+        let json = serde_json::to_string(&c).unwrap();
+        for h in &f.hashes {
+            assert!(!json.contains(h), "plain item hash {h} appears in the commitment");
+        }
+        for s in &f.salts {
+            assert!(!json.contains(s));
+        }
+    }
+
+    #[test]
+    fn v2_and_v5_bundles_coexist_in_one_verifier() {
+        // A 0.2.0 bundle verifies through the same entry point and reports the 0.2.0 checks.
+        let kp = sign::generate_keypair();
+        let c = make_commitment(&kp, vec![hash::hash_bytes(b"data")], 1.0);
+        let sel = compute_selection(&c, &test_beacon_output(), "now").unwrap();
+        let result = verify_full_with_registration(&c, Some(&sel), None, &[], Some(REGISTERED_BEFORE_ROUND_1000));
+        assert_eq!(result.status, CHECKED);
+        assert_eq!(status_of(&result, CHECK_SELECTION_MODE_DEFAULT), "pass");
+        assert_eq!(status_of(&result, CHECK_COMMITMENT_WELLFORMED), "absent");
     }
 }

@@ -200,7 +200,9 @@ Excluded from the payload: `commitment_hash`, `signature`. Nothing else is exclu
 - Values are strings, `true`, `false`, `null`, integers with `|x| <= 2^53 - 1`, arrays, or objects, nested without limit. A number with a fraction or exponent, `-0`, or an integer outside that range is malformed.
 - The canonical serialization is at most 4096 bytes.
 
-A commitment whose `metadata` violates a rule is malformed and MUST be rejected by servers and failed by verifiers (check `commitment_wellformed`). A verifier re-serializes the metadata it parsed and signs over the result; a producer that wrote a non-canonical form therefore produced an invalid signature.
+A commitment whose `metadata` violates a rule is malformed and MUST be rejected by servers and failed by verifiers (check `commitment_wellformed`). A verifier re-serializes the metadata it parsed and checks the signature over the result; a producer that signed a non-canonical form therefore produced an invalid signature.
+
+Number text is the one place where parsers differ: a parser that keeps the lexeme (serde_json) sees `1e2` or `1.0` and MUST reject it; a parser that yields a native number (`JSON.parse`) cannot tell them from `100` and `1`, accepts the input, and canonicalizes to `100` and `1`. Both then check the same bytes. A producer MUST write integers as plain decimals so that every parser accepts its commitment.
 
 ### 7.4 Streams and sequence numbers
 

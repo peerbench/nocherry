@@ -312,3 +312,248 @@ export function verifyReceiptAnchor(receipt: any): AnchorCheckResult[] {
 
   return [roundCheck, timeCheck];
 }
+
+// ════════════════════════════════════════════════════════════════════════
+// Object format 0.5.0 (Spec v0.5). Written from the specification text, not
+// from the Rust code, so that the differential tests compare two readings.
+// ════════════════════════════════════════════════════════════════════════
+
+export const SPEC_VERSION_V5 = '0.5.0';
+export const PPM = 1_000_000n;
+const TWO_64 = 1n << 64n;
+
+const TAG_ITEM = Buffer.from('NoCherry/0.5/item', 'ascii');
+const TAG_SALT = Buffer.from('NoCherry/0.5/salt', 'ascii');
+const TAG_PER_ITEM = Buffer.from('NoCherry/0.5/per-item', 'ascii');
+const TAG_BATCH_SEED = Buffer.from('NoCherry/0.5/batch-seed', 'ascii');
+
+const HEX64 = /^[0-9a-f]{64}$/;
+
+function bytes32(hex: string, what: string): Buffer {
+  if (!HEX64.test(hex)) throw new Error(`${what} must be 64 lowercase hex characters`);
+  return Buffer.from(hex, 'hex');
+}
+
+function be64(x: bigint): Buffer {
+  const b = Buffer.alloc(8);
+  b.writeBigUInt64BE(x);
+  return b;
+}
+
+// ── Item commitments (Section 5) ──
+
+/** `SHA-256(TAG_ITEM || salt || item_hash)`. */
+export function itemCommitment(saltHex: string, itemHashHex: string): string {
+  return createHash('sha256')
+    .update(TAG_ITEM).update(bytes32(saltHex, 'salt')).update(bytes32(itemHashHex, 'item hash'))
+    .digest('hex');
+}
+
+/** Recommended salt derivation `HMAC-SHA256(item_secret, TAG_SALT || item_hash)`. */
+export function deriveItemSalt(itemSecretHex: string, itemHashHex: string): string {
+  return createHmac('sha256', bytes32(itemSecretHex, 'item secret'))
+    .update(TAG_SALT).update(bytes32(itemHashHex, 'item hash'))
+    .digest('hex');
+}
+
+// ── Threshold and count (Sections 8.3, 8.4) ──
+
+function checkPpm(ppm: number): bigint {
+  if (!Number.isInteger(ppm) || ppm < 1 || ppm > 1_000_000) {
+    throw new Error(`reveal_probability_ppm must be an integer in [1, 1000000], got ${ppm}`);
+  }
+  return BigInt(ppm);
+}
+
+/** `floor(ppm * 2^64 / 10^6)` as a decimal string; equals 2^64 for ppm = 10^6. */
+export function thresholdPpm(ppm: number): string {
+  return ((checkPpm(ppm) * TWO_64) / PPM).toString();
+}
+
+/** `ceil(ppm * n / 10^6)`. */
+export function batchCount(ppm: number, n: number): number {
+  if (!Number.isInteger(n) || n < 0) throw new Error(`item count must be a non-negative integer, got ${n}`);
+  return Number((checkPpm(ppm) * BigInt(n) + PPM - 1n) / PPM);
+}
+
+/** `2^64 - (2^64 mod range)` as a decimal string. */
+export function rejectionLimit(range: number | bigint): string {
+  const r = BigInt(range);
+  if (r < 1n) throw new Error('range must be positive');
+  return (TWO_64 - (TWO_64 % r)).toString();
+}
+
+// ── Per-item selection (Section 8.3) ──
+
+/** Decision value `be_uint64(HMAC-SHA256(R, TAG_PER_ITEM || hc || c))` as a decimal string. */
+export function perItemValueV5(beaconRandomnessHex: string, commitmentHash: string, item: string): string {
+  const mac = createHmac('sha256', Buffer.from(beaconRandomnessHex, 'hex'))
+    .update(TAG_PER_ITEM).update(bytes32(commitmentHash, 'commitment_hash')).update(bytes32(item, 'item'))
+    .digest();
+  return mac.readBigUInt64BE(0).toString();
+}
+
+export function selectPerItemV5(beaconRandomnessHex: string, commitmentHash: string, item: string, ppm: number): boolean {
+  const threshold = BigInt(thresholdPpm(ppm));
+  return BigInt(perItemValueV5(beaconRandomnessHex, commitmentHash, item)) < threshold;
+}
+
+// ── Batch selection (Section 8.4) ──
+
+export function batchSeedV5(beaconRandomnessHex: string, commitmentHash: string): string {
+  return createHmac('sha256', Buffer.from(beaconRandomnessHex, 'hex'))
+    .update(TAG_BATCH_SEED).update(bytes32(commitmentHash, 'commitment_hash'))
+    .digest('hex');
+}
+
+function drawV5(seed: Buffer, counter: bigint): bigint {
+  return createHmac('sha256', seed).update(be64(counter)).digest().readBigUInt64BE(0);
+}
+
+export function selectBatchV5(items: string[], beaconRandomnessHex: string, commitmentHash: string, count: number): string[] {
+  if (count > items.length) throw new Error(`count (${count}) exceeds items length (${items.length})`);
+  const seed = Buffer.from(batchSeedV5(beaconRandomnessHex, commitmentHash), 'hex');
+  const pool = [...items];
+  let counter = 0n;
+  for (let i = 0; i < count; i++) {
+    const range = BigInt(pool.length - i);
+    const limit = TWO_64 - (TWO_64 % range);
+    let v: bigint;
+    do {
+      v = drawV5(seed, counter);
+      counter += 1n;
+    } while (v >= limit);
+    const j = i + Number(v % range);
+    [pool[i], pool[j]] = [pool[j], pool[i]];
+  }
+  return pool.slice(0, count);
+}
+
+/** Selection in the commitment's signed mode. */
+export function selectV5(mode: string, beaconRandomnessHex: string, commitmentHash: string, items: string[], ppm: number): string[] {
+  if (mode === 'per_item') return items.filter((c) => selectPerItemV5(beaconRandomnessHex, commitmentHash, c, ppm));
+  if (mode === 'batch') return selectBatchV5(items, beaconRandomnessHex, commitmentHash, batchCount(ppm, items.length));
+  throw new Error(`unknown selection_mode: ${mode}`);
+}
+
+// ── Canonical metadata (Section 7.3) ──
+
+const MAX_METADATA_BYTES = 4096;
+const MAX_SAFE = BigInt(Number.MAX_SAFE_INTEGER);
+
+function canonicalValue(v: unknown): string {
+  if (v === null) return 'null';
+  if (v === true) return 'true';
+  if (v === false) return 'false';
+  if (typeof v === 'string') return JSON.stringify(v);
+  if (typeof v === 'number') {
+    if (!Number.isInteger(v) || Object.is(v, -0)) throw new Error(`metadata number ${v} is not an integer`);
+    if (Math.abs(v) > Number.MAX_SAFE_INTEGER) throw new Error(`metadata integer ${v} exceeds 2^53 - 1`);
+    return String(v);
+  }
+  if (typeof v === 'bigint') {
+    if (v > MAX_SAFE || v < -MAX_SAFE) throw new Error(`metadata integer ${v} exceeds 2^53 - 1`);
+    return v.toString();
+  }
+  if (Array.isArray(v)) return '[' + v.map(canonicalValue).join(',') + ']';
+  if (typeof v === 'object') {
+    const obj = v as Record<string, unknown>;
+    // Sort by code point: compare code point arrays, not UTF-16 code units.
+    const keys = Object.keys(obj).sort((a, b) => {
+      const ca = Array.from(a), cb = Array.from(b);
+      for (let i = 0; i < Math.min(ca.length, cb.length); i++) {
+        const d = ca[i].codePointAt(0)! - cb[i].codePointAt(0)!;
+        if (d !== 0) return d;
+      }
+      return ca.length - cb.length;
+    });
+    return '{' + keys.map((k) => JSON.stringify(k) + ':' + canonicalValue(obj[k])).join(',') + '}';
+  }
+  throw new Error(`metadata value of type ${typeof v} is not allowed`);
+}
+
+export function canonicalMetadata(metadata: unknown): string {
+  if (metadata === null || typeof metadata !== 'object' || Array.isArray(metadata)) {
+    throw new Error('metadata must be a JSON object');
+  }
+  const out = canonicalValue(metadata);
+  const bytes = Buffer.byteLength(out, 'utf8');
+  if (bytes > MAX_METADATA_BYTES) throw new Error(`metadata canonical form is ${bytes} bytes, limit ${MAX_METADATA_BYTES}`);
+  return out;
+}
+
+// ── Commitment signing payload (Section 7.2) ──
+
+export interface SigningFieldsV5 {
+  spec_version: string;
+  items: string[];
+  item_count: number;
+  reveal_probability_ppm: number;
+  selection_mode: string;
+  beacon: { type: string; anchor_round: number; chain_hash: string };
+  stream_id?: string | null;
+  sequence?: number | null;
+  metadata: unknown;
+  committed_at: string;
+  signing_key: string;
+  identity?: string | null;
+}
+
+export function commitmentSigningPayloadV5(c: SigningFieldsV5): string {
+  const present = (v: unknown) => v !== undefined && v !== null;
+  if (c.spec_version !== SPEC_VERSION_V5) throw new Error(`spec_version must be ${SPEC_VERSION_V5}`);
+  if (!Number.isSafeInteger(c.beacon.anchor_round) || c.beacon.anchor_round < 1) throw new Error('beacon.anchor_round is required');
+  const fields = [
+    `"spec_version":${JSON.stringify(c.spec_version)}`,
+    `"items":[${c.items.map((i) => JSON.stringify(i)).join(',')}]`,
+    `"item_count":${c.item_count}`,
+    `"reveal_probability_ppm":${Number(checkPpm(c.reveal_probability_ppm))}`,
+    `"selection_mode":${JSON.stringify(c.selection_mode)}`,
+    `"beacon":{"type":${JSON.stringify(c.beacon.type)},"anchor_round":${c.beacon.anchor_round},"chain_hash":${JSON.stringify(c.beacon.chain_hash)}}`,
+  ];
+  if (present(c.stream_id)) fields.push(`"stream_id":${JSON.stringify(c.stream_id)}`);
+  if (present(c.sequence)) {
+    if (!Number.isSafeInteger(c.sequence) || c.sequence! < 0) throw new Error('sequence must be a non-negative safe integer');
+    fields.push(`"sequence":${c.sequence}`);
+  }
+  fields.push(`"metadata":${canonicalMetadata(c.metadata)}`);
+  fields.push(`"committed_at":${JSON.stringify(c.committed_at)}`);
+  fields.push(`"signing_key":${JSON.stringify(c.signing_key)}`);
+  if (present(c.identity)) fields.push(`"identity":${JSON.stringify(c.identity)}`);
+  return `{${fields.join(',')}}`;
+}
+
+// ── Reveal signing payload (Section 10.4) ──
+
+export interface OpeningV5 { item: string; salt: string; hash: string }
+
+export interface RevealFieldsV5 {
+  spec_version: string;
+  commitment_hash: string;
+  selected_items: string[];
+  voluntary_items: string[];
+  openings: OpeningV5[];
+  revealed_at: string;
+  signing_key: string;
+}
+
+export function revealSigningPayloadV5(r: RevealFieldsV5): string {
+  if (r.spec_version !== SPEC_VERSION_V5) throw new Error(`spec_version must be ${SPEC_VERSION_V5}`);
+  const list = (xs: string[]) => `[${xs.map((x) => JSON.stringify(x)).join(',')}]`;
+  const openings = r.openings.map((o) =>
+    `{"item":${JSON.stringify(o.item)},"salt":${JSON.stringify(o.salt)},"hash":${JSON.stringify(o.hash)}}`).join(',');
+  return `{"spec_version":${JSON.stringify(r.spec_version)},"commitment_hash":${JSON.stringify(r.commitment_hash)},` +
+    `"selected_items":${list(r.selected_items)},"voluntary_items":${list(r.voluntary_items)},"openings":[${openings}],` +
+    `"revealed_at":${JSON.stringify(r.revealed_at)},"signing_key":${JSON.stringify(r.signing_key)}}`;
+}
+
+/** Each revealed item has an opening, in order, that recomputes to it. */
+export function verifyOpeningsV5(r: RevealFieldsV5): void {
+  const revealed = [...r.selected_items, ...r.voluntary_items];
+  if (new Set(revealed).size !== revealed.length) throw new Error('an item is listed twice in the reveal');
+  if (r.openings.length !== revealed.length) throw new Error(`${r.openings.length} openings for ${revealed.length} revealed items`);
+  r.openings.forEach((o, i) => {
+    if (o.item !== revealed[i]) throw new Error(`opening for ${o.item} is out of order, expected ${revealed[i]}`);
+    if (itemCommitment(o.salt, o.hash) !== o.item) throw new Error(`opening does not match item commitment ${o.item}`);
+  });
+}

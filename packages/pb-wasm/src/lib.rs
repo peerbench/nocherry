@@ -3,8 +3,32 @@
 
 use wasm_bindgen::prelude::*;
 use serde::Serialize;
-use pb_core::{hash, select, sign, commitment, beacon, reveal, verify};
+use pb_core::{hash, select, select_v5, item, metadata, sign, commitment, beacon, reveal, verify};
 use pb_core::beacon::anchor;
+
+/// JS value of a serializable result. JSON `null` becomes JS `null`, not
+/// `undefined`: a `null` inside signed metadata must survive `JSON.stringify`
+/// on the JS side, or the re-serialized commitment no longer verifies.
+fn to_js<T: Serialize>(value: &T) -> Result<JsValue, JsError> {
+    let serializer = serde_wasm_bindgen::Serializer::new()
+        .serialize_maps_as_objects(true)
+        .serialize_missing_as_null(true);
+    value.serialize(&serializer).map_err(|e| JsError::new(&format!("{e}")))
+}
+
+fn keypair_from_hex(private_key_hex: &str) -> Result<sign::KeyPair, JsError> {
+    let key_bytes = hex::decode(private_key_hex)
+        .map_err(|e| JsError::new(&format!("decode key: {e}")))?;
+    let key_array: [u8; 32] = key_bytes.try_into()
+        .map_err(|_| JsError::new("key must be 32 bytes"))?;
+    let signing_key = ed25519_dalek::SigningKey::from_bytes(&key_array);
+    let verifying_key = signing_key.verifying_key();
+    Ok(sign::KeyPair {
+        signing_key,
+        verifying_key,
+        did_key: sign::encode_did_key(&verifying_key),
+    })
+}
 
 // ── Hashing ──
 
@@ -30,9 +54,7 @@ pub fn generate_keypair() -> Result<JsValue, JsError> {
         "private_key_hex": hex::encode(kp.signing_key.to_bytes()),
         "public_key_hex": hex::encode(kp.verifying_key.as_bytes()),
     });
-    let serializer = serde_wasm_bindgen::Serializer::new().serialize_maps_as_objects(true);
-    result.serialize(&serializer)
-        .map_err(|e| JsError::new(&format!("{e}")))
+    to_js(&result)
 }
 
 #[wasm_bindgen(js_name = "signMessage")]
@@ -99,9 +121,7 @@ pub fn select_batch(
         .map_err(|e| JsError::new(&format!("decode randomness: {e}")))?;
     let selected = select::select_batch(&items, &randomness, count)
         .map_err(|e| JsError::new(&e))?;
-    let serializer = serde_wasm_bindgen::Serializer::new().serialize_maps_as_objects(true);
-    selected.serialize(&serializer)
-        .map_err(|e| JsError::new(&format!("{e}")))
+    to_js(&selected)
 }
 
 #[wasm_bindgen(js_name = "threshold")]
@@ -115,6 +135,11 @@ pub fn threshold(p: f64) -> String {
 /// Default reveal probability: 10% of items.
 const DEFAULT_REVEAL_PROBABILITY: f64 = 0.10;
 
+/// Create a signed commitment. `params.spec_version` selects the format:
+/// `"0.2.0"` (default) takes `reveal_probability` and an optional anchor;
+/// `"0.5.0"` takes item commitments, `reveal_probability_ppm`,
+/// `selection_mode`, `beacon.anchor_round` (required), and optional
+/// `stream_id`, `sequence`, `metadata`, `identity`.
 #[wasm_bindgen(js_name = "createCommitment")]
 pub fn create_commitment(params_json: &str, private_key_hex: &str) -> Result<JsValue, JsError> {
     let params: serde_json::Value = serde_json::from_str(params_json)
@@ -125,6 +150,14 @@ pub fn create_commitment(params_json: &str, private_key_hex: &str) -> Result<JsV
         .iter()
         .map(|v| v.as_str().unwrap_or_default().to_string())
         .collect();
+
+    if params["spec_version"].as_str() == Some(commitment::SPEC_VERSION_V5) {
+        return create_commitment_v5(&params, items, private_key_hex);
+    }
+    match params["spec_version"].as_str() {
+        None | Some(commitment::SPEC_VERSION) => {}
+        Some(other) => return Err(JsError::new(&format!("unsupported spec_version: {other}"))),
+    }
 
     let reveal_probability = params["reveal_probability"].as_f64()
         .unwrap_or(DEFAULT_REVEAL_PROBABILITY);
@@ -166,9 +199,7 @@ pub fn create_commitment(params_json: &str, private_key_hex: &str) -> Result<JsV
         identity,
     }, &kp).map_err(|e| JsError::new(&e))?;
 
-    let serializer = serde_wasm_bindgen::Serializer::new().serialize_maps_as_objects(true);
-    c.serialize(&serializer)
-        .map_err(|e| JsError::new(&format!("{e}")))
+    to_js(&c)
 }
 
 #[wasm_bindgen(js_name = "verifyCommitment")]
@@ -233,9 +264,7 @@ pub fn check_anchor_registration(anchor_round: u64, registered_at_ms: i64) -> Re
         Ok(round) => serde_json::json!({ "ok": true, "selection_round": round }),
         Err(e) => serde_json::json!({ "ok": false, "code": e.code(), "message": e.message() }),
     };
-    let serializer = serde_wasm_bindgen::Serializer::new().serialize_maps_as_objects(true);
-    result.serialize(&serializer)
-        .map_err(|e| JsError::new(&format!("{e}")))
+    to_js(&result)
 }
 
 /// Verifier checks for a server receipt (`{ commitment, registered_at, selection }`).
@@ -258,9 +287,7 @@ pub fn verify_receipt_anchor(receipt_json: &str) -> Result<JsValue, JsError> {
         _ => vec![],
     };
 
-    let serializer = serde_wasm_bindgen::Serializer::new().serialize_maps_as_objects(true);
-    checks.serialize(&serializer)
-        .map_err(|e| JsError::new(&format!("{e}")))
+    to_js(&checks)
 }
 
 /// Offline verification of a server receipt (`{ commitment, registered_at, selection }`):
@@ -282,9 +309,7 @@ pub fn verify_receipt(receipt_json: &str) -> Result<JsValue, JsError> {
     let result = verify::verify_full_with_registration(
         &c, selection.as_ref(), None, &[], receipt["registered_at"].as_str(),
     );
-    let serializer = serde_wasm_bindgen::Serializer::new().serialize_maps_as_objects(true);
-    result.serialize(&serializer)
-        .map_err(|e| JsError::new(&format!("{e}")))
+    to_js(&result)
 }
 
 /// Offline verification of a receipt together with a reveal and the revealed
@@ -310,7 +335,241 @@ pub fn verify_reveal(receipt_json: &str, reveal_json: &str, computed_hashes_json
     let result = verify::verify_full_with_hashes(
         &c, selection.as_ref(), Some(&rev), &computed, receipt["registered_at"].as_str(),
     );
-    let serializer = serde_wasm_bindgen::Serializer::new().serialize_maps_as_objects(true);
-    result.serialize(&serializer)
-        .map_err(|e| JsError::new(&format!("{e}")))
+    to_js(&result)
+}
+
+// ── Object format 0.5.0 (Spec v0.5) ──
+
+fn create_commitment_v5(params: &serde_json::Value, items: Vec<String>, private_key_hex: &str) -> Result<JsValue, JsError> {
+    let kp = keypair_from_hex(private_key_hex)?;
+    let ppm = params["reveal_probability_ppm"].as_u64()
+        .ok_or_else(|| JsError::new("reveal_probability_ppm is required for 0.5.0"))?;
+    let selection_mode = params["selection_mode"].as_str()
+        .ok_or_else(|| JsError::new("selection_mode is required for 0.5.0"))?
+        .to_string();
+    let anchor_round = params["beacon"]["anchor_round"].as_u64()
+        .ok_or_else(|| JsError::new("beacon.anchor_round is required for 0.5.0"))?;
+    if let Some(t) = params["beacon"]["type"].as_str() {
+        if t != "drand" {
+            return Err(JsError::new(&format!("beacon.type must be drand in 0.5.0, got {t}")));
+        }
+    }
+    let committed_at = match params["committed_at"].as_str() {
+        Some(s) => s.to_string(),
+        None => js_sys::Date::new_0().to_iso_string().as_string()
+            .unwrap_or_else(|| "1970-01-01T00:00:00.000Z".to_string()),
+    };
+    let sequence = match params.get("sequence") {
+        None | Some(serde_json::Value::Null) => None,
+        Some(v) => Some(v.as_u64().ok_or_else(|| JsError::new("sequence must be a non-negative integer"))?),
+    };
+    let c = commitment::create_v5(commitment::CreateParamsV5 {
+        items,
+        reveal_probability_ppm: ppm,
+        selection_mode,
+        anchor_round,
+        stream_id: params.get("stream_id").and_then(|v| v.as_str()).map(|s| s.to_string()),
+        sequence,
+        metadata: params.get("metadata").filter(|v| !v.is_null()).cloned(),
+        committed_at,
+        identity: params.get("identity").and_then(|v| v.as_str()).map(|s| s.to_string()),
+    }, &kp).map_err(|e| JsError::new(&e))?;
+    to_js(&c)
+}
+
+/// Canonical signing payload of a commitment in either format, as a string.
+#[wasm_bindgen(js_name = "commitmentSigningPayload")]
+pub fn commitment_signing_payload(commitment_json: &str) -> Result<String, JsError> {
+    let c: commitment::Commitment = serde_json::from_str(commitment_json)
+        .map_err(|e| JsError::new(&format!("parse commitment: {e}")))?;
+    let bytes = commitment::signing_payload(&c).map_err(|e| JsError::new(&e))?;
+    String::from_utf8(bytes).map_err(|e| JsError::new(&format!("{e}")))
+}
+
+/// Well-formedness of a 0.5.0 commitment (Spec v0.5 Section 7.5).
+/// Returns `{ ok: true }` or `{ ok: false, error }`. Does not check the signature.
+#[wasm_bindgen(js_name = "validateCommitment")]
+pub fn validate_commitment(commitment_json: &str) -> Result<JsValue, JsError> {
+    let result = match serde_json::from_str::<commitment::Commitment>(commitment_json) {
+        Err(e) => serde_json::json!({ "ok": false, "error": format!("parse commitment: {e}") }),
+        Ok(c) if c.is_v5() => match commitment::validate_v5(&c) {
+            Ok(()) => serde_json::json!({ "ok": true }),
+            Err(e) => serde_json::json!({ "ok": false, "error": e }),
+        },
+        Ok(c) if c.spec_version == commitment::SPEC_VERSION => serde_json::json!({ "ok": true }),
+        Ok(c) => serde_json::json!({ "ok": false, "error": format!("unsupported spec_version: {}", c.spec_version) }),
+    };
+    to_js(&result)
+}
+
+/// Object formats this build can verify.
+#[wasm_bindgen(js_name = "supportedSpecVersions")]
+pub fn supported_spec_versions() -> Result<JsValue, JsError> {
+    to_js(&commitment::SUPPORTED_SPEC_VERSIONS)
+}
+
+/// `SHA-256(TAG_ITEM || salt || item_hash)`, hex in and out.
+#[wasm_bindgen(js_name = "itemCommitment")]
+pub fn item_commitment(salt_hex: &str, item_hash_hex: &str) -> Result<String, JsError> {
+    item::item_commitment_hex(salt_hex, item_hash_hex).map_err(|e| JsError::new(&e))
+}
+
+/// Recommended salt derivation `HMAC-SHA256(item_secret, TAG_SALT || item_hash)`.
+#[wasm_bindgen(js_name = "deriveItemSalt")]
+pub fn derive_item_salt(item_secret_hex: &str, item_hash_hex: &str) -> Result<String, JsError> {
+    item::derive_salt_hex(item_secret_hex, item_hash_hex).map_err(|e| JsError::new(&e))
+}
+
+/// A fresh 32-byte item secret, hex.
+#[wasm_bindgen(js_name = "generateItemSecret")]
+pub fn generate_item_secret() -> String {
+    hex::encode(item::generate_item_secret())
+}
+
+/// Item commitments and salts for plain item hashes under one secret.
+/// Returns `{ items: [...], salts: [...] }` in input order.
+#[wasm_bindgen(js_name = "commitItems")]
+pub fn commit_items(item_secret_hex: &str, item_hashes_json: &str) -> Result<JsValue, JsError> {
+    let hashes: Vec<String> = serde_json::from_str(item_hashes_json)
+        .map_err(|e| JsError::new(&format!("parse item hashes: {e}")))?;
+    let secret = item::decode_hash32(item_secret_hex, "item secret").map_err(|e| JsError::new(&e))?;
+    let (items, salts) = commitment::commit_items(&secret, &hashes).map_err(|e| JsError::new(&e))?;
+    to_js(&serde_json::json!({ "items": items, "salts": salts }))
+}
+
+/// Canonical metadata serialization (Spec v0.5 Section 7.3), or an error.
+#[wasm_bindgen(js_name = "canonicalMetadata")]
+pub fn canonical_metadata(metadata_json: &str) -> Result<String, JsError> {
+    let v: serde_json::Value = serde_json::from_str(metadata_json)
+        .map_err(|e| JsError::new(&format!("parse metadata: {e}")))?;
+    metadata::canonical_metadata(&v).map_err(|e| JsError::new(&e))
+}
+
+/// `floor(ppm * 2^64 / 10^6)` as a decimal string (it can be 2^64).
+#[wasm_bindgen(js_name = "thresholdPpm")]
+pub fn threshold_ppm(ppm: u32) -> Result<String, JsError> {
+    select_v5::validate_ppm(ppm as u64).map_err(|e| JsError::new(&e))?;
+    Ok(select_v5::threshold(ppm).to_string())
+}
+
+/// `ceil(ppm * n / 10^6)`.
+#[wasm_bindgen(js_name = "batchCount")]
+pub fn batch_count(ppm: u32, item_count: u32) -> Result<u32, JsError> {
+    select_v5::validate_ppm(ppm as u64).map_err(|e| JsError::new(&e))?;
+    Ok(select_v5::batch_count(ppm, item_count as usize) as u32)
+}
+
+/// `2^64 - (2^64 mod range)` as a decimal string.
+#[wasm_bindgen(js_name = "rejectionLimit")]
+pub fn rejection_limit(range: u64) -> Result<String, JsError> {
+    if range == 0 { return Err(JsError::new("range must be positive")); }
+    Ok(select_v5::rejection_limit(range).to_string())
+}
+
+/// 0.5.0 per-item selection of one item commitment.
+#[wasm_bindgen(js_name = "selectPerItemV5")]
+pub fn select_per_item_v5(
+    beacon_randomness_hex: &str,
+    commitment_hash: &str,
+    item: &str,
+    ppm: u32,
+) -> Result<bool, JsError> {
+    let randomness = hex::decode(beacon_randomness_hex)
+        .map_err(|e| JsError::new(&format!("decode randomness: {e}")))?;
+    let hc = item::decode_hash32(commitment_hash, "commitment_hash").map_err(|e| JsError::new(&e))?;
+    let c = item::decode_hash32(item, "item").map_err(|e| JsError::new(&e))?;
+    select_v5::validate_ppm(ppm as u64).map_err(|e| JsError::new(&e))?;
+    Ok(select_v5::select_per_item(&randomness, &hc, &c, ppm))
+}
+
+/// 0.5.0 batch selection of `count` items with the commitment-bound seed.
+#[wasm_bindgen(js_name = "selectBatchV5")]
+pub fn select_batch_v5(
+    items_json: &str,
+    beacon_randomness_hex: &str,
+    commitment_hash: &str,
+    count: u32,
+) -> Result<JsValue, JsError> {
+    let items: Vec<String> = serde_json::from_str(items_json)
+        .map_err(|e| JsError::new(&format!("parse items: {e}")))?;
+    let randomness = hex::decode(beacon_randomness_hex)
+        .map_err(|e| JsError::new(&format!("decode randomness: {e}")))?;
+    let hc = item::decode_hash32(commitment_hash, "commitment_hash").map_err(|e| JsError::new(&e))?;
+    let selected = select_v5::select_batch(&items, &randomness, &hc, count as usize)
+        .map_err(|e| JsError::new(&e))?;
+    to_js(&selected)
+}
+
+/// Selection record for a commitment of either format and a beacon output
+/// (Spec v0.5 Section 8.5). Servers call this instead of choosing a mode.
+#[wasm_bindgen(js_name = "computeSelectionRecord")]
+pub fn compute_selection_record(commitment_json: &str, beacon_output_json: &str, computed_at: &str) -> Result<JsValue, JsError> {
+    let c: commitment::Commitment = serde_json::from_str(commitment_json)
+        .map_err(|e| JsError::new(&format!("parse commitment: {e}")))?;
+    let bo: beacon::BeaconOutput = serde_json::from_str(beacon_output_json)
+        .map_err(|e| JsError::new(&format!("parse beacon output: {e}")))?;
+    let record = verify::compute_selection(&c, &bo, computed_at).map_err(|e| JsError::new(&e))?;
+    to_js(&record)
+}
+
+/// Create a signed reveal. `params.spec_version` selects the format; a 0.5.0
+/// reveal takes `openings: [{ item, salt, hash }]` for every revealed item.
+#[wasm_bindgen(js_name = "createReveal")]
+pub fn create_reveal(params_json: &str, private_key_hex: &str) -> Result<JsValue, JsError> {
+    let params: serde_json::Value = serde_json::from_str(params_json)
+        .map_err(|e| JsError::new(&format!("parse params: {e}")))?;
+    let kp = keypair_from_hex(private_key_hex)?;
+    let list = |key: &str| -> Result<Vec<String>, JsError> {
+        match params.get(key) {
+            None | Some(serde_json::Value::Null) => Ok(vec![]),
+            Some(v) => serde_json::from_value(v.clone()).map_err(|e| JsError::new(&format!("{key}: {e}"))),
+        }
+    };
+    let commitment_hash = params["commitment_hash"].as_str()
+        .ok_or_else(|| JsError::new("commitment_hash is required"))?.to_string();
+    let revealed_at = match params["revealed_at"].as_str() {
+        Some(s) => s.to_string(),
+        None => js_sys::Date::new_0().to_iso_string().as_string()
+            .unwrap_or_else(|| "1970-01-01T00:00:00.000Z".to_string()),
+    };
+    let data_url = params.get("data_url").and_then(|v| v.as_str()).map(|s| s.to_string());
+    let r = match params["spec_version"].as_str() {
+        Some(reveal::SPEC_VERSION_V5) => {
+            let openings: Vec<reveal::Opening> = serde_json::from_value(params["openings"].clone())
+                .map_err(|e| JsError::new(&format!("openings: {e}")))?;
+            reveal::create_v5(reveal::CreateParamsV5 {
+                commitment_hash, selected_items: list("selected_items")?, voluntary_items: list("voluntary_items")?,
+                openings, data_url, revealed_at,
+            }, &kp)
+        }
+        None | Some(reveal::SPEC_VERSION) => reveal::create(reveal::CreateParams {
+            commitment_hash, selected_items: list("selected_items")?, voluntary_items: list("voluntary_items")?,
+            data_url, revealed_at,
+        }, &kp),
+        Some(other) => Err(format!("unsupported spec_version: {other}")),
+    }.map_err(|e| JsError::new(&e))?;
+    to_js(&r)
+}
+
+/// Canonical signing payload of a reveal in either format, as a string.
+#[wasm_bindgen(js_name = "revealSigningPayload")]
+pub fn reveal_signing_payload(reveal_json: &str) -> Result<String, JsError> {
+    let r: reveal::Reveal = serde_json::from_str(reveal_json)
+        .map_err(|e| JsError::new(&format!("parse reveal: {e}")))?;
+    let bytes = reveal::signing_payload(&r).map_err(|e| JsError::new(&e))?;
+    String::from_utf8(bytes).map_err(|e| JsError::new(&format!("{e}")))
+}
+
+/// Signature and, for 0.5.0, structure and openings of a reveal.
+/// Returns `{ ok: true }` or `{ ok: false, error }`.
+#[wasm_bindgen(js_name = "verifyRevealObject")]
+pub fn verify_reveal_object(reveal_json: &str) -> Result<JsValue, JsError> {
+    let result = match serde_json::from_str::<reveal::Reveal>(reveal_json) {
+        Err(e) => serde_json::json!({ "ok": false, "error": format!("parse reveal: {e}") }),
+        Ok(r) => match reveal::verify_signature(&r) {
+            Ok(()) => serde_json::json!({ "ok": true }),
+            Err(e) => serde_json::json!({ "ok": false, "error": e }),
+        },
+    };
+    to_js(&result)
 }

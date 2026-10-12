@@ -88,7 +88,7 @@ fn check<'a>(result: &'a verify::VerifyResult, name: &str) -> Option<&'a verify:
 #[test]
 fn unanchored_vector_hash_and_signature_unchanged() {
     let c = vector_commitment(BeaconRef::drand_quicknet());
-    assert_eq!(String::from_utf8(commitment::signing_payload(&c)).unwrap(), VECTOR_PAYLOAD);
+    assert_eq!(String::from_utf8(commitment::signing_payload(&c).unwrap()).unwrap(), VECTOR_PAYLOAD);
     assert_eq!(c.commitment_hash, VECTOR_HASH);
     assert_eq!(c.signature, VECTOR_SIGNATURE);
     assert!(commitment::verify_signature(&c).is_ok());
@@ -97,7 +97,7 @@ fn unanchored_vector_hash_and_signature_unchanged() {
 #[test]
 fn unanchored_payload_omits_anchor_round() {
     let c = vector_commitment(BeaconRef::drand_quicknet());
-    let payload = String::from_utf8(commitment::signing_payload(&c)).unwrap();
+    let payload = String::from_utf8(commitment::signing_payload(&c).unwrap()).unwrap();
     assert!(!payload.contains("anchor_round"));
     assert!(!payload.contains("null"));
     let full = serde_json::to_string(&c).unwrap();
@@ -128,7 +128,7 @@ fn null_anchor_round_is_absent() {
 #[test]
 fn anchored_vector() {
     let c = vector_commitment(BeaconRef::drand_quicknet_anchored(ANCHOR));
-    let payload = String::from_utf8(commitment::signing_payload(&c)).unwrap();
+    let payload = String::from_utf8(commitment::signing_payload(&c).unwrap()).unwrap();
     let expected = VECTOR_PAYLOAD.replace(
         r#""beacon":{"type":"drand","#,
         r#""beacon":{"type":"drand","anchor_round":25892262,"#,
