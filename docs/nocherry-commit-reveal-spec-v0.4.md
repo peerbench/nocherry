@@ -227,7 +227,7 @@ This rule applies to commitments **without** `beacon.anchor_round`. Because each
 
 ### 8.1.1 Anchored Selection Round (`anchor_round`)
 
-`beacon.anchor_round` is an OPTIONAL unsigned integer. The client sets it to the current beacon round R, which is already public at signing time. It is covered by the commitment signature (Section 7.2).
+`beacon.anchor_round` is an OPTIONAL unsigned integer. The client sets it to the current beacon round R, the round whose scheduled time has most recently passed at signing time (see Client behavior below). It is covered by the commitment signature (Section 7.2).
 
 ```
 ANCHOR_SELECTION_DELAY            = 2        // rounds
@@ -262,7 +262,7 @@ Additional requirements:
 - The server still records `registered_at` and `arrival_beacon` as for any commitment.
 - A commitment that is already registered is answered with 409 as before, whatever the time.
 
-**Client behavior.** When creating a commitment, the client fetches the latest beacon round, sets `anchor_round`, signs, and submits to all servers immediately. If a server rejects the anchor (error codes in Section 12.2), the client re-signs with a fresh `anchor_round` and retries once. Re-signing produces a different `commitment_hash`, so the client retries only if no server accepted the first attempt. Clients MAY omit `anchor_round` for compatibility with servers that do not support it. Support is advertised by `anchor_selection_delay` in `GET /v1/server-info`.
+**Client behavior.** When creating a commitment, the client sets `anchor_round` to the current round by the beacon schedule, signs, and submits to all servers immediately. The current round is the later of the round a relay reports as latest and the round derived from the client's clock (`time_to_round(now)`): relays serve a round about a second after its scheduled time and are at times a round or two behind, and a stale anchor shortens or forfeits the registration window, while a round whose scheduled time has passed is a valid anchor under condition 1 even before a relay serves it. The relay value protects a client whose clock runs slow. If a server rejects the anchor (error codes in Section 12.2), the client re-signs with a fresh `anchor_round` and retries once. Re-signing produces a different `commitment_hash`, so the client retries only if no server accepted the first attempt. Clients MAY omit `anchor_round` for compatibility with servers that do not support it. Support is advertised by `anchor_selection_delay` in `GET /v1/server-info`.
 
 **What this does and does not provide.** Anchoring makes all servers select with the same round, which removes the choice between diverging server receipts. It does not prevent a committer from registering several different commitments against the same future round and publishing only one of them. That is a separate problem (see `signer_activity`, Section 12.2).
 

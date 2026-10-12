@@ -275,9 +275,27 @@ describe('fetchCurrentDrandRound', () => {
     const round = await fetchCurrentDrandRound({
       relays: ['https://relay.test/'],
       fetch: async (url) => { urls.push(url); return json({ round: ANCHOR, randomness: 'ab' }); },
+      now: () => roundTimeMs(ANCHOR) + 1300,
     });
     assert.equal(round, ANCHOR);
     assert.deepEqual(urls, [`https://relay.test/${CHAIN}/public/latest`]);
+  });
+
+  it('takes the clock round when the relay is behind, and the relay round when the clock is behind', async () => {
+    // Relay still serves round ANCHOR although ANCHOR + 1 is scheduled already.
+    const lagging = await fetchCurrentDrandRound({
+      relays: ['https://relay.test'],
+      fetch: async () => json({ round: ANCHOR }),
+      now: () => roundTimeMs(ANCHOR + 1) + 200,
+    });
+    assert.equal(lagging, ANCHOR + 1);
+    // Clock runs slow: the relay already serves ANCHOR + 1.
+    const slowClock = await fetchCurrentDrandRound({
+      relays: ['https://relay.test'],
+      fetch: async () => json({ round: ANCHOR + 1 }),
+      now: () => roundTimeMs(ANCHOR) + 2900,
+    });
+    assert.equal(slowClock, ANCHOR + 1);
   });
 
   it('moves on to the next relay, then falls back to the clock', async () => {
@@ -287,6 +305,7 @@ describe('fetchCurrentDrandRound', () => {
         if (url.startsWith('https://down.test')) throw new Error('unreachable');
         return json({ round: ANCHOR });
       },
+      now: () => roundTimeMs(ANCHOR) + 1300,
     });
     assert.equal(second, ANCHOR);
 

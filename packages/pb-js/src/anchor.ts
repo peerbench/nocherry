@@ -45,11 +45,21 @@ export function clockDrandRound(nowMs: number = Date.now()): number {
 }
 
 /**
- * Latest published drand quicknet round, asked from the public relays.
- * Falls back to the round derived from the local clock when no relay answers.
+ * Current drand quicknet round to anchor to: the later of the relay's latest
+ * published round and the round the local clock says is current.
+ *
+ * Relays serve a round about a second after its scheduled time and are at
+ * times one or two rounds behind, which shortens or kills the registration
+ * window (measured 2026-10-12: the relay's latest round was the current one in
+ * about 60 percent of fetches). The server checks the anchor against the
+ * beacon schedule, not against a fetched output, so a round whose scheduled
+ * time has passed is a valid anchor even before a relay serves it. The relay
+ * still protects a client whose clock runs slow. Falls back to the clock alone
+ * when no relay answers.
  */
 export async function fetchCurrentDrandRound(opts: CurrentRoundOptions = {}): Promise<number> {
   const doFetch = opts.fetch ?? fetch;
+  const fromClock = clockDrandRound(opts.now?.());
   for (const relay of opts.relays ?? DRAND_RELAYS) {
     try {
       const res = await doFetch(`${relay.replace(/\/$/, '')}/${DRAND_QUICKNET_CHAIN_HASH}/public/latest`, {
@@ -57,12 +67,12 @@ export async function fetchCurrentDrandRound(opts: CurrentRoundOptions = {}): Pr
       });
       if (!res.ok) continue;
       const round = ((await res.json()) as { round?: unknown }).round;
-      if (typeof round === 'number' && Number.isSafeInteger(round) && round >= 1) return round;
+      if (typeof round === 'number' && Number.isSafeInteger(round) && round >= 1) return Math.max(round, fromClock);
     } catch {
       // try the next relay
     }
   }
-  return clockDrandRound(opts.now?.());
+  return fromClock;
 }
 
 export interface AnchorOptions {
