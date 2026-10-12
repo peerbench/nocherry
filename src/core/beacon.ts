@@ -12,6 +12,28 @@ const DRAND_RELAYS = [
   `https://drand.cloudflare.com/${DRAND_QUICKNET_CHAIN}/public`,
 ];
 
+/** Commitments with more items than this use batch selection (spec 8.4). */
+export const PER_ITEM_SELECTION_THRESHOLD = 1;
+
+function hexToBytes(hex: string): Uint8Array {
+  if (!/^([0-9a-fA-F]{2})+$/.test(hex)) throw new Error('not a hex string');
+  return Uint8Array.from(hex.match(/.{2}/g)!, (b) => parseInt(b, 16));
+}
+
+/**
+ * Cheap sanity check of a relay response: quicknet randomness is
+ * SHA-256(signature). The BLS signature itself is checked by verifiers,
+ * not by the server.
+ */
+function assertRandomnessMatchesSignature(randomness: unknown, signature: unknown): void {
+  if (typeof randomness !== 'string' || typeof signature !== 'string') {
+    throw new Error('drand relay response lacks randomness or signature');
+  }
+  if (getWasm().hashBytes(hexToBytes(signature)) !== randomness.toLowerCase()) {
+    throw new Error('drand relay returned randomness that is not SHA-256(signature)');
+  }
+}
+
 async function fetchDrandRound(round: number) {
   let lastErr: unknown;
   for (const baseUrl of DRAND_RELAYS) {
@@ -23,6 +45,11 @@ async function fetchDrandRound(round: number) {
         continue;
       }
       const data: any = await resp.json();
+      if (data.round !== round) {
+        lastErr = new Error(`drand relay returned round ${data.round}, want ${round}`);
+        continue;
+      }
+      assertRandomnessMatchesSignature(data.randomness, data.signature);
       return {
         type: 'drand',
         chain_hash: DRAND_QUICKNET_CHAIN,
@@ -144,7 +171,7 @@ export function computeSelection(commitment: any, beaconOutput: any) {
   let selectedItems: string[];
   let selectionMode: string;
 
-  if (itemCount > 1) {
+  if (itemCount > PER_ITEM_SELECTION_THRESHOLD) {
     const count = Math.ceil(p * itemCount);
     selectedItems = wasm.selectBatch(JSON.stringify(items), randomness, count);
     selectionMode = 'batch';

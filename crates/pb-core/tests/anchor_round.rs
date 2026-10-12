@@ -258,7 +258,7 @@ fn verifier_unanchored_checks_first_round_after_registration() {
     let names: Vec<&str> = result.checks.iter().map(|c| c.name.as_str()).collect();
     assert_eq!(names, [
         "commitment_signature", "beacon_randomness", "beacon_authentic",
-        "beacon_after_registration", "selection_correct",
+        "beacon_after_registration", "selection_mode_default", "selection_correct",
     ]);
 
     let no_time = verify::verify_full(&c, Some(&sel), None, &[]);

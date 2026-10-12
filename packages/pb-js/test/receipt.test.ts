@@ -6,7 +6,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import * as wasm from '@nocherry/pb-wasm';
@@ -89,6 +89,7 @@ describe('verifyReceipt', () => {
       ['beacon_randomness', 'pass'],
       ['beacon_authentic', 'pass'],
       ['beacon_after_registration', 'pass'],
+      ['selection_mode_default', 'pass'],
       ['selection_correct', 'pass'],
       ['server_signature', 'pass'],
     ]);
@@ -160,6 +161,109 @@ describe('verifyReceipt', () => {
     const result = verifyReceipt(unsigned);
     assert.equal(result.status, 'partial');
     assert.equal(statusOf(result, 'server_signature'), 'skip');
+  });
+});
+
+describe('verifyReceipt on malformed input', () => {
+  const cases: [string, (r: any) => void][] = [ // eslint-disable-line @typescript-eslint/no-explicit-any
+    ['selection_mode missing', (r) => { delete r.selection.selection_mode; }],
+    ['negative round', (r) => { r.selection.beacon_output.round = -1; }],
+    ['round beyond u64', (r) => { r.selection.beacon_output.round = 1e30; }],
+    ['round as string', (r) => { r.selection.beacon_output.round = String(ROUND); }],
+    ['commitment missing', (r) => { delete r.commitment; }],
+    ['items not an array', (r) => { r.commitment.items = 'all of them'; }],
+  ];
+  for (const [name, corrupt] of cases) {
+    it(`reports failed instead of throwing: ${name}`, () => {
+      const receipt = makeReceipt();
+      corrupt(receipt);
+      const result = verifyReceipt(receipt);
+      assert.equal(result.status, 'failed');
+    });
+  }
+
+  it('rejects a receipt whose commitment_hash names another commitment', () => {
+    const receipt = makeReceipt();
+    receipt.commitment_hash = '00'.repeat(32);
+    const result = verifyReceipt(receipt);
+    assert.equal(result.status, 'failed');
+    assert.equal(statusOf(result, 'receipt_commitment_hash'), 'fail');
+  });
+
+  it('rejects a selection record of another commitment', () => {
+    const receipt = makeReceipt();
+    receipt.selection.commitment_hash = '00'.repeat(32);
+    const result = verifyReceipt(receipt);
+    assert.equal(result.status, 'failed');
+    assert.equal(statusOf(result, 'selection_correct'), 'fail');
+  });
+});
+
+// Receipts issued by the three production servers for one commitment on 2026-02-07.
+describe('verifyReceipt on production receipts', () => {
+  const file = join(import.meta.dirname, 'fixtures', 'production-receipts-2026-02-07.json');
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const receipts: any[] = JSON.parse(readFileSync(file, 'utf-8')).receipts.map((r: any) => r.receipt);
+
+  it('verifies all three', () => {
+    assert.equal(receipts.length, 3);
+    for (const receipt of receipts) {
+      const result = verifyReceipt(receipt);
+      assert.equal(result.status, 'verified', JSON.stringify(result.checks));
+      assert.equal(statusOf(result, 'beacon_authentic'), 'pass');
+      assert.equal(statusOf(result, 'server_signature'), 'pass');
+    }
+  });
+
+  it('notes that the servers used per-item selection for five items', () => {
+    assert.equal(statusOf(verifyReceipt(receipts[0]), 'selection_mode_default'), 'warn');
+  });
+
+  it('flags the mode when the other candidate selection is presented', () => {
+    const receipt = structuredClone(receipts[0]);
+    const { items, reveal_probability: p } = receipt.commitment;
+    receipt.selection.selection_mode = 'batch';
+    receipt.selection.selected_items = wasm.selectBatch(
+      JSON.stringify(items), receipt.selection.beacon_output.randomness, Math.ceil(p * items.length));
+    delete receipt.server_signature; // a server presenting this would sign it
+    const result = verifyReceipt(receipt);
+    assert.equal(statusOf(result, 'selection_correct'), 'pass');
+    assert.equal(statusOf(result, 'selection_mode_default'), 'pass');
+    assert.notDeepEqual(receipt.selection.selected_items, receipts[0].selection.selected_items);
+  });
+
+  // Every leaf value of every receipt is changed in turn; none may still verify.
+  it('no single-field mutation still verifies', () => {
+    const mutate = (v: unknown): unknown => {
+      if (typeof v === 'string') {
+        if (v.length === 0) return 'x';
+        const last = v[v.length - 1];
+        return v.slice(0, -1) + (last === '0' ? '1' : '0');
+      }
+      if (typeof v === 'number') return v + 1;
+      if (typeof v === 'boolean') return !v;
+      return 'mutated';
+    };
+    let mutations = 0;
+    for (const original of receipts) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const walk = (node: any, path: (string | number)[]) => {
+        for (const key of Object.keys(node)) {
+          const value = node[key];
+          if (value !== null && typeof value === 'object') { walk(value, [...path, key]); continue; }
+          const copy = structuredClone(original);
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          let target: any = copy;
+          for (const step of path) target = target[step];
+          target[key] = mutate(value);
+          mutations++;
+          const result = verifyReceipt(copy);
+          assert.notEqual(result.status, 'verified', `mutated ${[...path, key].join('.')} still verifies`);
+        }
+      };
+      walk(original, []);
+    }
+    assert.ok(mutations > 100, `only ${mutations} mutations`);
   });
 });
 

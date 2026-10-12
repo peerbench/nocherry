@@ -6,7 +6,8 @@ import * as wasm from '@nocherry/pb-wasm';
 
 export interface ReceiptCheck {
   name: string;
-  status: 'pass' | 'fail' | 'skip';
+  /** `skip`: could not be run, result is at most partial. `warn`: noted, result unchanged. */
+  status: 'pass' | 'fail' | 'skip' | 'warn';
   detail?: string;
 }
 
@@ -39,12 +40,21 @@ function checkServerSignature(receipt: any): ReceiptCheck {
  * contacting a server: commitment signature, drand beacon output (randomness and
  * BLS signature), selection round timing, recomputed selection, server signature.
  * A receipt without a selection, or with a check that could not be run, is
- * `partial`, never `verified`.
+ * `partial`, never `verified`. A receipt that cannot be parsed is `failed`.
  */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export function verifyReceipt(receipt: any): ReceiptVerification {
-  const core = wasm.verifyReceipt(JSON.stringify(receipt));
+  let core: ReceiptVerification;
+  try {
+    core = wasm.verifyReceipt(JSON.stringify(receipt));
+  } catch (e: unknown) {
+    const detail = e instanceof Error ? e.message : String(e);
+    return { status: 'failed', checks: [{ name: 'receipt_parse', status: 'fail', detail }] };
+  }
   const checks: ReceiptCheck[] = [...core.checks];
+  if (receipt.commitment_hash !== undefined && receipt.commitment_hash !== receipt.commitment?.commitment_hash) {
+    checks.push({ name: 'receipt_commitment_hash', status: 'fail', detail: 'receipt names another commitment than it contains' });
+  }
   if (!receipt.selection) {
     checks.push({ name: 'selection_present', status: 'skip', detail: 'receipt has no selection' });
   }

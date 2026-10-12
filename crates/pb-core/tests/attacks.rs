@@ -22,6 +22,12 @@ fn test_beacon_output() -> BeaconOutput {
     }
 }
 
+/// Registration instant for which round 1 is the first round after it.
+const REGISTERED_BEFORE_ROUND_1: &str = "2023-08-23T15:09:26Z";
+
+/// Status of a selection with nothing wrong: without BLS the beacon check is skipped.
+const CHECKED: &str = if cfg!(feature = "drand-bls") { "verified" } else { "partial" };
+
 fn make_commitment(kp: &sign::KeyPair, items: Vec<String>, prob: f64) -> Commitment {
     commitment::create(CreateParams {
         items,
@@ -348,19 +354,30 @@ fn attack_reveal_missing_selected_items() {
         revealed_at: "2026-02-07T10:00:00Z".into(),
     }, &kp).unwrap();
 
-    let result = verify::verify_full(&c, Some(&sel), Some(&rev), &[
-        DataItem { hash: h1, data: data1 },
-    ]);
+    let result = verify::verify_full_with_registration(&c, Some(&sel), Some(&rev), &[
+        DataItem { hash: h1.clone(), data: data1 },
+    ], Some(REGISTERED_BEFORE_ROUND_1));
 
-    // With p=1.0, all items are selected. Missing items → completeness fail.
-    if sel.selected_items.len() > 1 {
-        assert!(result.status == "partial" || result.status == "failed",
-            "Missing selected items in reveal must be detected. Status: {}", result.status);
-        let completeness = result.checks.iter()
-            .find(|c| c.name == "completeness");
-        assert!(completeness.is_some(), "Completeness check must be present");
-        assert_eq!(completeness.unwrap().status, "fail");
-    }
+    // With p=1.0 both items are selected. The missing one fails completeness.
+    assert_eq!(sel.selected_items.len(), 2);
+    assert_eq!(result.status, "partial");
+    let completeness = result.checks.iter().find(|c| c.name == "completeness")
+        .expect("completeness check must be present");
+    assert_eq!(completeness.status, "fail");
+
+    // The same receipt with a complete reveal is clean, so the attack is what was detected.
+    let full = reveal::create(reveal::CreateParams {
+        commitment_hash: c.commitment_hash.clone(),
+        selected_items: sel.selected_items.clone(),
+        voluntary_items: vec![],
+        data_url: None,
+        revealed_at: "2026-02-07T10:00:00Z".into(),
+    }, &kp).unwrap();
+    let clean = verify::verify_full_with_registration(&c, Some(&sel), Some(&full), &[
+        DataItem { hash: h1, data: data1 },
+        DataItem { hash: h2, data: data2 },
+    ], Some(REGISTERED_BEFORE_ROUND_1));
+    assert_eq!(clean.status, CHECKED);
 }
 
 #[test]
@@ -444,13 +461,21 @@ fn attack_reveal_no_data_provided() {
     }, &kp).unwrap();
 
     // Provide no data items at all
-    let result = verify::verify_full(&c, Some(&sel), Some(&rev), &[]);
+    let result = verify::verify_full_with_registration(
+        &c, Some(&sel), Some(&rev), &[], Some(REGISTERED_BEFORE_ROUND_1));
 
-    if !sel.selected_items.is_empty() {
-        assert!(result.status == "partial" || result.status == "failed",
-            "Missing all data items should not be 'verified'. Status: {}", result.status);
-        assert!(result.items_missing > 0, "Should have missing items");
-    }
+    assert_eq!(sel.selected_items.len(), 1);
+    assert_eq!(result.status, "partial");
+    assert_eq!(result.items_missing, 1);
+    let integrity = result.checks.iter().find(|c| c.name == "data_integrity")
+        .expect("data_integrity check must be present");
+    assert_eq!(integrity.status, "fail");
+
+    // With the data supplied the same receipt is clean.
+    let clean = verify::verify_full_with_registration(&c, Some(&sel), Some(&rev), &[
+        DataItem { hash: h, data: b"data" },
+    ], Some(REGISTERED_BEFORE_ROUND_1));
+    assert_eq!(clean.status, CHECKED);
 }
 
 // ══════════════════════════════════════════════════════════════════════

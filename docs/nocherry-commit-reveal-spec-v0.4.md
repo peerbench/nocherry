@@ -340,7 +340,9 @@ prng_next(seed, index):
 
 The boundary of 20 items is the default of this specification. It is a deployment setting: the reference server uses per-item selection only for single-item commitments and batch selection for two or more items. The mode that was used is recorded as `selection_mode` in the selection record (Section 8.5).
 
-A verifier MUST recompute the selection with the algorithm named by `selection_mode` and MUST fail the selection check for any other value than `per_item` or `batch`. A verifier MUST NOT assume a threshold. Because the server chooses the threshold, a relying party that wants one fixed mode for a commitment size should state it and compare it with `selection_mode`.
+A verifier MUST recompute the selection with the algorithm named by `selection_mode` and MUST fail the selection check for any other value than `per_item` or `batch`. A verifier MUST NOT assume a threshold. A server SHOULD advertise its threshold as `selection_threshold` in `GET /v1/server-info` (commitments with more items than this value use batch selection).
+
+The committer does not sign the threshold, so a server that is free to choose the mode has two candidate selections for one beacon output. A verifier therefore reports the check `selection_mode_default`: "pass" when the recorded mode is the one the reference rule gives (per-item for one item, batch otherwise), "warn" when it is not. "warn" does not change the overall result. A relying party that wants one fixed mode should state it in advance and treat a deviation as a failure.
 
 ### 8.5 Selection Record
 
@@ -519,7 +521,7 @@ Given: commitment, selection record, reveal object, and actual data for each rev
 
    Without `anchor_round`, step 2a does not apply; `beacon_after_registration` takes its place.
 
-3. **Verify selection.** Re-run the selection algorithm named by `selection_mode` (Section 8.4) with the commitment's items and the beacon's randomness. Confirm the selection record's `selected_items` matches.
+3. **Verify selection.** Confirm the selection record's `commitment_hash` is the commitment's. Report `selection_mode_default` (Section 8.4). Re-run the selection algorithm named by `selection_mode` with the commitment's items and the beacon's randomness. Confirm the selection record's `selected_items` matches.
 
 4. **Verify reveal signature.** Ed25519 verify the reveal object.
 
@@ -1024,6 +1026,7 @@ Verifier (Section 10.5, step 2a) for a receipt of this commitment:
 | Committer reveals only easy/favorable items voluntarily | Voluntary vs. selected reveals are distinguished in the reveal object; reviewers can weight accordingly |
 | Server issues a receipt with randomness of its choosing | Verifier checks `randomness == SHA-256(signature)` and the BLS signature for the round (Section 10.5, step 2) |
 | Committer registers several commitments and publishes one (with or without a colluding server) | Not prevented. A re-signed commitment over the same items has a new `commitment_hash` and is accepted; `signer_activity` reports a count, it is not a limit. A colluding server can also drop the records of unpublished attempts. Relying parties should require receipts from several independent servers and fix the expected `commitment_hash` or stream in advance |
+| Server (or committer colluding with one) picks between per-item and batch selection after seeing the beacon output | Partly. The verifier reports `selection_mode_default` as a warning when the mode is not the reference rule's, and servers advertise `selection_threshold`; the mode is not committer-signed in this version |
 | SSRF via file_urls verification | Servers SHOULD restrict `file_urls` fetches to HTTPS with public IPs, rejecting private/internal network ranges |
 
 ## 15. Canonical JSON

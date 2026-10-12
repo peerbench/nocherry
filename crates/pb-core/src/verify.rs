@@ -27,7 +27,9 @@ pub struct SelectionRecord {
 #[derive(Debug, Clone, Serialize)]
 pub struct CheckResult {
     pub name: String,
-    pub status: String, // "pass", "fail", "skip"
+    /// "pass", "fail", "skip" (could not be run; result is at most "partial"),
+    /// or "warn" (noted for the relying party; does not change the result).
+    pub status: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub detail: Option<String>,
 }
@@ -123,8 +125,12 @@ pub fn check_beacon(beacon_ref: &BeaconRef, out: &BeaconOutput) -> Vec<CheckResu
         && beacon_ref.chain_hash.as_deref()
             .is_some_and(|h| h.eq_ignore_ascii_case(drand::QUICKNET_CHAIN_HASH));
     if !is_quicknet {
-        return vec![check(CHECK_BEACON_AUTHENTIC, "skip",
-            Some(format!("no verifier for beacon type {}", beacon_ref.beacon_type)))];
+        let detail = match (beacon_ref.beacon_type.as_str(), &beacon_ref.chain_hash) {
+            ("drand", None) => "commitment names no drand chain_hash".to_string(),
+            ("drand", Some(chain)) => format!("no verifier for drand chain {chain}"),
+            (other, _) => format!("no verifier for beacon type {other}"),
+        };
+        return vec![check(CHECK_BEACON_AUTHENTIC, "skip", Some(detail))];
     }
 
     let randomness = match drand::randomness_from_signature(&out.signature) {
@@ -170,6 +176,24 @@ pub fn check_registration_round(beacon_round: Option<u64>, registered_at: Option
         Some(round) => check(name, "fail", Some(format!(
             "selection round {round} is not the first round after registered_at {ts}, want {expected}"))),
         None => check(name, "fail", Some(format!("selection beacon output has no round, want {expected}"))),
+    }
+}
+
+/// Check name: the recorded `selection_mode` is the reference rule's mode.
+pub const CHECK_SELECTION_MODE_DEFAULT: &str = "selection_mode_default";
+
+/// Whether the recorded selection mode is the one the reference rule gives for
+/// this item count. The threshold between the modes is a server setting that
+/// the committer does not sign, so another mode is not an error. It is
+/// reported as "warn": a server free to pick the mode has two candidate
+/// selections for one beacon output.
+pub fn check_selection_mode(selection_mode: &str, item_count: usize) -> CheckResult {
+    let default_mode = select::selection_mode(item_count);
+    if selection_mode == default_mode {
+        check(CHECK_SELECTION_MODE_DEFAULT, "pass", None)
+    } else {
+        check(CHECK_SELECTION_MODE_DEFAULT, "warn", Some(format!(
+            "receipt uses {selection_mode} selection; the reference rule gives {default_mode} for {item_count} items")))
     }
 }
 
@@ -288,7 +312,12 @@ pub fn verify_full_with_registration(
     }
 
     // Step 3: Verify selection.
-    if let Some(sel) = sel {
+    if let Some(sel) = sel.filter(|sel| sel.commitment_hash != c.commitment_hash) {
+        result.add("selection_correct", "fail", Some(format!(
+            "selection record is for commitment {}", sel.commitment_hash)));
+        result.status = "failed".into();
+    } else if let Some(sel) = sel {
+        result.checks.push(check_selection_mode(&sel.selection_mode, c.items.len()));
         match sel.beacon_output.randomness_bytes() {
             Ok(randomness) => {
                 // The per-item / batch threshold is a deployment setting, so the
@@ -625,5 +654,92 @@ mod tests {
 
         sel.selection_mode = "favorite".into();
         assert_eq!(verify(&sel), "fail");
+    }
+
+    #[test]
+    fn selection_of_another_commitment_is_rejected() {
+        let kp = sign::generate_keypair();
+        let c = make_commitment(&kp, vec![hash::hash_bytes(b"data")], 1.0);
+        let mut sel = compute_selection(&c, &test_beacon_output(), "now").unwrap();
+        sel.commitment_hash = "00".repeat(32);
+        let result = verify_full_with_registration(&c, Some(&sel), None, &[], Some(REGISTERED_BEFORE_ROUND_1000));
+        assert_eq!(result.status, "failed");
+        assert_eq!(status_of(&result, "selection_correct"), "fail");
+    }
+
+    #[test]
+    fn non_default_selection_mode_is_reported_not_failed() {
+        let kp = sign::generate_keypair();
+        let items: Vec<String> = (0..5u8).map(|i| hash::hash_bytes(&[i])).collect();
+        let c = make_commitment(&kp, items, 0.5);
+        let bo = test_beacon_output();
+        let mut sel = compute_selection(&c, &bo, "now").unwrap();
+        let run = |sel: &SelectionRecord|
+            verify_full_with_registration(&c, Some(sel), None, &[], Some(REGISTERED_BEFORE_ROUND_1000));
+
+        let result = run(&sel);
+        assert_eq!(status_of(&result, CHECK_SELECTION_MODE_DEFAULT), "pass");
+        assert_eq!(result.status, CHECKED);
+
+        sel.selection_mode = "per_item".into();
+        sel.selected_items = select::select_per_item_batch(
+            &bo.randomness_bytes().unwrap(), &c.commitment_hash, &c.items, c.reveal_probability);
+        let result = run(&sel);
+        assert_eq!(status_of(&result, CHECK_SELECTION_MODE_DEFAULT), "warn");
+        assert_eq!(status_of(&result, "selection_correct"), "pass");
+        assert_eq!(result.status, CHECKED);
+    }
+
+    #[test]
+    fn beacon_edge_cases() {
+        let ok = Some(REGISTERED_BEFORE_ROUND_1000);
+        let upper = |s: &str| s.to_uppercase();
+
+        // Hex case does not matter.
+        let mut bo = test_beacon_output();
+        bo.randomness = upper(&bo.randomness);
+        bo.signature = upper(&bo.signature);
+        bo.chain_hash = bo.chain_hash.map(|h| upper(&h));
+        assert_eq!(verify_selection(&bo, ok).status, CHECKED);
+
+        // Round missing, zero, or absurd.
+        for round in [None, Some(0), Some(u64::MAX)] {
+            let mut bo = test_beacon_output();
+            bo.round = round;
+            assert_eq!(verify_selection(&bo, ok).status, "failed", "{round:?}");
+        }
+
+        // Output without a chain hash cannot be tied to the commitment's chain.
+        let mut bo = test_beacon_output();
+        bo.chain_hash = None;
+        let result = verify_selection(&bo, ok);
+        assert_eq!(result.status, "failed");
+        assert_eq!(status_of(&result, CHECK_BEACON_AUTHENTIC), "fail");
+
+        // Equivalent spellings of the registration instant.
+        for registered_at in ["2023-08-23T15:59:23.400+00:00", "2023-08-23T17:59:23.4+02:00"] {
+            assert_eq!(verify_selection(&test_beacon_output(), Some(registered_at)).status, CHECKED, "{registered_at}");
+        }
+    }
+
+    #[test]
+    fn commitment_without_chain_hash_is_partial() {
+        let kp = sign::generate_keypair();
+        let beacon = BeaconRef { chain_hash: None, ..BeaconRef::drand_quicknet() };
+        let c = commitment::create(commitment::CreateParams {
+            items: vec![hash::hash_bytes(b"data")],
+            reveal_probability: 1.0,
+            beacon,
+            metadata: None,
+            stream_id: None,
+            committed_at: "2026-02-06T14:30:00Z".into(),
+            identity: None,
+        }, &kp).unwrap();
+        let sel = compute_selection(&c, &test_beacon_output(), "now").unwrap();
+        let result = verify_full_with_registration(&c, Some(&sel), None, &[], Some(REGISTERED_BEFORE_ROUND_1000));
+        assert_eq!(status_of(&result, CHECK_BEACON_AUTHENTIC), "skip");
+        assert_eq!(result.status, "partial");
+        let detail = result.checks.iter().find(|c| c.name == CHECK_BEACON_AUTHENTIC).unwrap().detail.clone().unwrap();
+        assert!(detail.contains("chain_hash"), "{detail}");
     }
 }

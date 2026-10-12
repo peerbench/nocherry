@@ -58,6 +58,7 @@ describe('Server API', () => {
     const body = await res.json();
     assert.ok(body.server_key.startsWith('did:key:z'));
     assert.equal(body.spec_version, '0.2.0');
+    assert.equal(body.selection_threshold, 1);
     assert.ok(Array.isArray(body.beacon_types));
     assert.ok(body.retention);
   });
