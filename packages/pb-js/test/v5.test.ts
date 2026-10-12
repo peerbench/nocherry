@@ -148,6 +148,11 @@ describe('0.5.0 spec vectors: metadata (13.11)', () => {
     assert.throws(() => pure.canonicalMetadata({ a: 'x'.repeat(4096) }));
     assert.throws(() => wasm.canonicalMetadata(JSON.stringify({ a: 'x'.repeat(4096) })));
   });
+  it('rejects a lone surrogate in both implementations', () => {
+    assert.throws(() => pure.canonicalMetadata({ a: 'x\ud800' }));
+    assert.throws(() => wasm.canonicalMetadata('{"a":"x\\ud800"}'));
+  });
+
   it('sorts keys by code point in both implementations', () => {
     const input = { 'b': 1, 'B': 2, 'a': 3, 'ä': 4, 'aa': 5, '_': 6, '\u{1F600}': 7, '�': 8 };
     const want = '{"B":2,"_":6,"a":3,"aa":5,"b":1,"ä":4,"�":8,"\u{1F600}":7}';
@@ -325,6 +330,13 @@ describe('0.5.0 differential: pure JS and WASM agree on random inputs', () => {
       assert.deepEqual(pure.selectBatchV5(items, r, hc, count), wasm.selectBatchV5(JSON.stringify(items), r, hc, count));
     }
   });
+  it('pure JS rejects malformed randomness and stream ids instead of truncating', () => {
+    assert.throws(() => pure.selectPerItemV5('zz', HC_A, ITEMS[0], 100000));
+    assert.throws(() => pure.selectBatchV5(ITEMS, R.slice(0, 62), HC_A, 1));
+    assert.throws(() => pure.commitmentSigningPayloadV5({ ...vectorA(), stream_id: 'a/b', sequence: 1 }));
+    assert.throws(() => pure.commitmentSigningPayloadV5({ ...vectorA(), stream_id: 'a b', sequence: 1 }));
+  });
+
   it('rejectionLimit on 500 random ranges', () => {
     for (let i = 0; i < 500; i++) {
       const range = BigInt('0x' + hex(8)) % ((1n << 64n) - 1n) + 1n;
@@ -528,6 +540,16 @@ describe('0.5.0 receipts: adversarial', () => {
     assert.equal(r.status, 'verified', JSON.stringify(r.checks));
   });
 
+  it('a record that misstates the signed probability fails selection_mode', () => {
+    const receipt = makeReceipt(f);
+    receipt.selection.reveal_probability_ppm = 1000000;
+    delete receipt.server_signature;
+    const r = verifyReceipt(receipt);
+    assert.equal(statusOf(r, 'selection_mode'), 'fail');
+    assert.equal(statusOf(r, 'selection_correct'), 'pass');
+    assert.equal(r.status, 'failed');
+  });
+
   it('weakness 1: a server that selects in the other mode is rejected, not warned about', () => {
     const receipt = makeReceipt(f);
     const { commitment, selection } = receipt;
@@ -629,6 +651,10 @@ describe('0.5.0 receipts: adversarial', () => {
       ['metadata array', (c: any) => { c.metadata = [1]; }],
       ['stream too long', (c: any) => { c.stream_id = 'x'.repeat(129); }],
       ['stream control char', (c: any) => { c.stream_id = 'a\nb'; }],
+      ['stream slash', (c: any) => { c.stream_id = 'bench/2026'; }],
+      ['stream space', (c: any) => { c.stream_id = 'bench 2026'; }],
+      ['stream non-ascii', (c: any) => { c.stream_id = 'b\u00e4nk'; }],
+      ['uppercase signature', (c: any) => { c.signature = c.signature.toUpperCase(); }],
       ['sequence negative', (c: any) => { c.sequence = -1; }],
       ['sequence float', (c: any) => { c.sequence = 1.5; }],
       ['other chain', (c: any) => { c.beacon.chain_hash = '00'.repeat(32); }],

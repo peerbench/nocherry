@@ -577,13 +577,19 @@ fn verify_v5(
             }
         }
 
-        // Step 5: the record uses the signed mode.
+        // Step 5: the record repeats the signed mode and probability.
         let mode = c.selection_mode.clone().unwrap_or_default();
-        if sel.selection_mode == mode {
-            result.pass(CHECK_SELECTION_MODE);
-        } else {
+        if sel.selection_mode != mode {
             result.fail(CHECK_SELECTION_MODE, format!(
                 "selection record uses {} but the commitment signs {}", sel.selection_mode, mode));
+        } else if sel.reveal_probability_ppm.is_some() && sel.reveal_probability_ppm != c.reveal_probability_ppm {
+            result.fail(CHECK_SELECTION_MODE, format!(
+                "selection record states reveal_probability_ppm {} but the commitment signs {}",
+                sel.reveal_probability_ppm.unwrap_or(0), c.reveal_probability_ppm.unwrap_or(0)));
+        } else if sel.reveal_probability.is_some() {
+            result.fail(CHECK_SELECTION_MODE, "selection record carries a 0.2.0 reveal_probability for a 0.5.0 commitment".into());
+        } else {
+            result.pass(CHECK_SELECTION_MODE);
         }
 
         // Step 6: recompute in the commitment's mode.
@@ -1118,6 +1124,22 @@ mod tests {
         assert_eq!(status_of(&result, CHECK_SELECTION_MODE), "fail");
         assert_eq!(status_of(&result, "selection_correct"), "fail", "recomputed in the signed mode");
         assert_eq!(status_of(&result, CHECK_SELECTION_MODE_DEFAULT), "absent", "no warn-only check in 0.5.0");
+    }
+
+    #[test]
+    fn v5_record_with_another_ppm_fails_selection_mode() {
+        let f = fixture();
+        let c = make_v5(&f, "batch", 400000);
+        let mut sel = compute_selection(&c, &round(ANCHOR + 2), "now").unwrap();
+        sel.reveal_probability_ppm = Some(1_000_000);
+        let result = verify_full_with_hashes(&c, Some(&sel), None, &Default::default(), Some(REGISTERED_OK));
+        assert_eq!(status_of(&result, CHECK_SELECTION_MODE), "fail");
+        assert_eq!(status_of(&result, "selection_correct"), "pass", "the items are still the right ones");
+        assert_eq!(result.status, "failed");
+        sel.reveal_probability_ppm = None;
+        sel.reveal_probability = Some(0.4);
+        let result = verify_full_with_hashes(&c, Some(&sel), None, &Default::default(), Some(REGISTERED_OK));
+        assert_eq!(status_of(&result, CHECK_SELECTION_MODE), "fail");
     }
 
     #[test]

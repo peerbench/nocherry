@@ -13,7 +13,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import * as wasm from '@nocherry/pb-wasm';
 import {
-  planCommitment, planReveal, probabilityToPpm, manifestKey, parseFormat, describeProbability, FORMAT_V5, SECRET_FILE,
+  planCommitment, planReveal, probabilityToPpm, manifestKey, parseFormat, describeProbability, publishedManifest, FORMAT_V5, SECRET_FILE,
 } from '../src/format.js';
 import { reanchorCommitment } from '../src/anchor.js';
 import { resolveSelectedFiles } from '../src/publish-select.js';
@@ -151,6 +151,20 @@ describe('reanchorCommitment keeps every signed 0.5.0 field', () => {
     const fresh2 = await reanchorCommitment(streamed, COMMITTER_KEY, { currentRound: async () => ANCHOR + 10 });
     assert.equal(fresh2.stream_id, 'bench');
     assert.equal(fresh2.sequence, 4);
+  });
+});
+
+describe('publishedManifest', () => {
+  it('keeps only revealed entries of a 0.5.0 manifest and the whole 0.2.0 manifest', () => {
+    const { plan, selection } = commitV5();
+    const reveal = { selected_items: selection.selected_items, voluntary_items: [] };
+    const published = publishedManifest(plan.manifest, reveal);
+    assert.equal(published.items!.length, 2);
+    assert.deepEqual(published.items!.map((e) => e.item).sort(), [...selection.selected_items].sort());
+    const unrevealed = plan.manifest.items.filter((e) => !selection.selected_items.includes(e.item!)).map((e) => e.path);
+    assert.ok(unrevealed.length === 2 && !JSON.stringify(published).includes(unrevealed[0]), 'unrevealed paths stay private');
+    const legacy = { spec_version: '0.2.0', items: [{ path: 'a', hash: 'aa' }, { path: 'b', hash: 'bb' }] };
+    assert.deepEqual(publishedManifest(legacy, { selected_items: ['aa'] }), legacy);
   });
 });
 

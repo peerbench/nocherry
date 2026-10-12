@@ -16,8 +16,13 @@ interface Database {
     body: string;
     registered_at: string;
     created_at?: string;
-    stream_id: string | null;
-    sequence: number | null;
+  };
+  stream_index: {
+    signing_key: string;
+    stream_id: string;
+    sequence: number;
+    commitment_hash: string;
+    registered_at: string;
   };
   selections: {
     commitment_hash: string;
@@ -89,45 +94,66 @@ export class KyselyStorage {
     commitment: Record<string, unknown>,
     registeredAt: string,
   ) {
-    // Only a 0.5.0 commitment signs its stream name (spec v0.5 12.2).
+    const row = {
+      id,
+      signing_key: commitment.signing_key as string,
+      body: JSON.stringify(commitment),
+      registered_at: registeredAt,
+    };
+    // Only a 0.5.0 commitment signs its stream name (spec v0.5 12.2). The
+    // name is taken in the same transaction as the commitment is stored.
     const inStream = commitment.spec_version === "0.5.0" &&
       typeof commitment.stream_id === "string" && Number.isInteger(commitment.sequence);
-    await this.db
-      .insertInto("commitments")
-      .values({
-        id,
+    if (!inStream) {
+      await this.db.insertInto("commitments").values(row).execute();
+      return;
+    }
+    await this.db.transaction().execute(async (trx) => {
+      await trx.insertInto("commitments").values(row).execute();
+      await trx.insertInto("stream_index").values({
         signing_key: commitment.signing_key as string,
-        body: JSON.stringify(commitment),
+        stream_id: commitment.stream_id as string,
+        sequence: commitment.sequence as number,
+        commitment_hash: id,
         registered_at: registeredAt,
-        stream_id: inStream ? commitment.stream_id as string : null,
-        sequence: inStream ? commitment.sequence as number : null,
-      })
-      .execute();
+      }).execute();
+    });
   }
 
   // ── Streams (spec v0.5 12.2, 12.9) ──
 
   async findStreamCommitment(signingKey: string, streamId: string, sequence: number) {
     const row = await this.db
-      .selectFrom("commitments")
-      .select(["id", "sequence", "registered_at"])
+      .selectFrom("stream_index")
+      .select(["commitment_hash", "sequence", "registered_at"])
       .where("signing_key", "=", signingKey)
       .where("stream_id", "=", streamId)
       .where("sequence", "=", sequence)
       .executeTakeFirst();
     if (!row) return null;
-    return { sequence: Number(row.sequence), commitment_hash: row.id, registered_at: toIsoString(row.registered_at) };
+    return { sequence: Number(row.sequence), commitment_hash: row.commitment_hash, registered_at: toIsoString(row.registered_at) };
   }
 
   async listStream(signingKey: string, streamId: string) {
     const rows = await this.db
-      .selectFrom("commitments")
-      .select(["id", "sequence", "registered_at"])
+      .selectFrom("stream_index")
+      .select(["commitment_hash", "sequence", "registered_at"])
       .where("signing_key", "=", signingKey)
       .where("stream_id", "=", streamId)
       .orderBy("sequence", "asc")
       .execute();
-    return rows.map((r) => ({ sequence: Number(r.sequence), commitment_hash: r.id, registered_at: toIsoString(r.registered_at) }));
+    return rows.map((r) => ({ sequence: Number(r.sequence), commitment_hash: r.commitment_hash, registered_at: toIsoString(r.registered_at) }));
+  }
+
+  async listStreams(signingKey: string) {
+    const rows = await this.db
+      .selectFrom("stream_index")
+      .select((eb) => ["stream_id", eb.fn.countAll().as("commitments"), eb.fn.max("sequence").as("highest_sequence")])
+      .where("signing_key", "=", signingKey)
+      .groupBy("stream_id")
+      .orderBy("stream_id", "asc")
+      .execute();
+    return rows.map((r) => ({ stream_id: r.stream_id, commitments: Number(r.commitments), highest_sequence: Number(r.highest_sequence) }));
   }
 
   async getCommitment(id: string) {

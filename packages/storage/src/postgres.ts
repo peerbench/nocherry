@@ -56,11 +56,17 @@ CREATE TABLE IF NOT EXISTS beacon_cache (
   PRIMARY KEY (beacon_type, round_number)
 );
 
--- Stream columns (spec v0.5 12.2). Mirrors deploy/supabase/supabase/migrations/00003_stream_index.sql.
-ALTER TABLE commitments ADD COLUMN IF NOT EXISTS stream_id TEXT;
-ALTER TABLE commitments ADD COLUMN IF NOT EXISTS sequence BIGINT;
-CREATE UNIQUE INDEX IF NOT EXISTS idx_commitments_stream
-  ON commitments(signing_key, stream_id, sequence);
+-- One row per (signing_key, stream_id, sequence) of a 0.5.0 commitment (spec v0.5 12.2).
+-- No foreign key: the row outlives the commitment's retention, so a name stays taken.
+-- Mirrors deploy/supabase/supabase/migrations/00003_stream_index.sql.
+CREATE TABLE IF NOT EXISTS stream_index (
+  signing_key TEXT NOT NULL,
+  stream_id TEXT NOT NULL,
+  sequence BIGINT NOT NULL,
+  commitment_hash TEXT NOT NULL,
+  registered_at TIMESTAMPTZ NOT NULL,
+  PRIMARY KEY (signing_key, stream_id, sequence)
+);
 `;
 
 export interface CreatePostgresStorageOptions {

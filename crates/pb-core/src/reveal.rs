@@ -133,6 +133,9 @@ pub fn validate_v5(r: &Reveal) -> Result<(), String> {
         return Err(format!("spec_version must be {SPEC_VERSION_V5}, got {}", r.spec_version));
     }
     item::decode_hash32(&r.commitment_hash, "commitment_hash")?;
+    if !crate::commitment::is_signature_hex(&r.signature) {
+        return Err("signature must be 128 lowercase hex characters".into());
+    }
     let mut seen = std::collections::HashSet::new();
     for it in r.revealed_items() {
         item::decode_hash32(it, "revealed item")?;
@@ -213,7 +216,7 @@ pub fn create_v5(params: CreateParamsV5, kp: &sign::KeyPair) -> Result<Reveal, S
         data_url: params.data_url,
         revealed_at: params.revealed_at,
         signing_key: kp.did_key.clone(),
-        signature: String::new(),
+        signature: "0".repeat(128),
     };
     validate_v5(&r)?;
     let payload_bytes = signing_payload(&r)?;
@@ -404,6 +407,7 @@ mod tests {
             ("selected moved to voluntary", Box::new(|r| { r.selected_items = vec![ITEM0.into()]; r.voluntary_items = vec![ITEM1.into(), ITEM2.into()]; })),
             ("uppercase item", Box::new(|r| r.selected_items[0] = r.selected_items[0].to_uppercase())),
             ("revealed_at", Box::new(|r| r.revealed_at = "2026-02-08T10:00:00Z".into())),
+            ("uppercase signature", Box::new(|r| r.signature = r.signature.to_uppercase())),
         ];
         for (name, mutate) in cases {
             let mut r = base.clone();

@@ -38,6 +38,13 @@ export interface StreamEntry {
   registered_at: string;
 }
 
+/** One stream of a key in the per-key listing (spec v0.5 12.9). */
+export interface StreamSummary {
+  stream_id: string;
+  commitments: number;
+  highest_sequence: number;
+}
+
 export interface StorageInterface {
   getServerIdentity(): Promise<Keypair | null>;
   setServerIdentity(keypair: Keypair): Promise<void>;
@@ -57,6 +64,8 @@ export interface StorageInterface {
   findStreamCommitment(signingKey: string, streamId: string, sequence: number): Promise<StreamEntry | null>;
   /** Every commitment this server holds for (signing_key, stream_id), by sequence. */
   listStream(signingKey: string, streamId: string): Promise<StreamEntry[]>;
+  /** Every stream name this server holds for signing_key, with counts. */
+  listStreams(signingKey: string): Promise<StreamSummary[]>;
   getCachedBeacon(beaconType: string, round: number): Promise<any>;
   cacheBeacon(beaconType: string, round: number, output: any): Promise<void>;
 }

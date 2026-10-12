@@ -26,7 +26,7 @@ import { createInterface } from 'node:readline';
 import { randomBytes, randomInt } from 'node:crypto';
 import * as wasm from '@nocherry/pb-wasm';
 import { getServers, resolveServer, getRevealPublishers } from './registry.js';
-import { resolveSelectedFiles, copySelectedFiles, type SelectedFile } from './publish-select.js';
+import { resolveSelectedFiles, copySelectedFiles, loadSelectedHashes, type SelectedFile } from './publish-select.js';
 import {
   createAnchoredCommitment, reanchorCommitment, submitCommitment, verifyReceiptAnchor,
   type SubmitResult,
@@ -34,7 +34,7 @@ import {
 import { verifyReceipt, verifyReveal } from './receipt.js';
 import {
   FORMAT_V5, SECRET_FILE, parseFormat, planCommitment, planReveal, readSecret, writeSecret, manifestKey, describeProbability,
-  type Format,
+  publishedManifest, type Format,
 } from './format.js';
 
 const KEY_DIR = join(homedir(), '.nocherry');
@@ -838,13 +838,13 @@ function generateRevealReadme(srcDir: string, commitHash: string): string {
   const manifestPath = join(srcDir, 'manifest.json');
   const revealPath = join(srcDir, 'reveal.json');
   if (existsSync(manifestPath) && existsSync(revealPath)) {
-    const manifest = JSON.parse(readFileSync(manifestPath, 'utf-8'));
     const reveal = JSON.parse(readFileSync(revealPath, 'utf-8'));
+    const manifest = publishedManifest(JSON.parse(readFileSync(manifestPath, 'utf-8')), reveal);
     const selectedSet = new Set(reveal.selected_items || []);
     md += `### Random Selection\n`;
     md += `| # | File | Item | Selected? |\n|---|------|------|-----------|\n`;
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    manifest.items.forEach((item: any, i: number) => {
+    (manifest.items ?? []).forEach((item: any, i: number) => {
       const itemKey = manifestKey(item) ?? '';
       const sel = selectedSet.has(itemKey) ? 'Yes' : 'No';
       md += `| ${i + 1} | ${item.path} | \`${itemKey}\` | ${sel} |\n`;
@@ -928,16 +928,22 @@ async function cmdPublishGithub(dir: string, repoName?: string): Promise<void> {
   const dataDir = join(destDir, 'data');
   copySelectedFiles(srcDir, dataDir);
 
-  // Copy all protocol files into reveal folder root
+  // Copy the protocol files into the reveal folder root. The manifest is
+  // reduced to the revealed items for 0.5.0: unrevealed paths stay private.
   const receipt = findReceipt(srcDir);
   const protocolFilesToCopy = [
-    'manifest.json', 'commitment.json', 'server-receipts.json',
+    'commitment.json', 'server-receipts.json',
     'reveal.json', 'reveal-receipts.json', 'receipt.json',
   ];
   for (const pf of protocolFilesToCopy) {
     if (existsSync(join(srcDir, pf))) {
       cpSync(join(srcDir, pf), join(destDir, pf));
     }
+  }
+  if (existsSync(join(srcDir, 'manifest.json'))) {
+    const manifest = JSON.parse(readFileSync(join(srcDir, 'manifest.json'), 'utf-8'));
+    const reveal = existsSync(join(srcDir, 'reveal.json')) ? JSON.parse(readFileSync(join(srcDir, 'reveal.json'), 'utf-8')) : { selected_items: loadSelectedHashes(srcDir) ?? [] };
+    writeFileSync(join(destDir, 'manifest.json'), JSON.stringify(publishedManifest(manifest, reveal), null, 2) + '\n');
   }
 
   // Generate verify script

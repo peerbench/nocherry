@@ -172,6 +172,18 @@ export function planReveal(input: RevealInput): Record<string, unknown> {
   return { spec_version: FORMAT_V5, ...base, openings };
 }
 
+/**
+ * The manifest to publish next to a reveal: for 0.5.0 only the entries of
+ * revealed items, since the paths of unrevealed items would disclose what
+ * hiding was meant to hide (spec v0.5 10.6). 0.2.0 manifests already list
+ * every plain hash and are published whole, as before.
+ */
+export function publishedManifest(manifest: { items?: ManifestEntry[]; [k: string]: unknown }, reveal: { selected_items?: string[]; voluntary_items?: string[] }) {
+  if (manifest.spec_version !== FORMAT_V5) return manifest;
+  const revealed = new Set([...(reveal.selected_items ?? []), ...(reveal.voluntary_items ?? [])]);
+  return { ...manifest, items: (manifest.items ?? []).filter((e) => revealed.has(manifestKey(e) ?? '')) };
+}
+
 /** Reveal probability as a percentage string for either format. */
 export function describeProbability(commitment: Record<string, any>): string {
   if (commitment.spec_version === FORMAT_V5) return `${commitment.reveal_probability_ppm / 10_000}%`;

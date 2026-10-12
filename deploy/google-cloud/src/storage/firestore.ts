@@ -62,8 +62,6 @@ export class FirestoreStorage implements StorageInterface {
       body: JSON.stringify(commitment),
       registered_at: registeredAt,
       created_at: new Date().toISOString(),
-      stream_id: inStream ? commitment.stream_id : null,
-      sequence: inStream ? commitment.sequence : null,
     };
     try {
       await this.db.runTransaction(async (tx) => {
@@ -106,6 +104,20 @@ export class FirestoreStorage implements StorageInterface {
       const d = doc.data();
       return { sequence: Number(d.sequence), commitment_hash: d.commitment_hash as string, registered_at: d.registered_at as string };
     });
+  }
+
+  async listStreams(signingKey: string) {
+    const snapshot = await this.streams.where('signing_key', '==', signingKey).get();
+    const byStream = new Map<string, { commitments: number; highest_sequence: number }>();
+    for (const doc of snapshot.docs) {
+      const d = doc.data();
+      const entry = byStream.get(d.stream_id) ?? { commitments: 0, highest_sequence: -1 };
+      entry.commitments += 1;
+      entry.highest_sequence = Math.max(entry.highest_sequence, Number(d.sequence));
+      byStream.set(d.stream_id, entry);
+    }
+    return [...byStream.entries()].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+      .map(([stream_id, e]) => ({ stream_id, ...e }));
   }
 
   async getCommitment(id: string): Promise<{ commitment: any; registered_at: string } | null> {
@@ -223,14 +235,8 @@ export class FirestoreStorage implements StorageInterface {
         batch.delete(this.commitments.doc(hash));
         batch.delete(this.selections.doc(hash));
 
-        // Cascade: the stream index entry of this commitment, if any
-        const streamEntries = await this.streams
-          .where('commitment_hash', '==', hash)
-          .select()
-          .get();
-        for (const entry of streamEntries.docs) {
-          batch.delete(entry.ref);
-        }
+        // The streams entry stays: a stream name remains taken after the
+        // commitment body has left the retention window (spec v0.5 12.2).
 
         // Cascade: query and delete reveals for this commitment
         const reveals = await this.reveals

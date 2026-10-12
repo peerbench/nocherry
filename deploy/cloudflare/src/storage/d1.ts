@@ -32,31 +32,48 @@ export class D1Storage {
   // ── Commitments ──
 
   async putCommitment(id: string, commitment: any, registeredAt: string): Promise<void> {
-    // Only a 0.5.0 commitment signs its stream name (spec v0.5 12.2).
+    const insert = this.db
+      .prepare('INSERT INTO commitments (id, signing_key, body, registered_at) VALUES (?, ?, ?, ?)')
+      .bind(id, commitment.signing_key, JSON.stringify(commitment), registeredAt);
+    // Only a 0.5.0 commitment signs its stream name (spec v0.5 12.2). The
+    // name is taken in the same batch (D1 batches are atomic).
     const inStream = commitment.spec_version === '0.5.0' && typeof commitment.stream_id === 'string' && Number.isInteger(commitment.sequence);
-    await this.db
-      .prepare('INSERT INTO commitments (id, signing_key, body, registered_at, stream_id, sequence) VALUES (?, ?, ?, ?, ?, ?)')
-      .bind(id, commitment.signing_key, JSON.stringify(commitment), registeredAt,
-        inStream ? commitment.stream_id : null, inStream ? commitment.sequence : null)
-      .run();
+    if (!inStream) {
+      await insert.run();
+      return;
+    }
+    await this.db.batch([
+      insert,
+      this.db
+        .prepare('INSERT INTO stream_index (signing_key, stream_id, sequence, commitment_hash, registered_at) VALUES (?, ?, ?, ?, ?)')
+        .bind(commitment.signing_key, commitment.stream_id, commitment.sequence, id, registeredAt),
+    ]);
   }
 
   // ── Streams (spec v0.5 12.2, 12.9) ──
 
   async findStreamCommitment(signingKey: string, streamId: string, sequence: number) {
     const row = await this.db
-      .prepare('SELECT id, sequence, registered_at FROM commitments WHERE signing_key = ? AND stream_id = ? AND sequence = ?')
+      .prepare('SELECT commitment_hash, sequence, registered_at FROM stream_index WHERE signing_key = ? AND stream_id = ? AND sequence = ?')
       .bind(signingKey, streamId, sequence)
-      .first<{ id: string; sequence: number; registered_at: string }>();
-    return row ? { sequence: Number(row.sequence), commitment_hash: row.id, registered_at: row.registered_at } : null;
+      .first<{ commitment_hash: string; sequence: number; registered_at: string }>();
+    return row ? { sequence: Number(row.sequence), commitment_hash: row.commitment_hash, registered_at: row.registered_at } : null;
   }
 
   async listStream(signingKey: string, streamId: string) {
     const { results } = await this.db
-      .prepare('SELECT id, sequence, registered_at FROM commitments WHERE signing_key = ? AND stream_id = ? ORDER BY sequence ASC')
+      .prepare('SELECT commitment_hash, sequence, registered_at FROM stream_index WHERE signing_key = ? AND stream_id = ? ORDER BY sequence ASC')
       .bind(signingKey, streamId)
-      .all<{ id: string; sequence: number; registered_at: string }>();
-    return results.map((r) => ({ sequence: Number(r.sequence), commitment_hash: r.id, registered_at: r.registered_at }));
+      .all<{ commitment_hash: string; sequence: number; registered_at: string }>();
+    return results.map((r) => ({ sequence: Number(r.sequence), commitment_hash: r.commitment_hash, registered_at: r.registered_at }));
+  }
+
+  async listStreams(signingKey: string) {
+    const { results } = await this.db
+      .prepare('SELECT stream_id, COUNT(*) AS commitments, MAX(sequence) AS highest_sequence FROM stream_index WHERE signing_key = ? GROUP BY stream_id ORDER BY stream_id ASC')
+      .bind(signingKey)
+      .all<{ stream_id: string; commitments: number; highest_sequence: number }>();
+    return results.map((r) => ({ stream_id: r.stream_id, commitments: Number(r.commitments), highest_sequence: Number(r.highest_sequence) }));
   }
 
   async getCommitment(id: string): Promise<{ commitment: any; registered_at: string } | null> {

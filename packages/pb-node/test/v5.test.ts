@@ -215,6 +215,55 @@ describe('0.5.0 on the server', { skip: isRemote ? 'needs an injected clock' : f
     const empty = await (await get(app, `/v1/streams/${encodeURIComponent(other.did_key)}/nothing-here`)).json() as any;
     assert.deepEqual(empty.commitments, []);
     assert.equal((await get(app, '/v1/streams/not-a-did/x')).status, 400);
+    assert.equal((await get(app, `/v1/streams/${encodeURIComponent(kp.did_key)}/${encodeURIComponent('a b')}`)).status, 400);
+
+    // The per-key listing shows every stream name, so grinding across names is visible.
+    const byKey = await (await get(app, `/v1/streams/${encodeURIComponent(kp.did_key)}`)).json() as any;
+    assert.deepEqual(byKey.streams, [
+      { stream_id: 'law-bench', commitments: 3, highest_sequence: 5 },
+      { stream_id: 'other', commitments: 1, highest_sequence: 1 },
+    ]);
+    const { server_signature: sig2, ...signed2 } = byKey;
+    assert.ok(wasm.verifySignature(byKey.server_key, new TextEncoder().encode(JSON.stringify(signed2)), sig2));
+  });
+
+  it('a stream name stays taken after the commitment body left the retention window', async () => {
+    const storage = createSqliteStorage(':memory:');
+    storages.push(storage);
+    await initServerKey(storage);
+    for (let round = R - 1; round <= R + 3; round++) await storage.cacheBeacon('drand', round, fakeBeacon(round));
+    const app = createApp(storage, { ...loadConfigFromEnv(), now: () => new Date(roundTimeMs(R) + 1500) });
+    const kp = wasm.generateKeypair();
+    const first = makeV5(kp, fixture(2).items, { stream_id: 'law-bench', sequence: 1 });
+    assert.equal((await post(app, '/v1/commitments', first)).status, 201);
+
+    // Retention purges the commitment body and its selection.
+    const purged = await storage.deleteOlderThan(new Date(roundTimeMs(R) + 10_000));
+    assert.equal(purged, 1);
+    assert.equal((await get(app, `/v1/commitments/${first.commitment_hash}`)).status, 404);
+
+    // The name is still taken and still listed.
+    const second = makeV5(kp, fixture(2).items, { stream_id: 'law-bench', sequence: 1 });
+    const res = await post(app, '/v1/commitments', second);
+    assert.equal(res.status, 409);
+    const body = (await res.json()) as any;
+    assert.equal(body.error_code, 'stream_sequence_taken');
+    assert.equal(body.existing_commitment_hash, first.commitment_hash);
+    const listing = await (await get(app, `/v1/streams/${encodeURIComponent(kp.did_key)}/law-bench`)).json() as any;
+    assert.deepEqual(listing.commitments.map((e: any) => e.commitment_hash), [first.commitment_hash]);
+  });
+
+  it('rejects a stream_id outside [A-Za-z0-9._-]', async () => {
+    const app = await serverAt();
+    const kp = wasm.generateKeypair();
+    const good = makeV5(kp, fixture(2).items, { stream_id: 'ok', sequence: 1 });
+    for (const bad of ['bench/2026', 'bench 2026', 'b\u00e4nk', '']) {
+      // createCommitment refuses such a name; a hand-built body reaches the server's check.
+      assert.throws(() => makeV5(kp, fixture(2).items, { stream_id: bad, sequence: 1 }), undefined, bad);
+      const res = await post(app, '/v1/commitments', { ...good, stream_id: bad });
+      assert.equal(res.status, 400, bad);
+      assert.equal(((await res.json()) as any).error_code, 'commitment_malformed', bad);
+    }
   });
 
   it('a 0.2.0 commitment with an unsigned stream_id does not take part in stream uniqueness', async () => {

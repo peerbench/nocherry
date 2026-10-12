@@ -17,9 +17,19 @@ export interface CommitmentsTable {
   body: string;
   registered_at: string;
   created_at: Generated<string>;
-  /** 0.5.0 commitments in a stream; unique with signing_key and sequence. */
-  stream_id: string | null;
-  sequence: number | null;
+}
+
+/**
+ * One row per (signing_key, stream_id, sequence) of a 0.5.0 commitment
+ * (spec v0.5 12.2). Not tied to the commitments row by a foreign key: the
+ * row outlives the retention of the commitment body, so a name stays taken.
+ */
+export interface StreamIndexTable {
+  signing_key: string;
+  stream_id: string;
+  sequence: number;
+  commitment_hash: string;
+  registered_at: string;
 }
 
 export interface SelectionsTable {
@@ -50,6 +60,7 @@ export interface BeaconCacheTable {
 
 export interface Database {
   commitments: CommitmentsTable;
+  stream_index: StreamIndexTable;
   selections: SelectionsTable;
   reveals: RevealsTable;
   server_identity: ServerIdentityTable;

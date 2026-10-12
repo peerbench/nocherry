@@ -334,6 +334,14 @@ function bytes32(hex: string, what: string): Buffer {
   return Buffer.from(hex, 'hex');
 }
 
+/** Beacon randomness is 32 bytes of hex; case does not matter (it is not signed). */
+function randomnessBytes(hex: string): Buffer {
+  if (!/^[0-9a-fA-F]{64}$/.test(hex)) throw new Error('beacon randomness must be 64 hex characters');
+  return Buffer.from(hex, 'hex');
+}
+
+const STREAM_ID = /^[A-Za-z0-9._-]{1,128}$/;
+
 function be64(x: bigint): Buffer {
   const b = Buffer.alloc(8);
   b.writeBigUInt64BE(x);
@@ -387,7 +395,7 @@ export function rejectionLimit(range: number | bigint): string {
 
 /** Decision value `be_uint64(HMAC-SHA256(R, TAG_PER_ITEM || hc || c))` as a decimal string. */
 export function perItemValueV5(beaconRandomnessHex: string, commitmentHash: string, item: string): string {
-  const mac = createHmac('sha256', Buffer.from(beaconRandomnessHex, 'hex'))
+  const mac = createHmac('sha256', randomnessBytes(beaconRandomnessHex))
     .update(TAG_PER_ITEM).update(bytes32(commitmentHash, 'commitment_hash')).update(bytes32(item, 'item'))
     .digest();
   return mac.readBigUInt64BE(0).toString();
@@ -401,7 +409,7 @@ export function selectPerItemV5(beaconRandomnessHex: string, commitmentHash: str
 // ── Batch selection (Section 8.4) ──
 
 export function batchSeedV5(beaconRandomnessHex: string, commitmentHash: string): string {
-  return createHmac('sha256', Buffer.from(beaconRandomnessHex, 'hex'))
+  return createHmac('sha256', randomnessBytes(beaconRandomnessHex))
     .update(TAG_BATCH_SEED).update(bytes32(commitmentHash, 'commitment_hash'))
     .digest('hex');
 }
@@ -441,11 +449,19 @@ export function selectV5(mode: string, beaconRandomnessHex: string, commitmentHa
 const MAX_METADATA_BYTES = 4096;
 const MAX_SAFE = BigInt(Number.MAX_SAFE_INTEGER);
 
+const LONE_SURROGATE = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/;
+
+/** JSON string per Section 4; a lone surrogate is not valid input (JSON.stringify would escape it). */
+function jsonString(s: string): string {
+  if (LONE_SURROGATE.test(s)) throw new Error('string contains a lone surrogate');
+  return JSON.stringify(s);
+}
+
 function canonicalValue(v: unknown): string {
   if (v === null) return 'null';
   if (v === true) return 'true';
   if (v === false) return 'false';
-  if (typeof v === 'string') return JSON.stringify(v);
+  if (typeof v === 'string') return jsonString(v);
   if (typeof v === 'number') {
     if (!Number.isInteger(v) || Object.is(v, -0)) throw new Error(`metadata number ${v} is not an integer`);
     if (Math.abs(v) > Number.MAX_SAFE_INTEGER) throw new Error(`metadata integer ${v} exceeds 2^53 - 1`);
@@ -467,7 +483,7 @@ function canonicalValue(v: unknown): string {
       }
       return ca.length - cb.length;
     });
-    return '{' + keys.map((k) => JSON.stringify(k) + ':' + canonicalValue(obj[k])).join(',') + '}';
+    return '{' + keys.map((k) => jsonString(k) + ':' + canonicalValue(obj[k])).join(',') + '}';
   }
   throw new Error(`metadata value of type ${typeof v} is not allowed`);
 }
@@ -511,7 +527,10 @@ export function commitmentSigningPayloadV5(c: SigningFieldsV5): string {
     `"selection_mode":${JSON.stringify(c.selection_mode)}`,
     `"beacon":{"type":${JSON.stringify(c.beacon.type)},"anchor_round":${c.beacon.anchor_round},"chain_hash":${JSON.stringify(c.beacon.chain_hash)}}`,
   ];
-  if (present(c.stream_id)) fields.push(`"stream_id":${JSON.stringify(c.stream_id)}`);
+  if (present(c.stream_id)) {
+    if (!STREAM_ID.test(c.stream_id!)) throw new Error('stream_id must be 1 to 128 characters from [A-Za-z0-9._-]');
+    fields.push(`"stream_id":${JSON.stringify(c.stream_id)}`);
+  }
   if (present(c.sequence)) {
     if (!Number.isSafeInteger(c.sequence) || c.sequence! < 0) throw new Error('sequence must be a non-negative safe integer');
     fields.push(`"sequence":${c.sequence}`);

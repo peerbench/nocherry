@@ -79,7 +79,7 @@ Signed payloads are canonical JSON byte strings:
 4. Integers: decimal, no leading zeros, no sign for zero, no fraction, no exponent. No other numbers appear in a 0.5.0 signing payload.
 5. Optional fields that are absent are omitted, never written as `null`.
 
-Rules 1 to 3 are what `JSON.stringify` (ECMAScript 2019 and later) and `serde_json` produce for strings; rule 4 excludes the one place where they could differ.
+Rules 1 to 3 are what `JSON.stringify` (ECMAScript 2019 and later) and `serde_json` produce for strings; rule 4 excludes the one place where they could differ. On the wire a producer MUST write every integer field (`item_count`, `reveal_probability_ppm`, `anchor_round`, `sequence`, metadata integers) in that form. A consumer whose parser keeps the number text (serde_json) rejects `5.0` or `1e2`; one whose parser yields native numbers (`JSON.parse`) cannot tell them from `5` and `100` and canonicalizes to those. Both then check the same bytes; only the producer that wrote the odd form loses interoperability.
 
 ## 5. Item commitments
 
@@ -159,13 +159,13 @@ Fields (all signed unless stated otherwise):
 - **`reveal_probability_ppm`** (integer): reveal probability in parts per million, `1 <= ppm <= 1000000`. `100000` is 10 percent. `1000000` means every item is selected.
 - **`selection_mode`** (string): `"per_item"` or `"batch"` (Section 8.2). Chosen by the committer and binding on every server and verifier.
 - **`beacon`** (object): `type`, `anchor_round`, `chain_hash` in that key order. `anchor_round` is REQUIRED in 0.5.0 (Section 8.1); a 0.5.0 commitment without it is malformed. This version defines `type` `"drand"` with the quicknet `chain_hash` only.
-- **`stream_id`** (string, optional): a committer-chosen stream name, 1 to 128 bytes of UTF-8 without control characters (code points below U+0020 or U+007F). Present together with `sequence` or not at all.
+- **`stream_id`** (string, optional): a committer-chosen stream name, 1 to 128 characters from `[A-Za-z0-9._-]`, so that it is a valid URL path segment as is (Section 12.9). Present together with `sequence` or not at all.
 - **`sequence`** (integer, optional): position of this commitment in the stream, `0 <= sequence <= 2^53 - 1`. REQUIRED when `stream_id` is present, forbidden otherwise.
 - **`metadata`** (object): committer data in canonical form (Section 7.3). REQUIRED; `{}` when there is nothing to say.
-- **`committed_at`** (string): RFC 3339 UTC timestamp set by the committer. Informational.
+- **`committed_at`** (string): RFC 3339 timestamp set by the committer; `Z` is conventional, a numeric offset is accepted. Informational.
 - **`signing_key`** (string): the committer's `did:key`.
 - **`identity`** (string, optional): identity claim as in v0.4 (a DID whose document should list `signing_key`).
-- **`signature`** (string): Ed25519 signature over the signing payload, 128 lowercase hex characters. Not signed.
+- **`signature`** (string): Ed25519 signature over the signing payload, 128 lowercase hex characters (uppercase is malformed, so one signed object has one wire form). Not signed.
 
 A field not listed here MUST NOT appear in the signing payload. Implementations MUST reject a 0.5.0 commitment that has `reveal_probability` (the 0.2.0 float field) instead of `reveal_probability_ppm`.
 
@@ -208,7 +208,7 @@ Number text is the one place where parsers differ: a parser that keeps the lexem
 
 A committer that will commit repeatedly (a benchmark re-committed each release, a log committed daily) names the stream and numbers its commitments. The two fields are signed, so a relying party can demand "the commitment of key `K` for stream `X` with sequence `N`" and a committer cannot present another commitment under that name without a signature over the other name.
 
-Servers enforce uniqueness: a server registers at most one commitment per `(signing_key, stream_id, sequence)` (Section 12.2). A relying party that requires receipts from a fixed set of servers `S` therefore knows that a `(K, X, N)` with receipts from all of `S` is the first commitment registered under that name at each of them; a second commitment under the same name can obtain receipts only from servers that had not seen the first, never from all of `S`. What this does and does not achieve is analyzed in Section 14.4.
+Servers enforce uniqueness: a server registers at most one commitment per `(signing_key, stream_id, sequence)` (Section 12.2), and keeps the name taken after the commitment body itself has left its retention window. A relying party that requires receipts from a fixed set of servers `S` therefore knows that a `(K, X, N)` with receipts from all of `S` is the first commitment registered under that name at each of them; a second commitment under the same name can obtain receipts only from servers that had not seen the first, never from all of `S`. What this does and does not achieve is analyzed in Section 14.4.
 
 Sequence numbers need not be consecutive; a gap is visible in the per-stream listing (Section 12.9) and is for the relying party to judge. A relying party SHOULD require consecutive sequences from an agreed start and treat a gap as an unexplained registration.
 
@@ -220,12 +220,12 @@ A 0.5.0 commitment is well formed if all of the following hold. Servers MUST rej
 2. `items` is a non-empty array of distinct 64-character lowercase hex strings and `item_count` equals its length.
 3. `reveal_probability_ppm` is an integer in `[1, 1000000]`.
 4. `selection_mode` is `"per_item"` or `"batch"`.
-5. `beacon.type` is `"drand"`, `beacon.chain_hash` is the quicknet chain hash, `beacon.anchor_round` is an integer in `[1, 2^53 - 1]`.
+5. `beacon.type` is `"drand"`, `beacon.chain_hash` is the quicknet chain hash, `beacon.anchor_round` is an integer in `[1, 2^53 - 1]` whose selection round has a representable scheduled time (an implementation MAY reject rounds beyond what its time arithmetic holds; for 64-bit milliseconds that is about `3 * 10^15`, millions of years out).
 6. `stream_id` and `sequence` are both present or both absent, and satisfy Section 7.1.
 7. `metadata` is canonical (Section 7.3).
 8. `committed_at` parses as RFC 3339.
 9. `signing_key` is a `did:key` of an Ed25519 key; `identity`, if present, is a non-empty string of at most 1024 bytes.
-10. `commitment_hash` is 64 lowercase hex characters.
+10. `commitment_hash` is 64 lowercase hex characters and `signature` is 128 lowercase hex characters.
 
 Servers MAY impose an upper bound on `item_count` and MUST advertise it in `GET /v1/server-info` as `max_items`.
 
@@ -278,7 +278,7 @@ seed = HMAC-SHA256(key = R, msg = TAG_BATCH_SEED || hc)
 draw(counter) = be_uint64(HMAC-SHA256(key = seed, msg = uint64_be(counter)))
 
 pool = copy of items (committed order); counter = 0
-for i in 0 .. m-1:
+for i from 0 to m - 1 inclusive:
   range = n - i
   limit = 2^64 - (2^64 mod range)           // largest multiple of range that fits
   repeat:
@@ -286,7 +286,7 @@ for i in 0 .. m-1:
   until v < limit
   j = i + (v mod range)
   swap pool[i], pool[j]
-selected_items = pool[0 .. m-1]              // in this order
+selected_items = pool[0], ..., pool[m - 1]   // the first m entries, in this order
 ```
 
 The counter runs over all draws, including rejected ones, so two implementations that reject the same values read the same next value. A draw is rejected with probability `(2^64 mod range) / 2^64 < range / 2^64`, which for a million items is below `2^-44` per step; the loop is nevertheless normative, because without it the selection is not exactly uniform and the two implementations would still have to agree on the biased result. `limit` is `2^64` itself when `range` is a power of two; implementations with 64-bit integers compute the comparison in 128 bits or treat `2^64 mod range == 0` as "accept every value".
@@ -314,7 +314,7 @@ Seeding with `hc` makes the shuffle a function of the commitment: two commitment
 }
 ```
 
-`selection_mode` and `reveal_probability_ppm` repeat the commitment's values for readers; a verifier takes both from the commitment and fails `selection_mode` if the record disagrees. Everything in the record other than `computed_at` is recomputable.
+`selection_mode` and `reveal_probability_ppm` repeat the commitment's values for readers; a verifier takes both from the commitment and fails the check `selection_mode` if the record disagrees on either, or carries a 0.2.0 `reveal_probability`. Everything in the record other than `computed_at` is recomputable.
 
 ## 9. Randomness beacons
 
@@ -373,13 +373,13 @@ Excluded: `data_url`, `file_urls`, `signature`.
 
 ### 10.5 Verification
 
-Given a receipt (commitment, `registered_at`, selection record), optionally a reveal, and the data of revealed items. A verifier dispatches on `commitment.spec_version`: `"0.2.0"` runs v0.4 Section 10.5 unchanged; `"0.5.0"` runs the checks below; any other value fails with check `spec_version`. Each check is reported by name with status `pass`, `fail` or `skip`; a `fail` fails the result, a `skip` makes it at most `partial`.
+Given a receipt (commitment, `registered_at`, selection record), optionally a reveal, and the data of revealed items. A verifier dispatches on `commitment.spec_version`: `"0.2.0"` runs v0.4 Section 10.5 unchanged; `"0.5.0"` runs the checks below; any other value fails with check `spec_version`. Each check is reported by name with status `pass`, `fail` or `skip`. A `fail` fails the result, with two exceptions that make it `partial` instead, because they describe what the committer has not (yet) supplied rather than a contradiction: `completeness` (step 11) and `data_integrity` when data is missing rather than wrong (step 10). A `skip` makes the result at most `partial`.
 
 1. `commitment_wellformed` (Section 7.5).
 2. `commitment_signature`: `commitment_hash == hex(SHA-256(signing_payload))` and the Ed25519 signature verifies under `signing_key`.
 3. `beacon_randomness`, `beacon_authentic`: as v0.4 (`randomness == SHA-256(signature)`; BLS signature of the round under the quicknet key; `skip` when BLS is unavailable).
 4. `anchor_selection_round`: `beacon_output.round == anchor_round + 2`. `anchor_registration_time`: `registered_at` precedes `round_time(anchor_round + 2)`; `skip` without `registered_at`.
-5. `selection_mode`: the record's `selection_mode` equals the commitment's.
+5. `selection_mode`: the record's `selection_mode` and `reveal_probability_ppm` equal the commitment's (Section 8.5).
 6. `selection_correct`: the record is for this `commitment_hash`, and recomputing Section 8.3 or 8.4 in the commitment's mode from the commitment and the beacon randomness yields exactly the record's `selected_items`, in order.
 7. `reveal_signature`: the reveal's signature verifies under its `signing_key`.
 8. `reveal_matches_commitment`: the reveal's `commitment_hash` is the commitment's; every entry of `selected_items` and `voluntary_items` is one of the commitment's `items`; the two lists are disjoint; every entry of the reveal's `selected_items` is in the record's `selected_items`.
@@ -395,7 +395,7 @@ Not protocol objects, but the reference client's layout matters for what leaks:
 
 - `commitment-secret.json` holds `item_secret` (Section 5.2). It stays with the committer. It is excluded from hashing like the other protocol files (v0.4 Section 4.4) and MUST NOT be copied into a published reveal folder.
 - `manifest.json` written for a 0.5.0 commitment maps paths to item commitments only (`{"path": ..., "item": ...}`). It MUST NOT list plain item hashes: a published manifest with plain hashes would reintroduce the membership test for every unrevealed item.
-- Published reveal folders contain the selected (and voluntary) files, `reveal.json` with the openings, the receipts, and `manifest.json` in the form above.
+- Published reveal folders contain the selected (and voluntary) files, `reveal.json` with the openings, the receipts, and a `manifest.json` reduced to the entries of revealed items. The paths of unrevealed items are as telling as their hashes (a benchmark's file names are often its question ids) and stay private.
 
 ## 11. Server trust model and discovery
 
@@ -432,7 +432,7 @@ A client reads `spec_versions_accepted` and does not send a format the server do
     "error_code": "stream_sequence_taken",
     "existing_commitment_hash": "...", "existing_registered_at": "..."}
    ```
-   The same `commitment_hash` is answered with 409 and `error_code` `"commitment_exists"` as before. The uniqueness check and the insert MUST be atomic (a unique index on the three columns).
+   The same `commitment_hash` is answered with 409 and `error_code` `"commitment_exists"` as before. The uniqueness check and the insert MUST be atomic (a stream index keyed by the three values, written in the same transaction as the commitment). The stream index entry is NOT subject to the retention of commitment bodies (12.2.1 of v0.4): a name stays taken, and stays listed, after the commitment it names has been purged. The entry is about 200 bytes.
 4. Records `registered_at`, `arrival_beacon`, waits for round `anchor_round + 2`, computes the selection in the commitment's mode, and returns the signed receipt.
 
 The receipt gains, when the commitment is in a stream:
@@ -447,7 +447,7 @@ the number of commitments this server holds for `(signing_key, stream_id)` inclu
 
 `POST /v1/commitments/{commitment_hash}/reveals` with a 0.5.0 reveal. In addition to the v0.4 checks the server verifies `openings` (Section 10.3, including that each recomputes). When it fetches `file_urls` it compares the SHA-256 of the fetched bytes with the opening's `hash`, not with the item commitment.
 
-### 12.9 Stream listing
+### 12.9 Stream listings
 
 ```
 GET /v1/streams/{signing_key}/{stream_id}
@@ -460,12 +460,26 @@ Response (200):
     {"sequence": 0, "commitment_hash": "...", "registered_at": "..."},
     {"sequence": 1, "commitment_hash": "...", "registered_at": "..."}
   ],
+  "listed_at": "...",
+  "server_key": "did:key:...",
+  "server_signature": "..."
+}
+
+GET /v1/streams/{signing_key}
+
+Response (200):
+{
+  "signing_key": "did:key:...",
+  "streams": [
+    {"stream_id": "bench-2026", "commitments": 2, "highest_sequence": 1}
+  ],
+  "listed_at": "...",
   "server_key": "did:key:...",
   "server_signature": "..."
 }
 ```
 
-Everything this server holds for the stream, ordered by `sequence`, within its retention window. An empty list is a valid answer. The list is signed so that it can be kept as evidence of what the server showed at the time.
+The first lists every entry of one stream, ordered by `sequence`; the second lists every stream name this server has ever registered for the key, with counts. Both come from the stream index, which outlives retention (Section 12.2), so an entry whose commitment body has been purged is still listed. An empty list is a valid answer. Both are signed so that they can be kept as evidence of what the server showed at the time; `listed_at` is the server's clock at the time of the answer.
 
 ## 13. Test vectors
 
@@ -638,7 +652,7 @@ As v0.4 Section 14.2 (existence, quality, author identity beyond key control, co
 | Membership test on a guessed item | Prevented (hiding item commitments) |
 | Stream name or metadata stripped or changed | Prevented (signed) |
 | Two commitments under one `(key, stream, sequence)` | Each correct server registers only the first; a relying party requiring a fixed server set sees at most one with full receipts |
-| Grinding under one key with different sequences or streams | Visible in the stream listing and `stream_activity`; not prevented (Section 14.4) |
+| Grinding under one key with different sequences or streams | Visible in the per-stream and per-key listings and in `stream_activity`; not prevented (Section 14.4) |
 | Grinding under fresh keys (Sybil) | Not prevented; deployment requirement (Section 15) |
 | Server backdates `registered_at` | Not prevented; requires named servers and trust in at least one |
 | Forged beacon output | Prevented (randomness and BLS check) |
@@ -650,9 +664,10 @@ Let a relying party fix a server set `S` and demand receipts from every server i
 
 - If the committer registers commitment `A` under `(K, X, N)` at all of `S`, then any later `B` under the same name is rejected by all of `S`. `A` is the only commitment that can satisfy the relying party. The committer may still refuse to publish `A`; that is a visible refusal, not a hidden draw.
 - If the committer registers `A` at a subset of `S` and `B` at the rest, neither has receipts from all of `S`; the relying party rejects both.
-- The committer can register `(K, X, N)`, `(K, X, N+1)`, `(K, X', N)` and publish the best. The listing of Section 12.9 shows every name the server holds for `K`, and `stream_activity` in the published receipt shows the count; a relying party that required consecutive sequences from an agreed start, or that pre-announced which `(K, X, N)` it expects (pre-registration), detects this. A relying party that accepts any name from `K` is not protected by this mechanism.
+- The committer can register `(K, X, N)`, `(K, X, N+1)`, `(K, X', N)` and publish the best. The per-key listing of Section 12.9 shows every stream name the server holds for `K` with counts, the per-stream listing shows every sequence of `X`, and `stream_activity` in the published receipt shows the count for `X`; a relying party that required consecutive sequences from an agreed start, or that pre-announced which `(K, X, N)` it expects (pre-registration), detects this. A relying party that accepts any name from `K` is not protected by this mechanism.
+- The stream index is kept beyond the retention of commitment bodies, so waiting out the retention window does not free a name. A server that discards its index is a server that does not follow Section 12.2, which is the collusion case below.
 
-The mechanism therefore turns "did the committer draw more than once" from an unanswerable question into "does the name I demanded have receipts from the servers I named, and does the listing show other names". It rests on the servers in `S` and on `K` being the committer's only key.
+The mechanism therefore turns "did the committer draw more than once" from an unanswerable question into "does the name I demanded have receipts from the servers I named, and do the listings show other names". It rests on the servers in `S` and on `K` being the committer's only key.
 
 ## 15. What remains open
 
@@ -670,6 +685,6 @@ Stated plainly, in order of weight:
 ## 16. Rollout and compatibility
 
 - A verifier dispatches on `spec_version`. Existing 0.2.0 commitments, receipts and reveals verify exactly as under v0.4; the 0.2.0 test vectors stay in force.
-- Servers accept both formats during rollout and list them in `spec_versions_accepted`. A server built before this version drops unknown fields and will answer a 0.5.0 commitment with a signature error, so servers are deployed before clients default to 0.5.0.
+- Servers accept both formats during rollout and list them in `spec_versions_accepted`. A server built before this version answers a 0.5.0 commitment with `Missing required field: reveal_probability` (it checks its own field list before the signature), so servers are deployed before clients default to 0.5.0.
 - A client picks the newest format every target server lists, or the format the user asked for.
 - Deployment order: core and WASM, then every server target with its regenerated WASM glue and the storage migration for the stream index, then clients.

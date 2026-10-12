@@ -177,6 +177,18 @@ fn is_hex64(s: &str) -> bool {
     s.len() == 64 && s.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
 }
 
+/// `signature` is 128 lowercase hex characters (Spec v0.5 Section 7.1).
+pub fn is_signature_hex(s: &str) -> bool {
+    s.len() == 128 && s.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
+}
+
+/// `stream_id` is 1 to `MAX_STREAM_ID_BYTES` characters from `[A-Za-z0-9._-]`
+/// (Spec v0.5 Section 7.1), so it is safe in a URL path segment as is.
+pub fn is_stream_id(s: &str) -> bool {
+    !s.is_empty() && s.len() <= MAX_STREAM_ID_BYTES
+        && s.bytes().all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'-'))
+}
+
 fn check_items(items: &[String], item_count: usize) -> Result<(), String> {
     if items.is_empty() {
         return Err("at least one item is required".into());
@@ -230,11 +242,8 @@ pub fn validate_v5(c: &Commitment) -> Result<(), String> {
         (Some(_), None) => return Err("sequence is required when stream_id is present".into()),
         (None, Some(_)) => return Err("sequence requires stream_id".into()),
         (Some(stream_id), Some(sequence)) => {
-            if stream_id.is_empty() || stream_id.len() > MAX_STREAM_ID_BYTES {
-                return Err(format!("stream_id must be 1 to {MAX_STREAM_ID_BYTES} bytes"));
-            }
-            if stream_id.chars().any(|ch| (ch as u32) < 0x20 || ch == '\u{7f}') {
-                return Err("stream_id must not contain control characters".into());
+            if !is_stream_id(stream_id) {
+                return Err(format!("stream_id must be 1 to {MAX_STREAM_ID_BYTES} characters from [A-Za-z0-9._-]"));
             }
             if sequence > MAX_SAFE_INTEGER {
                 return Err(format!("sequence {sequence} exceeds 2^53 - 1"));
@@ -253,6 +262,9 @@ pub fn validate_v5(c: &Commitment) -> Result<(), String> {
     }
     if !is_hex64(&c.commitment_hash) {
         return Err("commitment_hash must be 64 lowercase hex characters".into());
+    }
+    if !is_signature_hex(&c.signature) {
+        return Err("signature must be 128 lowercase hex characters".into());
     }
     Ok(())
 }
@@ -350,6 +362,7 @@ pub fn create_v5(params: CreateParamsV5, kp: &sign::KeyPair) -> Result<Commitmen
         identity: params.identity,
         signature: String::new(),
     };
+    c.signature = "0".repeat(128);
     validate_v5(&c)?;
     let payload_bytes = signing_payload(&c)?;
     c.signature = sign::sign(&kp.signing_key, &payload_bytes);
@@ -809,6 +822,11 @@ mod tests {
             ("empty stream", Box::new(|c| c.stream_id = Some(String::new()))),
             ("long stream", Box::new(|c| c.stream_id = Some("x".repeat(129)))),
             ("control char in stream", Box::new(|c| c.stream_id = Some("a\tb".into()))),
+            ("slash in stream", Box::new(|c| c.stream_id = Some("bench/2026".into()))),
+            ("space in stream", Box::new(|c| c.stream_id = Some("bench 2026".into()))),
+            ("non-ascii stream", Box::new(|c| c.stream_id = Some("bänk".into()))),
+            ("uppercase signature", Box::new(|c| c.signature = c.signature.to_uppercase())),
+            ("short signature", Box::new(|c| c.signature = c.signature[..126].to_string())),
             ("sequence too big", Box::new(|c| c.sequence = Some(MAX_SAFE_INTEGER + 1))),
             ("float metadata", Box::new(|c| c.metadata = serde_json::json!({"a": 1.5}))),
             ("array metadata", Box::new(|c| c.metadata = serde_json::json!([1]))),
