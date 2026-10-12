@@ -162,6 +162,10 @@ export async function getArrivalBeacon(storage: StorageInterface, beacon: { type
 
 export function computeSelection(commitment: any, beaconOutput: any) {
   const wasm = getWasm();
+  // 0.5.0: the committer signed the mode; the core selects in it (spec v0.5 8.2).
+  if (commitment.spec_version === '0.5.0') {
+    return wasm.computeSelectionRecord(JSON.stringify(commitment), JSON.stringify(beaconOutput), new Date().toISOString());
+  }
   const items: string[] = commitment.items;
   const randomness: string = beaconOutput.randomness;
   const commitHash: string = commitment.commitment_hash;

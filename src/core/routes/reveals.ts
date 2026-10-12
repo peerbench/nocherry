@@ -17,7 +17,12 @@ const route = new Hono<AppEnv>();
 
 const HASH_RE = /^[0-9a-f]{64}$/;
 
-async function fetchAndVerify(url: string, itemHash: string, config: Config) {
+/**
+ * Fetch `url` and compare its SHA-256 with `expectedHash`. `itemHash` names the
+ * item in the result: in 0.2.0 it is the plain hash itself, in 0.5.0 the item
+ * commitment whose opening gives `expectedHash`.
+ */
+async function fetchAndVerify(url: string, itemHash: string, config: Config, expectedHash: string = itemHash) {
   const wasm = getWasm();
   for (let attempt = 0; attempt < 2; attempt++) {
     try {
@@ -30,7 +35,7 @@ async function fetchAndVerify(url: string, itemHash: string, config: Config) {
         return { hash: itemHash, url, status: 'fetch_error', detail: `HTTP ${res.status}` };
       }
       const computed = wasm.hashBytes(res.data);
-      if (computed === itemHash) {
+      if (computed === expectedHash) {
         return { hash: itemHash, url, status: 'match' };
       }
       if (attempt === 0) { await new Promise(r => setTimeout(r, 2000)); continue; }
@@ -82,6 +87,9 @@ route.post('/:hash/reveals', async (c) => {
     return c.json({ error: 'commitment_hash in body does not match URL' }, 400);
   }
 
+  if (!Array.isArray(body.selected_items) || !Array.isArray(body.voluntary_items)) {
+    return c.json({ error: 'selected_items and voluntary_items must be arrays' }, 400);
+  }
   const commitmentItems = new Set(record.commitment.items);
   for (const item of [...body.selected_items, ...body.voluntary_items]) {
     if (!commitmentItems.has(item)) {
@@ -89,32 +97,53 @@ route.post('/:hash/reveals', async (c) => {
     }
   }
 
-  try {
-    const valid = wasm.verifySignature(
-      body.signing_key,
-      new TextEncoder().encode(JSON.stringify({
-        spec_version: body.spec_version,
-        commitment_hash: body.commitment_hash,
-        selected_items: body.selected_items,
-        voluntary_items: body.voluntary_items,
-        revealed_at: body.revealed_at,
-        signing_key: body.signing_key,
-      })),
-      body.signature
-    );
-    if (!valid) {
-      return c.json({ error: 'Invalid reveal signature' }, 400);
+  // A 0.5.0 commitment needs a 0.5.0 reveal with openings (spec v0.5 10.3);
+  // the core checks their structure, that each opens its item, and the signature.
+  const isV5 = record.commitment.spec_version === '0.5.0';
+  if (isV5 || body.spec_version === '0.5.0') {
+    if (body.spec_version !== '0.5.0') {
+      return c.json({ error: 'a 0.5.0 commitment requires a 0.5.0 reveal with openings', error_code: 'reveal_format' }, 400);
     }
-  } catch (e: any) {
-    return c.json({ error: `Signature verification failed: ${e.message}` }, 400);
+    if (!isV5) {
+      return c.json({ error: 'a 0.5.0 reveal cannot open a 0.2.0 commitment', error_code: 'reveal_format' }, 400);
+    }
+    let checked: { ok: boolean; error?: string };
+    try {
+      checked = wasm.verifyRevealObject(JSON.stringify(body));
+    } catch (e: any) {
+      checked = { ok: false, error: e.message };
+    }
+    if (!checked.ok) {
+      return c.json({ error: `Invalid reveal: ${checked.error}`, error_code: 'reveal_invalid' }, 400);
+    }
+  } else {
+    try {
+      const valid = wasm.verifySignature(
+        body.signing_key,
+        new TextEncoder().encode(JSON.stringify({
+          spec_version: body.spec_version,
+          commitment_hash: body.commitment_hash,
+          selected_items: body.selected_items,
+          voluntary_items: body.voluntary_items,
+          revealed_at: body.revealed_at,
+          signing_key: body.signing_key,
+        })),
+        body.signature
+      );
+      if (!valid) {
+        return c.json({ error: 'Invalid reveal signature' }, 400);
+      }
+    } catch (e: any) {
+      return c.json({ error: `Signature verification failed: ${e.message}` }, 400);
+    }
   }
+  // 0.5.0: the plain hash a fetched file must have, per item commitment.
+  const openedHash = new Map<string, string>(
+    isV5 ? (body.openings as { item: string; hash: string }[]).map((o) => [o.item, o.hash]) : []);
 
   // The reveal must declare exactly the items the beacon selected for this
   // commitment. Without this check a committer could list items of their own
   // choosing as "selected" and obtain a signed data_verified receipt for them.
-  if (!Array.isArray(body.selected_items) || !Array.isArray(body.voluntary_items)) {
-    return c.json({ error: 'selected_items and voluntary_items must be arrays' }, 400);
-  }
   const selection = await storage.getSelection(hash);
   if (!selection || !Array.isArray(selection.selected_items)) {
     return c.json({ error: 'Selection not yet computed for this commitment; request /selection first' }, 409);
@@ -151,7 +180,7 @@ route.post('/:hash/reveals', async (c) => {
         results.push({ hash: itemHash, status: 'missing_url' });
         continue;
       }
-      results.push(await fetchAndVerify(url, itemHash, config));
+      results.push(await fetchAndVerify(url, itemHash, config, openedHash.get(itemHash) ?? itemHash));
     }
 
     const matchCount = results.filter(r => r.status === 'match').length;
@@ -252,12 +281,26 @@ route.post('/:hash/verify-publication', async (c) => {
   const committedItems = new Set(commitment.items);
   const results: any[] = [];
 
+  // 0.5.0 items are commitments; the plain hash to compare against comes from
+  // the openings of a registered reveal. An item no reveal has opened cannot be
+  // checked against a URL.
+  const openedHash = new Map<string, string>();
+  if (commitment.spec_version === '0.5.0') {
+    for (const reveal of await storage.getReveals(hash)) {
+      for (const o of (reveal.openings ?? []) as { item: string; hash: string }[]) openedHash.set(o.item, o.hash);
+    }
+  }
+
   for (const [itemHash, url] of Object.entries(file_urls)) {
     if (!committedItems.has(itemHash)) {
       results.push({ hash: itemHash, url, status: 'not_in_commitment' });
       continue;
     }
-    results.push(await fetchAndVerify(url as string, itemHash, c.get('config')));
+    if (commitment.spec_version === '0.5.0' && !openedHash.has(itemHash)) {
+      results.push({ hash: itemHash, url, status: 'not_opened', detail: 'no registered reveal opens this item' });
+      continue;
+    }
+    results.push(await fetchAndVerify(url as string, itemHash, c.get('config'), openedHash.get(itemHash) ?? itemHash));
   }
 
   const matchCount = results.filter(r => r.status === 'match').length;

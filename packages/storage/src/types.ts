@@ -17,6 +17,9 @@ export interface CommitmentsTable {
   body: string;
   registered_at: string;
   created_at: Generated<string>;
+  /** 0.5.0 commitments in a stream; unique with signing_key and sequence. */
+  stream_id: string | null;
+  sequence: number | null;
 }
 
 export interface SelectionsTable {

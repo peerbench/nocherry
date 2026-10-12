@@ -51,11 +51,27 @@ CREATE TABLE IF NOT EXISTS beacon_cache (
 
 `;
 
+// Stream columns (spec v0.5 12.2). Added separately so that a database created
+// before 0.5.0 is migrated in place; SQLite has no ADD COLUMN IF NOT EXISTS.
+const STREAM_COLUMNS: [string, string][] = [
+  ['stream_id', 'ALTER TABLE commitments ADD COLUMN stream_id TEXT'],
+  ['sequence', 'ALTER TABLE commitments ADD COLUMN sequence INTEGER'],
+];
+const STREAM_INDEX_SQL = `
+CREATE UNIQUE INDEX IF NOT EXISTS idx_commitments_stream
+  ON commitments(signing_key, stream_id, sequence);
+`;
+
 export function createSqliteStorage(dbPath: string = ':memory:'): KyselyStorage {
   const sqliteDb = new Database(dbPath);
   sqliteDb.pragma('journal_mode = WAL');
   sqliteDb.pragma('foreign_keys = ON');
   sqliteDb.exec(SCHEMA_SQL);
+  const columns = new Set((sqliteDb.pragma('table_info(commitments)') as { name: string }[]).map((c) => c.name));
+  for (const [name, ddl] of STREAM_COLUMNS) {
+    if (!columns.has(name)) sqliteDb.exec(ddl);
+  }
+  sqliteDb.exec(STREAM_INDEX_SQL);
 
   const db = new Kysely<DB>({
     dialect: new SqliteDialect({ database: sqliteDb }),

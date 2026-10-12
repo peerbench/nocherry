@@ -15,6 +15,7 @@ export class FirestoreStorage implements StorageInterface {
   private selections;
   private reveals;
   private beaconCache;
+  private streams;
 
   constructor(projectId: string, databaseId?: string) {
     const opts: { projectId: string; databaseId?: string } = { projectId };
@@ -25,6 +26,7 @@ export class FirestoreStorage implements StorageInterface {
     this.selections = this.db.collection('selections');
     this.reveals = this.db.collection('reveals');
     this.beaconCache = this.db.collection('beacon_cache');
+    this.streams = this.db.collection('streams');
   }
 
   // -- Server identity --
@@ -43,13 +45,38 @@ export class FirestoreStorage implements StorageInterface {
 
   // -- Commitments --
 
+  /** Document id of the stream index entry for (signing_key, stream_id, sequence). */
+  private streamDocId(signingKey: string, streamId: string, sequence: number): string {
+    // Firestore ids cannot contain '/', and the three parts must stay separable.
+    const enc = (s: string) => encodeURIComponent(s);
+    return `${enc(signingKey)}|${enc(streamId)}|${sequence}`;
+  }
+
   async putCommitment(id: string, commitment: any, registeredAt: string): Promise<void> {
+    // Only a 0.5.0 commitment signs its stream name (spec v0.5 12.2). The
+    // uniqueness of (signing_key, stream_id, sequence) is a create() of a
+    // deterministic document in the same transaction as the commitment.
+    const inStream = commitment.spec_version === '0.5.0' && typeof commitment.stream_id === 'string' && Number.isInteger(commitment.sequence);
+    const data = {
+      signing_key: commitment.signing_key,
+      body: JSON.stringify(commitment),
+      registered_at: registeredAt,
+      created_at: new Date().toISOString(),
+      stream_id: inStream ? commitment.stream_id : null,
+      sequence: inStream ? commitment.sequence : null,
+    };
     try {
-      await this.commitments.doc(id).create({
-        signing_key: commitment.signing_key,
-        body: JSON.stringify(commitment),
-        registered_at: registeredAt,
-        created_at: new Date().toISOString(),
+      await this.db.runTransaction(async (tx) => {
+        tx.create(this.commitments.doc(id), data);
+        if (inStream) {
+          tx.create(this.streams.doc(this.streamDocId(commitment.signing_key, commitment.stream_id, commitment.sequence)), {
+            signing_key: commitment.signing_key,
+            stream_id: commitment.stream_id,
+            sequence: commitment.sequence,
+            commitment_hash: id,
+            registered_at: registeredAt,
+          });
+        }
       });
     } catch (e: any) {
       if (e.code === 6) {
@@ -58,6 +85,27 @@ export class FirestoreStorage implements StorageInterface {
       }
       throw e;
     }
+  }
+
+  // -- Streams (spec v0.5 12.2, 12.9) --
+
+  async findStreamCommitment(signingKey: string, streamId: string, sequence: number) {
+    const doc = await this.streams.doc(this.streamDocId(signingKey, streamId, sequence)).get();
+    if (!doc.exists) return null;
+    const d = doc.data()!;
+    return { sequence: Number(d.sequence), commitment_hash: d.commitment_hash as string, registered_at: d.registered_at as string };
+  }
+
+  async listStream(signingKey: string, streamId: string) {
+    const snapshot = await this.streams
+      .where('signing_key', '==', signingKey)
+      .where('stream_id', '==', streamId)
+      .orderBy('sequence', 'asc')
+      .get();
+    return snapshot.docs.map((doc) => {
+      const d = doc.data();
+      return { sequence: Number(d.sequence), commitment_hash: d.commitment_hash as string, registered_at: d.registered_at as string };
+    });
   }
 
   async getCommitment(id: string): Promise<{ commitment: any; registered_at: string } | null> {
@@ -174,6 +222,15 @@ export class FirestoreStorage implements StorageInterface {
       for (const hash of chunk) {
         batch.delete(this.commitments.doc(hash));
         batch.delete(this.selections.doc(hash));
+
+        // Cascade: the stream index entry of this commitment, if any
+        const streamEntries = await this.streams
+          .where('commitment_hash', '==', hash)
+          .select()
+          .get();
+        for (const entry of streamEntries.docs) {
+          batch.delete(entry.ref);
+        }
 
         // Cascade: query and delete reveals for this commitment
         const reveals = await this.reveals
