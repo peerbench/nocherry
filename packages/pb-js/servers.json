@@ -24,6 +24,42 @@
       "operator": "nocherry",
       "environment": "dev",
       "note": "Custom domain (commit-reveal-gcp-dev.peerbench.ai) needs Cloud Run domain mapping configured. Using .run.app URL as primary until then."
+    },
+    {
+      "name": "fed-max-planck",
+      "primary_url": "https://t4-node-hjqo.onrender.com/api/nocherry",
+      "alternative_url": null,
+      "server_key": "did:key:z6MkqDadnqRrRkhC3iqZ6yA7ZCgX83fTvJYfJYhYHgjexsh9",
+      "operator": "Max Planck Institute",
+      "environment": "federation",
+      "note": "peerBench federation node did:plc:clt475cujl5dmviz6i7qez6c (@t4-node.p.0rs.org)"
+    },
+    {
+      "name": "fed-lmu-munich",
+      "primary_url": "https://t6-node.onrender.com/api/nocherry",
+      "alternative_url": null,
+      "server_key": "did:key:z6Mkne3y9DLAej8VCgzoS56goHQTLAm7WC4oVNTdN3tU6VsB",
+      "operator": "LMU Munich",
+      "environment": "federation",
+      "note": "peerBench federation node did:plc:gymxnigei4yq7supxuyw34ue (@t6-node.p.0rs.org)"
+    },
+    {
+      "name": "fed-goettingen",
+      "primary_url": "https://t3-99c1.onrender.com/api/nocherry",
+      "alternative_url": null,
+      "server_key": "did:key:z6MkusjpnR1V8sqJgZyhFjYKpEQFYzxDmh2KXSfhwHaPCjVj",
+      "operator": "Göttingen peerBench Node",
+      "environment": "federation",
+      "note": "peerBench federation node did:plc:wajwo7rovqmuk62xbww3yn5x (@gottingen-node.p.0rs.org)"
+    },
+    {
+      "name": "fed-forest-ai",
+      "primary_url": "https://peerbench.forest-ai.org/api/nocherry",
+      "alternative_url": null,
+      "server_key": "did:key:z6Mkfqrd6KDuRSw7PSePdFEPcEjWV4RAn81TKEVqbc6pfBCd",
+      "operator": "Forest AI",
+      "environment": "federation",
+      "note": "peerBench federation node did:plc:p3s4ipgzubavabaapfvxn5bg"
     }
   ],
   "reveal_publishers": [
