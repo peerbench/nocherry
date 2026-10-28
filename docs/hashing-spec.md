@@ -1,7 +1,7 @@
 # Hashing Specification
 
 **Version:** 0.3.0-draft
-**Status:** Draft for review
+**Status:** Superseded by [nocherry-commit-reveal-spec-v0.4.md](nocherry-commit-reveal-spec-v0.4.md) and [nocherry-commit-reveal-spec-v0.5.md](nocherry-commit-reveal-spec-v0.5.md). Kept for history; do not implement from this document.
 
 ## 1. Overview
 
