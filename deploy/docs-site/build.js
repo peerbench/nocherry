@@ -16,12 +16,7 @@ const OUT_DIR = join(import.meta.dirname, 'dist');
 const RAW_DIR = join(OUT_DIR, 'raw');
 
 const SKIP = [
-  'branding-marketing-discussion-section-ideas-scratch.md',
-  'scratch_writing.md',
   'AgentsMemory.md',
-  'TODO.md',
-  'TODO-selection-mode.md',
-  'TODO-server-hardening.md',
   'CLAUDE.md',
 ];
 

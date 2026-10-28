@@ -15,7 +15,7 @@ Hide
 Type "export PS1='$ '"
 Enter
 Sleep 200ms
-Type `alias pb='node /Users/user/workspace/peerBench/commit-reveal/packages/pb-js/src/cli.js'`
+Type `alias pb='node packages/pb-js/src/cli.js'`
 Enter
 Type "rm -rf /tmp/pb-demo && mkdir -p /tmp/pb-demo/benchmark"
 Enter

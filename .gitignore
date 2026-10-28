@@ -25,3 +25,5 @@ dist/
 *.tsbuildinfo
 .worktrees/
 pkg-server/
+
+.worktrees/
