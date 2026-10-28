@@ -1,6 +1,7 @@
 {
   "name": "@nocherry/google-cloud-run",
   "version": "0.2.0",
+  "license": "MIT",
   "private": true,
   "type": "module",
   "scripts": {

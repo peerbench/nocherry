@@ -1,6 +1,7 @@
 {
   "name": "@nocherry/demo",
   "version": "0.2.0",
+  "license": "MIT",
   "type": "module",
   "scripts": {
     "start": "node src/server.js",
