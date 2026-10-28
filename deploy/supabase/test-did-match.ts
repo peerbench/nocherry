@@ -6,7 +6,10 @@
  *   did_key:         did:key:z6MkfCH4zUChzYzAufNRaf2BWBgup8bLUMn3fYofxZfbehRg
  *   private_key_hex: cc82e06ff672eeae9fcd7fd979dcf32755f9b8e877fbf8e790b4b2b147309872
  *
- * did:web is served by Cloudflare Worker at commit-reveal.orgtopus.workers.dev
+ * did:web is served by the Cloudflare Worker at
+ *   https://commit-reveal.orgtopus.workers.dev/test-identity/did.json
+ *   (did:web:commit-reveal.orgtopus.workers.dev:test-identity)
+ * This keypair is public on purpose. Never use it for a real identity.
  * did:plc was registered at plc.directory: did:plc:gc4o2abyvharj4sids3dfmkb
  *
  * Usage:
@@ -88,10 +91,10 @@ console.log(`\nDID Match Tests against: ${BASE}\n`);
 console.log("did:web identity match:");
 
 await test(
-  "did:web:commit-reveal.orgtopus.workers.dev → matched",
+  "did:web:commit-reveal.orgtopus.workers.dev:test-identity → matched",
   async () => {
     const commitment = makeCommitment(
-      "did:web:commit-reveal.orgtopus.workers.dev",
+      "did:web:commit-reveal.orgtopus.workers.dev:test-identity",
       "didweb",
     );
     const res = await fetch(`${BASE}/v1/commitments`, {
