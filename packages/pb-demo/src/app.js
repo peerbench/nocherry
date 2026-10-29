@@ -38,7 +38,7 @@ export async function createDemoApp(options) {
 
   // Always create embedded pb-node
   const pbNodeMod = await import('../../pb-node/dist/app.js');
-  const storageMod = await import('pb-storage/sqlite');
+  const storageMod = await import('@nocherry/storage/sqlite');
 
   const pbStorage = storageMod.createSqliteStorage(':memory:');
   await pbNodeMod.initServerKey(pbStorage);

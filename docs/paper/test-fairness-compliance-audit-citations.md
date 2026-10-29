@@ -118,7 +118,7 @@ Additional references for the "Standardized Test Fairness and Item Auditing" and
 - **Authors:**
   - Herman Chernoff — MIT; Stanford University
 - **Quote:** "The interrelated fields of design of experiments and sequential analysis" provide the theoretical foundation for "the philosophy and practice of statistics" in sequential decision-making.
-- **Why relevant:** Foundational statistical theory for sequential sampling decisions -- the mathematical basis for determining how many items must be sampled to achieve a given confidence level. Commit-reveal uses this theory to calibrate reveal percentages: a 5% random sample of 20,000 SAT items yields 1,000 items, sufficient for DIF analysis at standard power levels.
+- **Why relevant:** Foundational statistical theory for sequential sampling decisions -- the mathematical basis for determining how many items must be sampled to achieve a given confidence level. Commit-reveal uses this theory to calibrate reveal percentages: a 5% random sample of a hypothetical 20,000-item pool yields 1,000 items (no published SAT pool size was found), sufficient for DIF analysis at standard power levels.
 
 ---
 

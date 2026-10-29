@@ -5,6 +5,7 @@ export default defineConfig({
     index: 'src/index.ts',
     sqlite: 'src/sqlite.ts',
     postgres: 'src/postgres.ts',
+    pglite: 'src/pglite.ts',
     types: 'src/types.ts',
   },
   format: ['esm'],

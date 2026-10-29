@@ -160,10 +160,10 @@ The beacon interface is pluggable -- other randomness sources can be added.
 ├── src/
 │   └── core/                 # Shared Hono routes, beacon logic, signing, DID resolution
 ├── packages/
-│   ├── pb-wasm/              # WASM bindings for pb-core (@nocherry/core)
+│   ├── pb-wasm/              # WASM bindings for pb-core (@nocherry/pb-wasm)
 │   ├── pb-js/                # JavaScript SDK wrapping WASM (@nocherry/sdk)
 │   ├── pb-node/              # HTTP server - Hono, portable (@nocherry/server)
-│   ├── pb-storage/           # Storage adapters - SQLite, Postgres, PGlite via Kysely
+│   ├── storage/              # Storage adapters - SQLite, Postgres, PGlite via Kysely (@nocherry/storage)
 │   └── pb-demo/              # Interactive 7-step demo web app (@nocherry/demo)
 ├── deploy/
 │   ├── cloudflare/           # Cloudflare Workers + D1 deployment
@@ -226,9 +226,8 @@ Walks through all 7 steps with a live drand beacon ticker, real Ed25519 signing,
 ### Run tests
 
 ```bash
-npx tsx --test packages/pb-node/test/api.test.ts   # Server API tests
-npx tsx --test packages/pb-demo/test/walkthrough.test.js  # Demo tests
-cargo test                                          # Rust core tests
+npm test      # SDK, Server API, and Demo tests
+cargo test    # Rust core tests
 ```
 
 ## Deployment

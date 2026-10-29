@@ -67,7 +67,7 @@ export async function getReceipt(commitment) {
     // Use embedded pb-node
     if (!_commitApp) {
       const pbNodeMod = await import('../../pb-node/dist/app.js');
-      const storageMod = await import('pb-storage/sqlite');
+      const storageMod = await import('@nocherry/storage/sqlite');
       _pbStorage = storageMod.createSqliteStorage(':memory:');
       await pbNodeMod.initServerKey(_pbStorage);
       _commitApp = pbNodeMod.createApp(_pbStorage);

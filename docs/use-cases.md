@@ -8,7 +8,7 @@ Simple randomness (e.g., drand alone) is sufficient when the revealed data is se
 
 ## 1. AI Benchmark Integrity
 
-**Why the data stays private:** If all test cases are public, model developers train on them — intentionally or through data contamination. The benchmark becomes a memorization test. Researchers have shown performance drops of 47+ percentage points when moving from public to private test sets, and demonstrated that a 13B model can match GPT-4-level scores by training on paraphrased benchmark data. The benchmark's value is its secrecy.
+**Why the data stays private:** If all test cases are public, model developers train on them — intentionally or through data contamination. The benchmark becomes a memorization test. Researchers have measured scores inflated by as much as 16 percentage points on a public benchmark compared with a held-out counterpart (Haimes et al., arXiv 2410.09247), and shown that a 13B model trained on rephrased test data can score on par with GPT-4 while evading n-gram contamination checks (Yang et al., arXiv 2311.04850). The benchmark's value is its secrecy.
 
 **The cherry-picking problem:** The model developer runs the benchmark, sees all results, and chooses which to publish. The benchmark maintainer could selectively reveal easy questions to favor a model. After the fact, nobody can distinguish genuine capability from gaming.
 
@@ -22,7 +22,7 @@ Simple randomness (e.g., drand alone) is sufficient when the revealed data is se
 
 **The cherry-picking problem:** Fairness review boards need to verify that questions aren't biased by race, gender, culture, or socioeconomic status. Currently, the test maker chooses which questions the reviewers see. A test maker facing a discrimination lawsuit has incentive to show their most carefully vetted questions, not the ones with problematic wording or cultural assumptions.
 
-**How commit-reveal fixes it:** The test maker commits all item hashes, beacon selects which questions the review panel inspects. ETS maintains roughly 20,000 active SAT items — a 5% reveal is 1,000 questions per review cycle, enough for statistical analysis of bias, small enough to preserve pool integrity. If a selected question "can't be produced," that's a visible gap.
+**How commit-reveal fixes it:** The test maker commits all item hashes, beacon selects which questions the review panel inspects. For a pool of N items, a 5% reveal is 0.05 N questions per review cycle (for example, 1,000 of a hypothetical 20,000), enough for statistical analysis of bias, small enough to preserve pool integrity. If a selected question "can't be produced," that's a visible gap.
 
 ---
 

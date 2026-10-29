@@ -1,0 +1,18 @@
+{
+  "name": "@nocherry/server-pglite",
+  "version": "0.2.0",
+  "license": "MIT",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "start": "node src/server.js",
+    "test": "node --test 'test/*.test.js'"
+  },
+  "dependencies": {
+    "@hono/node-server": "^1.13.0",
+    "hono": "^4.0.0",
+    "@electric-sql/pglite": "^0.2.17",
+    "@nocherry/storage": "file:../../packages/storage",
+    "@nocherry/pb-wasm": "file:../../pkg"
+  }
+}

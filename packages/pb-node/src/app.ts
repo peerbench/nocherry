@@ -28,7 +28,7 @@ registerWasm(wasm);
  * Create a Hono app with the given storage backend and config.
  * Storage must already have server key initialized via `initServerKey`.
  */
-export function createApp(storage: KyselyStorage, config: Config) {
+export function createApp(storage: KyselyStorage, config: Config = loadConfigFromEnv()) {
   const app = new Hono<AppEnv>();
 
   // Inject storage and config into every request context

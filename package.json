@@ -9,8 +9,9 @@
   "scripts": {
     "build:wasm": "wasm-pack build packages/pb-wasm --target nodejs --out-dir ../../pkg --scope nocherry",
     "build:wasm:server": "wasm-pack build packages/pb-wasm --target nodejs --out-dir ../../pkg-server --scope nocherry -- --no-default-features",
-    "build": "npm run build -ws --if-present",
-    "typecheck": "npm run typecheck -ws --if-present"
+    "build": "npm run build -w @nocherry/storage -w @nocherry/sdk -w @nocherry/server",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "test": "npm test -w @nocherry/sdk -w @nocherry/server -w @nocherry/demo"
   },
   "devDependencies": {
     "@types/node": "^22.15.3",

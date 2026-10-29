@@ -90,8 +90,8 @@ Collected references for the NoCherry commit-reveal protocol publication, organi
 
 ## 2. Cryptographic Commitment Schemes
 
-### Blum (1981) — Coin Flipping by Telephone
-- **Link:** https://doi.org/10.1007/3-540-11611-8_73
+### Blum (1983) — Coin Flipping by Telephone: A Protocol for Solving Impossible Problems
+- **Link:** https://doi.org/10.1145/1008908.1008911 (ACM SIGACT News 15(1):23-27, January 1983; verified via Crossref 2026-09-30. The previous DOI 10.1007/3-540-11611-8_73 returns 404 at Crossref. An earlier 1981 CRYPTO workshop version exists; cite the SIGACT News version unless the CRYPTO '81 record is verified.)
 - **Authors:**
   - Manuel Blum — University of California, Berkeley
 - **Why relevant:** The original paper introducing commitment schemes as a mechanism for fair coin-flipping over untrusted channels. Conceptual ancestor of all commit-reveal protocols for random selection.

@@ -14,7 +14,7 @@
 
 import { serve } from '@hono/node-server';
 import { PGlite } from '@electric-sql/pglite';
-import { createPgliteStorage } from 'pb-storage/pglite';
+import { createPgliteStorage } from '@nocherry/storage/pglite';
 import { createApp, initServerKey } from '../../../packages/pb-node/dist/app.js';
 
 const port = parseInt(process.env.PORT || '17420', 10);

@@ -55,21 +55,22 @@ The client observes the current drand round **before** submitting, includes it i
 **Server behavior:**
 1. Verify `anchor_round` is valid: its randomness must already be public (round time ≤ now)
 2. Verify `anchor_round` is recent: must be within `MAX_ANCHOR_AGE` rounds of current (e.g., 3 rounds = 9 seconds)
-3. Use `anchor_round + 1` for selection (instead of `nextRoundAfter(registered_at)`)
-4. Still record `arrival_beacon` and `registered_at` as independent timestamp evidence
+3. Verify the selection round `anchor_round + 1` is not yet available at `registered_at` (with a margin for clock skew); reject otherwise. Without this check, step 2 alone lets a client commit after seeing the selection randomness
+4. Use `anchor_round + 1` for selection (instead of `nextRoundAfter(registered_at)`)
+5. Still record `arrival_beacon` and `registered_at` as independent timestamp evidence
 
 **Cheat analysis:**
 | Attack | Blocked? | Why |
 |--------|----------|-----|
-| Client uses anchor_round whose randomness they already know | Yes | Selection uses `anchor_round + 1`, whose randomness is unknown |
-| Client tries many anchor_rounds to find favorable selection | Yes | Each attempt is a new commitment (different `committed_at`, signature), signer_activity increments, rate limiting applies |
+| Client uses anchor_round whose randomness they already know | Only with step 3 | Selection uses `anchor_round + 1`, which is unknown only if the server rejects when that round is already available |
+| Client tries many commitments to find favorable selection (grinding) | No | Many commitments can share one anchor round and be evaluated against the same future output; `signer_activity` and rate limiting only make it visible per key. Open problem A7 in the paper dossier |
 | Client sets anchor_round far in the future | Yes | Server rejects: round hasn't happened yet |
 | Client sets anchor_round far in the past | Yes | Server rejects: exceeds MAX_ANCHOR_AGE |
-| Client waits to see round R+1's randomness, then submits with anchor_round=R | Yes | By the time R+1 is public, R is too old (>3s), server rejects for staleness |
+| Client waits to see round R+1's randomness, then submits with anchor_round=R | Only with step 3 | The staleness check does not block this: with `MAX_ANCHOR_AGE` = 3 rounds, R is still accepted after R+1 is public. Server must reject because round R+1 is already available |
 
 **Pros:**
 - Fully deterministic — all servers use the same round, zero ambiguity
-- Cheat-proof — see table above
+- Blocks known-randomness selection only if step 3 is enforced; does not stop grinding (see table above)
 - Independently verifiable — anyone with the commitment can check anchor_round validity
 - No timing tricks — client doesn't need to carefully time submissions
 - Backward compatible — old commitments without anchor_round fall back to current behavior
@@ -183,19 +184,21 @@ The `MAX_ANCHOR_AGE` of 3 rounds (9 seconds) gives comfortable buffer for:
 - Network latency to all servers (~1-3 seconds)
 - Server processing time (~100ms)
 
+This buffer is the source of the flaw noted in the correction at the top: an anchor up to 3 rounds old means `anchor_round + 1` may already be public. Either require `anchor_round` to equal the current round, or select with `anchor_round + d` where d covers `MAX_ANCHOR_AGE` plus clock skew, and have late servers reject.
+
 ---
 
 ## Summary
 
 | Approach | Deterministic? | Cheat-proof? | Spec change? | Chosen? |
 |----------|---------------|-------------|-------------|---------|
-| A: Client anchor round | Yes | Yes | Yes (minor) | PRIMARY |
+| A: Client anchor round | Yes | Only with the selection-round-not-yet-available check; not against grinding | Yes (minor) | PRIMARY |
 | B: Timing guard | No | No | No | SUPPLEMENT |
 | C: Wait 2 periods | No | N/A | No | REJECTED |
 | D: Majority vote | Mostly | Partially | No | LEGACY FALLBACK |
 | E: Earliest-round-wins | Yes | Partially | No | TIEBREAKER |
 
-**The anchor round approach is the only strategy that is both fully deterministic AND cheat-proof.** All others either leave room for disagreement or can be gamed. The timing guard and earliest-round-wins serve as defense-in-depth layers.
+**The anchor round approach is the only strategy that is fully deterministic.** It prevents known-randomness selection only when servers reject commitments whose selection round is already available, and it does not address grinding. All others either leave room for disagreement or can be gamed. The timing guard and earliest-round-wins serve as defense-in-depth layers.
 
 ---
 

@@ -85,7 +85,7 @@ Clinical trials represent the highest-stakes instance of selective reporting. Wh
 - **Quote:** Found that "31% of trials had a discrepancy between the registered and published primary outcome" even after mandatory trial registration was introduced.
 - **Why relevant:** Demonstrates that **even mandatory registration does not prevent outcome switching**. Researchers can and do deviate from their registered plans without disclosure. This is the critical limitation of preregistration that cryptographic commitment addresses: registration creates a record of intent, but nothing enforces fidelity to that intent.
 
-### Goldacre, Drysdale, Dale, Milosevic, Slade, Hartley, Marston, Powell-Smith & Heneghan (2019) -- COMPare: A Prospective Cohort Study Correcting and Monitoring 58 Misreported Trials in Real Time
+### Goldacre, Drysdale, Dale, Milosevic, Slade, Hartley, Marston, Powell-Smith, Heneghan & Mahtani (2019) -- COMPare: A Prospective Cohort Study Correcting and Monitoring 58 Misreported Trials in Real Time
 
 - **Authors:**
   - Ben Goldacre -- Centre for Evidence-Based Medicine, University of Oxford
@@ -97,6 +97,7 @@ Clinical trials represent the highest-stakes instance of selective reporting. Wh
   - Cicely Marston -- London School of Hygiene and Tropical Medicine
   - Anna Powell-Smith -- Centre for Evidence-Based Medicine, University of Oxford
   - Carl Heneghan -- Centre for Evidence-Based Medicine, University of Oxford
+  - Kamal R. Mahtani -- affiliation not checked (author list verified via Crossref 2026-09-27)
 - **Link:** https://doi.org/10.1186/s13063-019-3173-2
 - **Quote:** Of 67 trials published in the five highest-impact medical journals (NEJM, Lancet, JAMA, BMJ, Annals), only 9 were perfectly reported. The remaining 58 had 301 unreported pre-specified outcomes and 357 silently added new outcomes.
 - **Why relevant:** The most damning real-time audit of outcome switching ever conducted, targeting the world's most prestigious medical journals. Despite CONSORT guidelines, ICMJE registration requirements, and editorial oversight, 87% of trials were misreported. This demonstrates that **monitoring and guidelines alone are insufficient** -- the incentive to cherry-pick overwhelms voluntary compliance mechanisms.

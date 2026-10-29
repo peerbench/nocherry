@@ -25,5 +25,6 @@ dist/
 *.tsbuildinfo
 .worktrees/
 pkg-server/
+deploy/pglite/pgdata/
+_gemini_*
 
-.worktrees/
