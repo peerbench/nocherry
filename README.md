@@ -1,5 +1,35 @@
 # NoCherry -- Anti Data Cherry-Picking Consortium
 
+## Abstract
+
+Problem: When a party supports claims about a private
+dataset by disclosing a sample, auditors cannot tell whether
+it was drawn at random or “cherry-picked” to hide flaws in
+the rest of the data.
+
+Solution: The data holder commits to the hashes of every
+item in its dataset and registers the commitment with inde-
+pendent servers. Selection then waits on a decentralized
+randomness beacon: a network that jointly emits a fresh
+random value every few seconds, outside the control of the
+data holder and the auditors. The value emitted two beacon
+rounds after the commitment picks the sample. Each server
+returns a signed receipt, so anyone can later check that the
+revealed sample is exactly the one that value prescribes.
+Selection from the committed set stays unbiased as long
+as the beacon’s threshold holds and one required server is
+honest, and a pre-agreed commitment name stops repeated
+draws. We call this protocol NoCherry.
+
+Applications: Any audit that spot-checks a private corpus:
+private AI benchmarks and held-out test sets, dataset quality
+claims, code and security audits, test-fairness review, vulner-
+ability handling, and compliance sampling. Auditors need
+not trust the data holder to hand over a representative sample
+of the committed data, since the protocol proves it, and data
+holders need not expose their entire datase
+
+
 <p align="center">
   <img src="assets/nocherry_mascot1.png" alt="Just say no to cherry picking data" width="300">
 </p>
