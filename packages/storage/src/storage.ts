@@ -8,6 +8,12 @@
 import type { Kysely } from 'kysely';
 import type { Database } from './types.js';
 
+// JSON columns hold a JSON string. SQLite hands it back as a string, but Postgres
+// `jsonb` returns an already-parsed value, so both shapes have to be accepted.
+function parseJsonColumn<T>(value: unknown): T {
+  return (typeof value === 'string' ? JSON.parse(value) : value) as T;
+}
+
 export class KyselyStorage {
   db: Kysely<Database>;
 
@@ -23,7 +29,7 @@ export class KyselyStorage {
       .select('value')
       .where('key', '=', 'keypair')
       .executeTakeFirst();
-    return row ? JSON.parse(row.value) : null;
+    return row ? parseJsonColumn<{ did_key: string; private_key_hex: string; public_key_hex: string }>(row.value) : null;
   }
 
   async setServerIdentity(keypair: { did_key: string; private_key_hex: string; public_key_hex: string }) {
@@ -56,7 +62,7 @@ export class KyselyStorage {
       .executeTakeFirst();
     if (!row) return null;
     return {
-      commitment: JSON.parse(row.body),
+      commitment: parseJsonColumn(row.body),
       registered_at: row.registered_at,
     };
   }
@@ -88,7 +94,7 @@ export class KyselyStorage {
       .select('body')
       .where('commitment_hash', '=', commitmentHash)
       .executeTakeFirst();
-    return row ? JSON.parse(row.body) : null;
+    return row ? parseJsonColumn(row.body) : null;
   }
 
   // ── Reveals ──
@@ -111,7 +117,7 @@ export class KyselyStorage {
       .select(['body', 'registered_at'])
       .where('commitment_hash', '=', commitmentHash)
       .execute();
-    return rows.map((r) => ({ ...JSON.parse(r.body), registered_at: r.registered_at }));
+    return rows.map((r) => ({ ...parseJsonColumn<Record<string, unknown>>(r.body), registered_at: r.registered_at }));
   }
 
   // ── Anti-spam / Activity ──
@@ -151,7 +157,7 @@ export class KyselyStorage {
       .where('beacon_type', '=', beaconType)
       .where('round_number', '=', round)
       .executeTakeFirst();
-    return row ? JSON.parse(row.body) : null;
+    return row ? parseJsonColumn(row.body) : null;
   }
 
   async cacheBeacon(beaconType: string, round: number, output: unknown) {
