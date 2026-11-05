@@ -1,0 +1,20 @@
+{
+  "name": "@nocherry/hetzner",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "commit-reveal server for forest-box (Hetzner) on Postgres",
+  "scripts": {
+    "start": "node --experimental-strip-types src/server.ts"
+  },
+  "dependencies": {
+    "@hono/node-server": "^1.0.0",
+    "@nocherry/pb-wasm": "0.0.20261102112718",
+    "hono": "^4.0.0",
+    "kysely": "^0.27.0",
+    "pg": "^8.13.0"
+  },
+  "devDependencies": {
+    "esbuild": "^0.24.0"
+  }
+}
