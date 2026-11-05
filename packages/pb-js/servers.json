@@ -18,12 +18,12 @@
     },
     {
       "name": "google-cloud-1",
-      "primary_url": "https://commit-reveal-323104702830.us-central1.run.app",
-      "alternative_url": "https://commit-reveal-gcp-dev.peerbench.ai",
+      "primary_url": "https://nocherry-2.peerbench.ai",
+      "alternative_url": "https://commit-reveal-323104702830.us-central1.run.app",
       "server_key": "did:key:z6MkjzBJL9zxTKqhoogzgrh6VoWMf1z5Jjyv7bVJwSfbASqM",
-      "operator": "nocherry",
+      "operator": "PeerBench",
       "environment": "dev",
-      "note": "Custom domain (commit-reveal-gcp-dev.peerbench.ai) needs Cloud Run domain mapping configured. Using .run.app URL as primary until then."
+      "note": "Migrated from GCP Cloud Run + Firestore to forest-box (Hetzner) on 2026-11-04; old .run.app URL kept as rollback reference."
     },
     {
       "name": "fed-max-planck",
