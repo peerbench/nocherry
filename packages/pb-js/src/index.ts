@@ -84,5 +84,9 @@ export type {
   ReceiptAnchorCheck,
 } from './anchor.js';
 
+// Relying-party name check: which commitment a pre-agreed name is bound to
+export { checkName, evaluateName, fetchServerAnswer } from './name-check.js';
+export type { StreamName, NameServer, ServerAnswer, ServerFinding, NameCheck, FetchNameOptions } from './name-check.js';
+
 // Server registry
 export { loadRegistry, getServers, resolveServer } from './registry.js';

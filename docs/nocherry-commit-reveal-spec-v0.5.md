@@ -669,6 +669,20 @@ Let a relying party fix a server set `S` and demand receipts from every server i
 
 The mechanism therefore turns "did the committer draw more than once" from an unanswerable question into "does the name I demanded have receipts from the servers I named, and do the listings show other names". It rests on the servers in `S` and on `K` being the committer's only key.
 
+### 14.5 Abort after the draw: the relying party asks the servers
+
+The beacon output is public, so the committer knows the selection of `A` as soon as round `a + 2` is out, before any relying party sees a receipt. If the relying party only learns about `A` from receipts the committer forwards, the committer can drop `A` when the draw looks bad, say that a server timed out, and ask to try again under a new name. The first bullet of 14.4 calls refusal visible, but it is visible only to someone who asks the servers. A relying party that wants the guarantee of 14.4 therefore does not take the committer's word for whether a registration happened:
+
+1. Before the draw it fixes `(K, X, N)`, the required set `S`, and a deadline for the bundle.
+2. After the selection round, and within the retention of commitment bodies (Section 12.2), it fetches `GET /v1/streams/{K}/{X}` from every server in `S`, checks each listing's signature against the server key it expects, and for an entry with sequence `N` fetches `GET /v1/commitments/{hash}` and checks that the commitment is signed by `K` under `(K, X, N)`. An entry no signed commitment stands behind is ignored, so a server cannot frame a committer by listing a hash.
+3. Outcome:
+   - one commitment `A` found: the name is bound to `A`. The audit is `A`; if no complete bundle for `A` arrives by the deadline, the audit fails. "A server timed out" is not a reason for a new attempt.
+   - two or more different commitments found: the key signed two commitments under one name; the audit fails.
+   - nothing found and every server in `S` answered: no required server registered the name. No commitment under it can ever complete, and none of its draws could be kept, so a new attempt under a fresh name does not bias selection.
+   - nothing found and some server did not answer: inconclusive; ask again before deciding.
+
+With one honest server `S*` in `S`, every commitment that could complete was registered at `S*` before `T(a + 2)`, so it shows up in step 2 whatever the committer forwards. The cost is that a genuine network failure at one server now fails the audit instead of allowing a retry; a longer window between registration and the selection round (a larger `delta_margin`) makes that rarer. `checkName` in `@nocherry/sdk` and `pb-js check-name <K> <X> <N> -s <servers> --bundle <hash>` implement steps 2 and 3.
+
 ## 15. What remains open
 
 Stated plainly, in order of weight:

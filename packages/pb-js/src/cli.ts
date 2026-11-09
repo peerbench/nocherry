@@ -10,6 +10,8 @@
  *   pb-js commit <dir> --probability <p> [--beacon drand] [--no-anchor]
  *   pb-js verify <commitment.json | receipt.json | server-receipts.json>
  *   pb-js servers                         List known servers
+ *   pb-js check-name <did:key> <stream> <seq> [-s <srv>,...] [--bundle <hash>]
+ *                                          Ask servers which commitment a name is bound to
  *   pb-js submit <dir|file> [-s <server>]  Submit commitment to server(s)
  *   pb-js reveal <dir>                           Create & submit reveal
  *   pb-js publish github <dir> [--repo <name>]    Publish data to GitHub
@@ -32,6 +34,7 @@ import {
   type SubmitResult,
 } from './anchor.js';
 import { verifyReceipt, verifyReveal } from './receipt.js';
+import { checkName, type NameServer } from './name-check.js';
 import {
   FORMAT_V5, SECRET_FILE, parseFormat, planCommitment, planReveal, readSecret, writeSecret, manifestKey, describeProbability,
   publishedManifest, type Format,
@@ -378,6 +381,32 @@ function cmdServers(): void {
     console.log(`    server_key:  ${s.server_key || '(dynamic)'}`);
     console.log(`    environment: ${s.environment}`);
     console.log();
+  }
+}
+
+/**
+ * Relying-party check of a pre-agreed name (spec v0.5 Section 14.5). Exit 0
+ * when the name is bound to exactly one commitment (and to --bundle, if
+ * given); exit 1 on a conflict, a bundle for another commitment, or a name
+ * the servers do not show as bound.
+ */
+async function cmdCheckName(signingKey: string, streamId: string, sequenceArg: string, serverArgs?: string[], bundle?: string): Promise<void> {
+  const sequence = Number(sequenceArg);
+  if (!Number.isSafeInteger(sequence) || sequence < 0) { console.error('sequence must be a non-negative integer'); process.exit(1); }
+  const required: NameServer[] = (serverArgs ?? getServers().map((s) => s.name ?? s.url)).map((ref) => {
+    const s = resolveServer(ref);
+    return { name: s.name, url: s.url, server_key: s.server_key };
+  });
+  const result = await checkName({ signing_key: signingKey, stream_id: streamId, sequence }, required);
+  for (const s of result.servers) {
+    const extra = [s.commitment_hash, s.detail].filter(Boolean).join('  ');
+    console.log(`  ${s.server.padEnd(24)} ${s.status.padEnd(12)} ${extra}`);
+  }
+  console.log(`\n${result.status}: ${result.detail}`);
+  if (result.status !== 'bound') process.exit(1);
+  if (bundle && bundle !== result.commitment_hashes[0]) {
+    console.log(`bundle ${bundle} is not the commitment bound to this name; the audit fails`);
+    process.exit(1);
   }
 }
 
@@ -1767,6 +1796,9 @@ function usage(exitCode = 1): never {
   pb-js verify <receipt.json>               Verify a server receipt offline (beacon, timing, selection)
   pb-js verify <reveal-folder>              Verify receipts, signed reveal and revealed files offline
   pb-js servers                             List known servers
+  pb-js check-name <did:key> <stream> <seq> [-s <srv>,<srv>...] [--bundle <hash>]
+                                            Ask each required server which commitment the
+                                            name is bound to (default: all registry servers)
   pb-js submit <dir|file> [-s <srv>]         Submit commitment to server(s)
   pb-js reveal <dir>                        Create & submit reveal
   pb-js publish github <dir> [--repo <r>]   Publish reveal to GitHub
@@ -1857,6 +1889,14 @@ async function main(): Promise<void> {
     cmdVerify(args[1]);
   } else if (cmd === 'servers') {
     cmdServers();
+  } else if (cmd === 'check-name' && args[1] && args[2] && args[3] !== undefined) {
+    let servers: string[] | undefined;
+    let bundle: string | undefined;
+    for (let i = 4; i < args.length; i++) {
+      if ((args[i] === '-s' || args[i] === '--servers') && args[i + 1]) { servers = args[++i].split(',').filter(Boolean); }
+      else if (args[i] === '--bundle' && args[i + 1]) { bundle = args[++i]; }
+    }
+    await cmdCheckName(args[1], args[2], args[3], servers, bundle);
   } else if (cmd === 'submit' && args[1]) {
     let server: string | undefined = undefined;
     for (let i = 2; i < args.length; i++) {
