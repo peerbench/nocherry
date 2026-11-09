@@ -683,6 +683,8 @@ The beacon output is public, so the committer knows the selection of `A` as soon
 
 With one honest server `S*` in `S`, every commitment that could complete was registered at `S*` before `T(a + 2)`, so it shows up in step 2 whatever the committer forwards. The cost is that a genuine network failure at one server now fails the audit instead of allowing a retry; a longer window between registration and the selection round (a larger `delta_margin`) makes that rarer. `checkName` in `@nocherry/sdk` and `pb-js check-name <K> <X> <N> -s <servers> --bundle <hash>` implement steps 2 and 3.
 
+The same rule constrains the committer's client. Re-signing a commitment with a fresh anchor creates a different commitment under the same name, so a client MUST NOT re-sign a stream commitment once any server may hold a commitment under its name: a server lists one, or a server received the commitment and gave no answer and cannot be asked now. Otherwise a lost response, or a second run of a submission that one server already accepted, turns into a conflict. `submitCommitment` asks the servers before every re-sign and reports `reanchorBlocked` instead.
+
 ## 15. What remains open
 
 Stated plainly, in order of weight:

@@ -12,6 +12,7 @@
  */
 
 import * as wasm from '@nocherry/pb-wasm';
+import { checkName, type NameCheck, type StreamName } from './name-check.js';
 
 export const DRAND_QUICKNET_CHAIN_HASH = '52db9ba70e0cc0f6eaf7803dd07447a1f5477735fd3f661792ba94600c84e971';
 export const DRAND_RELAYS = ['https://api.drand.sh', 'https://drand.cloudflare.com'];
@@ -156,6 +157,13 @@ export interface SubmitOutcome<S extends SubmitTarget = SubmitTarget> {
   results: SubmitResult<S>[];
   /** Number of times the commitment was re-signed with a fresh anchor. */
   reanchored: number;
+  /** For a stream commitment: what the servers held under its name when a re-sign was considered. */
+  nameCheck?: NameCheck;
+  /**
+   * Set when a re-sign was needed but not done because the name may already
+   * be taken: a second commitment under the same name would make the audit fail.
+   */
+  reanchorBlocked?: string;
 }
 
 export interface SubmitOptions {
@@ -192,6 +200,32 @@ async function postToAll<S extends SubmitTarget>(servers: S[], commitment: Commi
   }));
 }
 
+/** The pre-agreed name (signing_key, stream_id, sequence) of a 0.5.0 stream commitment, if any. */
+function streamNameOf(commitment: Commitment): StreamName | null {
+  if (commitment?.spec_version !== '0.5.0' || typeof commitment.stream_id !== 'string' || !Number.isSafeInteger(commitment.sequence)) return null;
+  return { signing_key: commitment.signing_key, stream_id: commitment.stream_id, sequence: commitment.sequence };
+}
+
+/**
+ * Why re-signing a stream commitment would split its name, or null when it is
+ * safe. Re-signing creates a different commitment under the same name; once
+ * any required server holds a commitment under that name, a second one makes
+ * the relying party's name check report a conflict and the audit fail
+ * (spec v0.5 14.5). `uncertain` names the servers that received a submission
+ * whose outcome is unknown (no response or a server error): they may hold it
+ * even if they cannot be asked now.
+ */
+function reanchorBlockReason(check: NameCheck, uncertain: Set<string>): string | null {
+  if (check.status === 'bound' || check.status === 'conflict') return check.detail;
+  const unclear = check.servers.filter((s) => s.status === 'unbacked' || (uncertain.has(s.server) && s.status !== 'empty'));
+  if (unclear.length > 0) {
+    return `the name may already be registered at ${unclear.map((s) => `${s.server} (${s.status})`).join(', ')}`;
+  }
+  return null;
+}
+
+const targetLabel = (server: SubmitTarget): string => server.name ?? server.url;
+
 /**
  * Submit a commitment to all servers in parallel.
  *
@@ -208,10 +242,26 @@ export async function submitCommitment<S extends SubmitTarget>(
 ): Promise<SubmitOutcome<S>> {
   const doFetch = opts.fetch ?? fetch;
   const canReanchor = opts.reanchor !== undefined && hasAnchor(commitment);
+  const name = streamNameOf(commitment);
   let current = commitment;
   let reanchored = 0;
+  let nameCheck: NameCheck | undefined;
+
+  /** Ask the servers about the name before re-signing; returns why not to re-sign, or null. */
+  const guard = async (uncertain: Set<string>): Promise<string | null> => {
+    if (!name) return null;
+    nameCheck = await checkName(name, servers, { fetch: doFetch });
+    return reanchorBlockReason(nameCheck, uncertain);
+  };
 
   if (canReanchor && !anchorIsFresh(current, opts.now?.())) {
+    const blocked = await guard(new Set());
+    if (blocked) {
+      // Sending a commitment other than the one the name is bound to could only split the name.
+      const boundToCurrent = nameCheck?.status === 'bound' && nameCheck.commitment_hashes[0] === current.commitment_hash;
+      const results = boundToCurrent ? await postToAll(servers, current, doFetch) : [];
+      return { commitment: current, results, reanchored, nameCheck, reanchorBlocked: blocked };
+    }
     current = await opts.reanchor!(current);
     reanchored++;
   }
@@ -220,12 +270,15 @@ export async function submitCommitment<S extends SubmitTarget>(
 
   const accepted = results.some(r => r.status === 201 || r.status === 409);
   if (canReanchor && !accepted && results.some(isAnchorRejection)) {
+    const uncertain = new Set(results.filter(r => r.status === 0 || r.status >= 500).map(r => targetLabel(r.server)));
+    const blocked = await guard(uncertain);
+    if (blocked) return { commitment: current, results, reanchored, nameCheck, reanchorBlocked: blocked };
     current = await opts.reanchor!(current);
     reanchored++;
     results = await postToAll(servers, current, doFetch);
   }
 
-  return { commitment: current, results, reanchored };
+  return { commitment: current, results, reanchored, ...(nameCheck ? { nameCheck } : {}) };
 }
 
 export interface ReceiptAnchorCheck {

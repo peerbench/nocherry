@@ -491,3 +491,169 @@ describe('submitCommitment', () => {
     assert.equal(backends.a.posts.length, 1);
   });
 });
+
+// ── Re-signing a stream commitment must not split its name (spec v0.5 14.5) ──
+
+describe('submitCommitment and the name of a stream commitment', () => {
+  const SERVER = wasm.generateKeypair();
+  let n = 0;
+  const v5 = (anchorRound: number, sequence = 0) => wasm.createCommitment(JSON.stringify({
+    spec_version: '0.5.0',
+    items: [wasm.hashBytes(new TextEncoder().encode(`name-guard-${n++}`)), wasm.hashBytes(new TextEncoder().encode(`name-guard-${n++}`))],
+    reveal_probability_ppm: 500000, selection_mode: 'batch',
+    beacon: { type: 'drand', chain_hash: CHAIN, anchor_round: anchorRound }, metadata: {},
+    committed_at: '2026-02-07T16:02:30Z', stream_id: 'bench', sequence,
+  }), TEST_KEY);
+
+  /**
+   * A server with the anchor rule, one commitment per name, signed stream
+   * listings, and commitment lookup. `lose` drops the response of a POST after
+   * registering; `down` refuses every request.
+   */
+  function streamServer(nowMs: () => number, opts: { lose?: boolean; down?: boolean } = {}) {
+    const posts: any[] = [];
+    const byHash = new Map<string, any>();
+    const byName = new Map<string, string>();
+    const reply = (status: number, payload: unknown) => new Response(JSON.stringify(payload), { status });
+    const sign = (obj: Record<string, unknown>) => {
+      const withKey = { ...obj, server_key: SERVER.did_key };
+      return { ...withKey, server_signature: wasm.signMessage(SERVER.private_key_hex, new TextEncoder().encode(JSON.stringify(withKey))) };
+    };
+    const handle = (url: URL, init?: RequestInit): Response => {
+      if (opts.down) throw new Error('connect ECONNREFUSED');
+      if (init?.method === 'POST') {
+        const body = JSON.parse(init.body as string);
+        posts.push(body);
+        if (byHash.has(body.commitment_hash)) return reply(409, { error: 'Commitment already exists', error_code: 'commitment_exists' });
+        const key = `${body.signing_key}/${body.stream_id}/${body.sequence}`;
+        if (byName.has(key)) return reply(409, { error: 'taken', error_code: 'stream_sequence_taken' });
+        const check = wasm.checkAnchorRegistration(BigInt(body.beacon.anchor_round), BigInt(nowMs()));
+        if (!check.ok) return reply(400, { error: check.message, error_code: check.code });
+        byHash.set(body.commitment_hash, body);
+        byName.set(key, body.commitment_hash);
+        if (opts.lose) throw new Error('socket hang up');
+        return reply(201, { commitment: body, commitment_hash: body.commitment_hash, selection: { beacon_output: { round: check.selection_round } } });
+      }
+      const parts = url.pathname.split('/').map(decodeURIComponent);
+      if (parts[2] === 'streams') {
+        const [signingKey, streamId] = [parts[3], parts[4]];
+        const commitments = [...byName].filter(([k]) => k.startsWith(`${signingKey}/${streamId}/`))
+          .map(([k, hash]) => ({ sequence: Number(k.split('/').pop()), commitment_hash: hash, registered_at: '2026-02-07T16:02:31Z' }));
+        return reply(200, sign({ signing_key: signingKey, stream_id: streamId, commitments, listed_at: '2026-02-07T16:02:40Z' }));
+      }
+      if (parts[2] === 'commitments' && byHash.has(parts[3])) return reply(200, sign({ commitment: byHash.get(parts[3]) }));
+      return reply(404, { error: 'not found' });
+    };
+    return { posts, handle, byName };
+  }
+
+  function harness(backends: Record<string, ReturnType<typeof streamServer>>) {
+    const servers = Object.keys(backends).map(name => ({ name, url: `https://${name}.test` }));
+    const doFetch = async (url: string, init?: RequestInit) => {
+      const u = new URL(url);
+      return backends[u.hostname.replace('.test', '')].handle(u, init);
+    };
+    return { servers, doFetch };
+  }
+
+  const resign = (round: number) => (c: any) => reanchorCommitment(c, TEST_KEY, { currentRound: async () => round });
+
+  it('does not re-sign after a lost response when the server registered the commitment', async () => {
+    // s1 registers A but its answer is lost; s2 and s3 reject the anchor as late.
+    const fresh = roundTimeMs(ANCHOR) + 500;
+    const late = roundTimeMs(ANCHOR + 2) + 500;
+    const backends = { s1: streamServer(() => fresh, { lose: true }), s2: streamServer(() => late), s3: streamServer(() => late) };
+    const { servers, doFetch } = harness(backends);
+    const a = v5(ANCHOR);
+
+    const outcome = await submitCommitment(servers, a, { fetch: doFetch, now: () => fresh, reanchor: resign(ANCHOR + 2) });
+
+    assert.equal(outcome.reanchored, 0, 'a second commitment under the name would split it');
+    assert.ok(outcome.reanchorBlocked);
+    assert.equal(outcome.nameCheck?.status, 'bound');
+    assert.deepEqual(outcome.nameCheck?.commitment_hashes, [a.commitment_hash]);
+    for (const b of Object.values(backends)) assert.ok(b.posts.every(p => p.commitment_hash === a.commitment_hash));
+  });
+
+  it('does not re-sign after a lost response when that server cannot be asked either', async () => {
+    const fresh = roundTimeMs(ANCHOR) + 500;
+    const late = roundTimeMs(ANCHOR + 2) + 500;
+    const s1 = streamServer(() => fresh, { lose: true });
+    const backends = { s1, s2: streamServer(() => late) };
+    const { servers, doFetch } = harness(backends);
+    // s1 goes down right after taking the commitment.
+    const flaky = async (url: string, init?: RequestInit) => {
+      if (init?.method !== 'POST' && url.startsWith('https://s1.test')) throw new Error('connect ECONNREFUSED');
+      return doFetch(url, init);
+    };
+
+    const outcome = await submitCommitment(servers, v5(ANCHOR), { fetch: flaky, now: () => fresh, reanchor: resign(ANCHOR + 2) });
+
+    assert.equal(outcome.reanchored, 0);
+    assert.match(outcome.reanchorBlocked ?? '', /s1 \(unreachable\)/);
+    assert.equal(backends.s2.posts.length, 1);
+  });
+
+  it('does not re-sign a stale commitment whose name an earlier run already registered', async () => {
+    // First run: s1 accepts A, s2 is down.
+    let now = roundTimeMs(ANCHOR) + 500;
+    const s1 = streamServer(() => now);
+    const s2 = streamServer(() => now, { down: true });
+    const first = harness({ s1, s2 });
+    const a = v5(ANCHOR);
+    const one = await submitCommitment(first.servers, a, { fetch: first.doFetch, now: () => now, reanchor: resign(ANCHOR) });
+    assert.deepEqual(one.results.map(r => r.status), [201, 0]);
+
+    // Second run, much later, with s2 back: the anchor of A is stale.
+    now = roundTimeMs(ANCHOR + 400) + 500;
+    const s2up = streamServer(() => now);
+    const second = harness({ s1, s2: s2up });
+    const two = await submitCommitment(second.servers, a, { fetch: second.doFetch, now: () => now, reanchor: resign(ANCHOR + 400) });
+
+    assert.equal(two.reanchored, 0);
+    assert.equal(two.nameCheck?.status, 'bound');
+    assert.ok(two.reanchorBlocked);
+    assert.equal(s2up.byName.size, 0, 's2 must not receive a second commitment under the name');
+    assert.ok([...s1.posts, ...s2up.posts].every(p => p.commitment_hash === a.commitment_hash));
+  });
+
+  it('sends nothing when the name is bound to a commitment other than the one at hand', async () => {
+    const now = roundTimeMs(ANCHOR + 400) + 500;
+    const s1 = streamServer(() => roundTimeMs(ANCHOR) + 500);
+    const s2 = streamServer(() => now);
+    const { servers, doFetch } = harness({ s1, s2 });
+    const a = v5(ANCHOR, 3);
+    await doFetch('https://s1.test/v1/commitments', { method: 'POST', body: JSON.stringify(a) });
+    const other = v5(ANCHOR, 3);
+
+    const outcome = await submitCommitment(servers, other, { fetch: doFetch, now: () => now, reanchor: resign(ANCHOR + 400) });
+
+    assert.equal(outcome.reanchored, 0);
+    assert.deepEqual(outcome.results, []);
+    assert.equal(s2.posts.length, 0);
+  });
+
+  it('still re-signs a stale stream commitment whose name no server holds', async () => {
+    const now = roundTimeMs(ANCHOR + 400) + 500;
+    const backends = { s1: streamServer(() => now), s2: streamServer(() => now) };
+    const { servers, doFetch } = harness(backends);
+
+    const outcome = await submitCommitment(servers, v5(ANCHOR, 1), { fetch: doFetch, now: () => now, reanchor: resign(ANCHOR + 400) });
+
+    assert.equal(outcome.reanchored, 1);
+    assert.equal(outcome.reanchorBlocked, undefined);
+    assert.equal(outcome.nameCheck?.status, 'unused');
+    assert.deepEqual(outcome.results.map(r => r.status), [201, 201]);
+  });
+
+  it('still retries once after an anchor rejection when no server took the commitment', async () => {
+    const late = roundTimeMs(ANCHOR + 2) + 500;
+    const backends = { s1: streamServer(() => late), s2: streamServer(() => late) };
+    const { servers, doFetch } = harness(backends);
+
+    const outcome = await submitCommitment(servers, v5(ANCHOR, 2), { fetch: doFetch, now: () => roundTimeMs(ANCHOR) + 500, reanchor: resign(ANCHOR + 2) });
+
+    assert.equal(outcome.reanchored, 1);
+    assert.deepEqual(outcome.results.map(r => r.status), [201, 201]);
+  });
+});

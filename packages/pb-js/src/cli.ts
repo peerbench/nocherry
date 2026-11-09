@@ -31,7 +31,7 @@ import { getServers, resolveServer, getRevealPublishers } from './registry.js';
 import { resolveSelectedFiles, copySelectedFiles, loadSelectedHashes, type SelectedFile } from './publish-select.js';
 import {
   createAnchoredCommitment, reanchorCommitment, submitCommitment, verifyReceiptAnchor,
-  type SubmitResult,
+  type SubmitResult, type SubmitOutcome,
 } from './anchor.js';
 import { verifyReceipt, verifyReveal } from './receipt.js';
 import { checkName, type NameServer } from './name-check.js';
@@ -92,6 +92,19 @@ function reanchorAndSave(commitmentPath: string, log: (msg: string) => void) {
     log(`New commitment hash: ${fresh.commitment_hash}`);
     return fresh;
   };
+}
+
+/**
+ * A stream commitment is not re-signed when its name may already be taken,
+ * since a second commitment under one name fails the audit (spec v0.5 14.5).
+ * Explain that, and stop when nothing was sent.
+ */
+function reportReanchorBlocked(outcome: SubmitOutcome, log: (msg: string) => void): void {
+  if (!outcome.reanchorBlocked) return;
+  log(`Not re-signing with a fresh anchor: ${outcome.reanchorBlocked}.`);
+  log('A second commitment under the same stream_id and sequence would make the audit fail.');
+  log('Complete the audit of the registered commitment, or agree a new name with the relying party.');
+  if (outcome.results.length === 0) process.exit(1);
 }
 
 function describeFailure(r: SubmitResult): string {
@@ -434,6 +447,7 @@ async function cmdSubmitFile(commitmentPath: string, serverNameOrUrl?: string): 
     const outcome = await submitCommitment([server], commitment, {
       reanchor: reanchorAndSave(commitmentPath, (msg) => console.error(msg)),
     });
+    reportReanchorBlocked(outcome, (msg) => console.error(msg));
     result = outcome.results[0];
   } catch (e: unknown) {
     console.error(e instanceof Error ? e.message : String(e));
@@ -477,6 +491,7 @@ async function cmdSubmitDir(dir: string): Promise<void> {
     const outcome = await submitCommitment(servers, commitment, {
       reanchor: reanchorAndSave(commitmentPath, (msg) => console.error(msg)),
     });
+    reportReanchorBlocked(outcome, (msg) => console.error(msg));
     commitment = outcome.commitment;
     results = outcome.results;
   } catch (e: unknown) {
@@ -1424,6 +1439,8 @@ async function cmdGo(dirPath: string, probability = 0.50, flags: CommitFlags = {
     const outcome = await submitCommitment(servers, commitment, {
       reanchor: reanchorAndSave(join(dir, 'commitment.json'), (msg) => reanchorNotes.push(msg)),
     });
+    if (outcome.reanchorBlocked && outcome.results.length === 0) spinner.fail('Not submitted');
+    reportReanchorBlocked(outcome, (msg) => (outcome.results.length === 0 ? console.error(msg) : reanchorNotes.push(msg)));
     commitment = outcome.commitment;
     submitted = outcome.results;
   } catch (e: unknown) {

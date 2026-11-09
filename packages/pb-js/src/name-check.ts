@@ -162,7 +162,7 @@ function joinUrl(base: string, path: string): string {
   return `${base.replace(/\/$/, '')}${path}`;
 }
 
-async function getJson(url: string, timeoutMs: number, fetchImpl: typeof fetch): Promise<{ status: number; body: unknown }> {
+async function getJson(url: string, timeoutMs: number, fetchImpl: NonNullable<FetchNameOptions['fetch']>): Promise<{ status: number; body: unknown }> {
   const res = await fetchImpl(url, { signal: AbortSignal.timeout(timeoutMs) });
   const body = await res.json().catch(() => null);
   return { status: res.status, body };
@@ -170,7 +170,7 @@ async function getJson(url: string, timeoutMs: number, fetchImpl: typeof fetch):
 
 export interface FetchNameOptions {
   timeoutMs?: number;
-  fetch?: typeof fetch;
+  fetch?: (url: string, init?: RequestInit) => Promise<Response>;
 }
 
 /** Fetch the signed stream listing of one server and the commitment bodies listed under the name. */
